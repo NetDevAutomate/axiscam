@@ -8,20 +8,53 @@ interacting with specific device types.
 from abc import ABC, abstractmethod
 from typing import Any
 
+from axis_cam.api.action import ActionAPI
+from axis_cam.api.analytics import VideoAnalyticsAPI
+from axis_cam.api.analytics_mqtt import AnalyticsMqttAPI
+from axis_cam.api.audio_multicast import AudioMulticastAPI
+from axis_cam.api.cert import CertAPI
 from axis_cam.api.device_info import BasicDeviceInfoAPI
+from axis_cam.api.firewall import FirewallAPI
+from axis_cam.api.geolocation import GeolocationAPI
 from axis_cam.api.lldp import LldpAPI
 from axis_cam.api.logs import LogsAPI
+from axis_cam.api.mqtt import MqttBridgeAPI
+from axis_cam.api.network import NetworkSettingsAPI
+from axis_cam.api.ntp import NtpAPI
 from axis_cam.api.param import ParamAPI
+from axis_cam.api.recording import RecordingAPI
+from axis_cam.api.serverreport import ServerReportAPI
+from axis_cam.api.snapshot import BestSnapshotAPI
+from axis_cam.api.snmp import SnmpAPI
+from axis_cam.api.ssh import SshAPI
+from axis_cam.api.storage import RemoteStorageAPI
 from axis_cam.api.time import TimeAPI
 from axis_cam.client import VapixClient
 from axis_cam.models import (
+    ActionConfig,
+    AnalyticsConfig,
+    AnalyticsMqttConfig,
+    AudioMulticastConfig,
     BasicDeviceInfo,
+    BestSnapshotConfig,
+    CertConfig,
     DeviceCapabilities,
     DeviceStatus,
     DeviceType,
+    FirewallConfig,
+    GeolocationConfig,
     LldpInfo,
     LogReport,
     LogType,
+    MqttBridgeConfig,
+    NetworkConfig,
+    NtpConfig,
+    RecordingConfig,
+    RemoteStorageConfig,
+    ServerReport,
+    ServerReportFormat,
+    SnmpConfig,
+    SshConfig,
     TimeInfo,
 )
 
@@ -49,6 +82,22 @@ class AxisDevice(ABC):
         time: API module for time settings.
         logs: API module for log retrieval.
         lldp: API module for LLDP neighbor discovery.
+        network: API module for network settings.
+        firewall: API module for firewall configuration.
+        ssh: API module for SSH configuration.
+        snmp: API module for SNMP configuration.
+        cert: API module for certificate management.
+        ntp: API module for NTP configuration.
+        action: API module for action rules configuration.
+        mqtt: API module for MQTT event bridge configuration.
+        recording: API module for recording group configuration.
+        storage: API module for remote object storage configuration.
+        geolocation: API module for device geolocation configuration.
+        analytics: API module for video analytics configuration.
+        snapshot: API module for best snapshot configuration.
+        analytics_mqtt: API module for analytics MQTT publishing.
+        audio_multicast: API module for audio multicast control.
+        serverreport: API module for server report and debug archive downloads.
     """
 
     # Device type identifier - must be set by subclasses
@@ -93,6 +142,28 @@ class AxisDevice(ABC):
         self.time = TimeAPI(self._client)
         self.logs = LogsAPI(self._client, device_name=host)
         self.lldp = LldpAPI(self._client)
+
+        # Initialize high-priority API modules
+        self.network = NetworkSettingsAPI(self._client)
+        self.firewall = FirewallAPI(self._client)
+        self.ssh = SshAPI(self._client)
+        self.snmp = SnmpAPI(self._client)
+        self.cert = CertAPI(self._client)
+        self.ntp = NtpAPI(self._client)
+
+        # Initialize medium-priority API modules
+        self.action = ActionAPI(self._client)
+        self.mqtt = MqttBridgeAPI(self._client)
+        self.recording = RecordingAPI(self._client)
+        self.storage = RemoteStorageAPI(self._client)
+        self.geolocation = GeolocationAPI(self._client)
+
+        # Initialize device-specific API modules
+        self.analytics = VideoAnalyticsAPI(self._client)
+        self.snapshot = BestSnapshotAPI(self._client)
+        self.analytics_mqtt = AnalyticsMqttAPI(self._client)
+        self.audio_multicast = AudioMulticastAPI(self._client)
+        self.serverreport = ServerReportAPI(self._client)
 
         # Track discovered capabilities
         self._capabilities: DeviceCapabilities | None = None
@@ -235,6 +306,181 @@ class AxisDevice(ABC):
             LldpInfo with LLDP status and discovered neighbors.
         """
         return await self.lldp.get_info()
+
+    async def get_network_config(self) -> NetworkConfig:
+        """Get extended network configuration.
+
+        Returns:
+            NetworkConfig model with network settings.
+        """
+        return await self.network.get_config()
+
+    async def get_firewall_config(self) -> FirewallConfig:
+        """Get firewall configuration.
+
+        Returns:
+            FirewallConfig model with firewall rules and settings.
+        """
+        return await self.firewall.get_config()
+
+    async def get_ssh_config(self) -> SshConfig:
+        """Get SSH configuration.
+
+        Returns:
+            SshConfig model with SSH settings.
+        """
+        return await self.ssh.get_config()
+
+    async def get_snmp_config(self) -> SnmpConfig:
+        """Get SNMP configuration.
+
+        Returns:
+            SnmpConfig model with SNMP settings.
+        """
+        return await self.snmp.get_config()
+
+    async def get_cert_config(self) -> CertConfig:
+        """Get certificate configuration.
+
+        Returns:
+            CertConfig model with certificate information.
+        """
+        return await self.cert.get_config()
+
+    async def get_ntp_config(self) -> NtpConfig:
+        """Get NTP configuration.
+
+        Returns:
+            NtpConfig model with NTP settings.
+        """
+        return await self.ntp.get_config()
+
+    async def get_action_config(self) -> ActionConfig:
+        """Get action rules configuration.
+
+        Returns:
+            ActionConfig model with action rules and templates.
+        """
+        return await self.action.get_config()
+
+    async def get_mqtt_config(self) -> MqttBridgeConfig:
+        """Get MQTT event bridge configuration.
+
+        Returns:
+            MqttBridgeConfig model with MQTT settings.
+        """
+        return await self.mqtt.get_config()
+
+    async def get_recording_config(self) -> RecordingConfig:
+        """Get recording configuration.
+
+        Returns:
+            RecordingConfig model with recording groups and profiles.
+        """
+        return await self.recording.get_config()
+
+    async def get_storage_config(self) -> RemoteStorageConfig:
+        """Get remote storage configuration.
+
+        Returns:
+            RemoteStorageConfig model with storage destinations.
+        """
+        return await self.storage.get_config()
+
+    async def get_geolocation_config(self) -> GeolocationConfig:
+        """Get device geolocation configuration.
+
+        Returns:
+            GeolocationConfig model with GPS coordinates and settings.
+        """
+        return await self.geolocation.get_config()
+
+    async def get_analytics_config(self) -> AnalyticsConfig:
+        """Get video analytics configuration.
+
+        Returns:
+            AnalyticsConfig model with analytics profiles and scenarios.
+        """
+        return await self.analytics.get_config()
+
+    async def get_snapshot_config(self) -> BestSnapshotConfig:
+        """Get best snapshot configuration.
+
+        Returns:
+            BestSnapshotConfig model with snapshot profiles and triggers.
+        """
+        return await self.snapshot.get_config()
+
+    async def get_analytics_mqtt_config(self) -> AnalyticsMqttConfig:
+        """Get analytics MQTT configuration.
+
+        Returns:
+            AnalyticsMqttConfig model with analytics publishing settings.
+        """
+        return await self.analytics_mqtt.get_config()
+
+    async def get_audio_multicast_config(self) -> AudioMulticastConfig:
+        """Get audio multicast configuration.
+
+        Returns:
+            AudioMulticastConfig model with multicast groups and streams.
+        """
+        return await self.audio_multicast.get_config()
+
+    async def capture_snapshot(
+        self,
+        resolution: str | None = None,
+        compression: int | None = None,
+        camera: int = 1,
+    ) -> bytes:
+        """Capture a snapshot image.
+
+        Args:
+            resolution: Image resolution (e.g., "1920x1080").
+            compression: JPEG compression level (0-100).
+            camera: Camera/channel number.
+
+        Returns:
+            JPEG image data as bytes.
+        """
+        return await self.snapshot.capture(
+            resolution=resolution,
+            compression=compression,
+            camera=camera,
+        )
+
+    async def download_server_report(
+        self,
+        format: ServerReportFormat = ServerReportFormat.ZIP_WITH_IMAGE,
+        timeout: float | None = None,
+    ) -> ServerReport:
+        """Download a server report from the device.
+
+        Args:
+            format: Report format (zip_with_image, zip, text).
+            timeout: Optional custom timeout for download (default: 60s).
+
+        Returns:
+            ServerReport model with report content and metadata.
+        """
+        return await self.serverreport.download_report(format=format, timeout=timeout)
+
+    async def download_debug_archive(
+        self,
+        timeout: float | None = None,
+    ) -> ServerReport:
+        """Download the debug archive (debug.tgz) from the device.
+
+        This retrieves a comprehensive debug archive that includes
+        system logs, configuration, and diagnostic information.
+
+        Args:
+            timeout: Optional custom timeout for download (default: 120s).
+
+        Returns:
+            ServerReport model with debug archive content.
+        """
+        return await self.serverreport.get_debug_archive(timeout=timeout)
 
     @abstractmethod
     async def get_device_specific_info(self) -> dict[str, Any]:

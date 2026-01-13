@@ -60,24 +60,36 @@ class DeviceConfig(BaseModel):
     """Configuration for a single AXIS device.
 
     Attributes:
-        host: Device IP address or hostname.
+        host: Device IP address or hostname (alias: address).
         username: Authentication username.
         password: Authentication password.
         port: HTTPS port number.
         ssl_verify: Whether to verify SSL certificates.
         device_type: Type of device (camera, recorder, intercom, speaker).
         name: Optional friendly name for the device.
+        vendor: Device vendor (e.g., "axis").
+        model: Device model number.
     """
 
-    model_config = {"frozen": True}
+    model_config = {"frozen": True, "populate_by_name": True}
 
-    host: str = Field(..., description="Device IP address or hostname")
+    host: str = Field(
+        ...,
+        alias="address",
+        description="Device IP address or hostname",
+    )
     username: str = Field(..., description="Authentication username")
     password: SecretStr = Field(..., description="Authentication password")
     port: int = Field(default=443, ge=1, le=65535, description="HTTPS port")
     ssl_verify: bool = Field(default=False, description="Verify SSL certificates")
-    device_type: str = Field(default="camera", description="Device type")
+    device_type: str = Field(
+        default="camera",
+        alias="type",
+        description="Device type",
+    )
     name: str | None = Field(default=None, description="Friendly name")
+    vendor: str = Field(default="axis", description="Device vendor")
+    model: str | None = Field(default=None, description="Device model")
 
     @field_validator("host")
     @classmethod
@@ -96,6 +108,12 @@ class DeviceConfig(BaseModel):
         if v_lower not in valid_types:
             raise ValueError(f"Device type must be one of: {valid_types}")
         return v_lower
+
+    @field_validator("vendor")
+    @classmethod
+    def validate_vendor(cls, v: str) -> str:
+        """Validate and normalize vendor name."""
+        return v.lower().strip()
 
 
 class AppConfig(BaseModel):
@@ -285,46 +303,67 @@ def create_default_config() -> str:
 # Place this file at ~/.config/axiscam/config.yaml
 
 # Default device to use when not specified
-default_device: camera1
+default_device: front_door
 
 # Request timeout in seconds
 timeout: 30.0
 
 # Device configurations
+# Supports environment variable interpolation with ${VAR_NAME} syntax
+# For credentials, use .env file or 1Password CLI (op)
 devices:
-  camera1:
-    host: 192.168.1.10
-    username: ${AXIS_ADMIN_USERNAME}
-    password: ${AXIS_ADMIN_PASSWORD}
-    port: 443
-    ssl_verify: false
-    device_type: camera
+  front_door:
     name: "Front Door Camera"
-
-  recorder:
-    host: 192.168.1.100
-    username: ${AXIS_ADMIN_USERNAME}
-    password: ${AXIS_ADMIN_PASSWORD}
+    vendor: axis
+    model: M3216-LVE
+    type: camera
+    address: 192.168.1.10
     port: 443
+    username: ${AXIS_ROOT_USER_NAME}
+    password: ${AXIS_ROOT_USER_PASSWORD}
     ssl_verify: false
-    device_type: recorder
+
+  back_yard:
+    name: "Back Yard Camera"
+    vendor: axis
+    model: P3265-LVE
+    type: camera
+    address: 192.168.1.11
+    port: 443
+    username: ${AXIS_ROOT_USER_NAME}
+    password: ${AXIS_ROOT_USER_PASSWORD}
+    ssl_verify: false
+
+  main_nvr:
     name: "Main NVR"
-
-  intercom:
-    host: 192.168.1.11
-    username: ${AXIS_ADMIN_USERNAME}
-    password: ${AXIS_ADMIN_PASSWORD}
+    vendor: axis
+    model: S3016
+    type: recorder
+    address: 192.168.1.100
     port: 443
+    username: ${AXIS_ROOT_USER_NAME}
+    password: ${AXIS_ROOT_USER_PASSWORD}
     ssl_verify: false
-    device_type: intercom
+
+  front_intercom:
     name: "Front Door Intercom"
-
-  speaker:
-    host: 192.168.1.45
-    username: ${AXIS_ADMIN_USERNAME}
-    password: ${AXIS_ADMIN_PASSWORD}
+    vendor: axis
+    model: I8016-LVE
+    type: intercom
+    address: 192.168.1.12
     port: 443
+    username: ${AXIS_ROOT_USER_NAME}
+    password: ${AXIS_ROOT_USER_PASSWORD}
     ssl_verify: false
-    device_type: speaker
+
+  office_speaker:
     name: "Office Speaker"
+    vendor: axis
+    model: C1310-E
+    type: speaker
+    address: 192.168.1.45
+    port: 443
+    username: ${AXIS_ROOT_USER_NAME}
+    password: ${AXIS_ROOT_USER_PASSWORD}
+    ssl_verify: false
 """

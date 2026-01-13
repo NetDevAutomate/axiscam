@@ -17,7 +17,6 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 # =============================================================================
 # Enumerations
 # =============================================================================
@@ -71,6 +70,15 @@ class AuthState(str, Enum):
     AUTHENTICATING = "authenticating"
     STOPPED = "stopped"
     FAILED = "failed"
+
+
+class ServerReportFormat(str, Enum):
+    """Format options for server reports."""
+
+    ZIP_WITH_IMAGE = "zip_with_image"
+    ZIP = "zip"
+    TEXT = "text"
+    DEBUG_TGZ = "debug_tgz"
 
 
 # =============================================================================
@@ -325,6 +333,34 @@ class LogReport(BaseModel):
             object.__setattr__(self, "total_entries", len(self.entries))
 
 
+class ServerReport(BaseModel):
+    """Server report downloaded from an AXIS device.
+
+    Attributes:
+        content: Raw binary content of the report.
+        format: Format of the report (zip, text, debug_tgz).
+        size_bytes: Size of the content in bytes.
+        filename: Suggested filename for the report.
+        error: Error message if download failed.
+    """
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    content: bytes = Field(default=b"", description="Raw binary content")
+    format: ServerReportFormat = Field(
+        default=ServerReportFormat.ZIP_WITH_IMAGE,
+        description="Report format",
+    )
+    size_bytes: int = Field(default=0, ge=0, description="Content size in bytes")
+    filename: str = Field(default="", description="Suggested filename")
+    error: str | None = Field(default=None, description="Error message if failed")
+
+    @property
+    def success(self) -> bool:
+        """Check if the report was downloaded successfully."""
+        return self.error is None and self.size_bytes > 0
+
+
 # =============================================================================
 # Parameter Models
 # =============================================================================
@@ -548,3 +584,993 @@ class LldpInfo(BaseModel):
 
     activated: bool = False
     neighbors: list[LldpNeighbor] = Field(default_factory=list)
+
+
+# =============================================================================
+# Network Settings Models (Extended)
+# =============================================================================
+
+
+class ProxySettings(BaseModel):
+    """Proxy configuration settings.
+
+    Attributes:
+        enabled: Whether proxy is enabled.
+        server: Proxy server address.
+        port: Proxy server port.
+        username: Proxy authentication username.
+        exceptions: List of addresses that bypass proxy.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    server: str = ""
+    port: int = 8080
+    username: str = ""
+    exceptions: list[str] = Field(default_factory=list)
+
+
+class NetworkConfig(BaseModel):
+    """Extended network configuration from network-settings API.
+
+    Attributes:
+        hostname: Device hostname.
+        interfaces: List of network interfaces.
+        dns: DNS configuration.
+        global_proxy: Global proxy settings.
+        bonjour_enabled: Whether Bonjour/mDNS is enabled.
+        upnp_enabled: Whether UPnP is enabled.
+        websocket_enabled: Whether WebSocket is enabled.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    hostname: str = ""
+    interfaces: list[NetworkInterface] = Field(default_factory=list)
+    dns: DnsSettings = Field(default_factory=DnsSettings)
+    global_proxy: ProxySettings | None = None
+    bonjour_enabled: bool = True
+    upnp_enabled: bool = False
+    websocket_enabled: bool = True
+
+
+# =============================================================================
+# Firewall Models
+# =============================================================================
+
+
+class FirewallAction(str, Enum):
+    """Firewall rule actions."""
+
+    ALLOW = "allow"
+    DENY = "deny"
+    DROP = "drop"
+    REJECT = "reject"
+
+
+class FirewallProtocol(str, Enum):
+    """Network protocols for firewall rules."""
+
+    ANY = "any"
+    TCP = "tcp"
+    UDP = "udp"
+    ICMP = "icmp"
+    ICMPV6 = "icmpv6"
+
+
+class FirewallRule(BaseModel):
+    """A single firewall rule.
+
+    Attributes:
+        action: Rule action (allow, deny, drop, reject).
+        protocol: Network protocol.
+        source: Source IP address/network.
+        source_port: Source port or range.
+        destination: Destination IP address/network.
+        dest_port: Destination port or range.
+        description: Rule description.
+        enabled: Whether rule is active.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    action: FirewallAction = FirewallAction.ALLOW
+    protocol: FirewallProtocol = FirewallProtocol.ANY
+    source: str = ""
+    source_port: str = ""
+    destination: str = ""
+    dest_port: str = ""
+    description: str = ""
+    enabled: bool = True
+
+
+class FirewallConfig(BaseModel):
+    """Firewall configuration.
+
+    Attributes:
+        enabled: Whether firewall is enabled.
+        ipv4_rules: List of IPv4 firewall rules.
+        ipv6_rules: List of IPv6 firewall rules.
+        default_policy: Default action for unmatched traffic.
+        icmp_allowed: Whether ICMP traffic is allowed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    ipv4_rules: list[FirewallRule] = Field(default_factory=list)
+    ipv6_rules: list[FirewallRule] = Field(default_factory=list)
+    default_policy: FirewallAction = FirewallAction.ALLOW
+    icmp_allowed: bool = True
+
+
+# =============================================================================
+# SSH Models
+# =============================================================================
+
+
+class SshKey(BaseModel):
+    """SSH authorized key.
+
+    Attributes:
+        key_type: Key type (e.g., ssh-rsa, ssh-ed25519).
+        key: Public key data.
+        comment: Key comment/identifier.
+        fingerprint: Key fingerprint.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    key_type: str = ""
+    key: str = ""
+    comment: str = ""
+    fingerprint: str = ""
+
+
+class SshConfig(BaseModel):
+    """SSH configuration.
+
+    Attributes:
+        enabled: Whether SSH is enabled.
+        port: SSH port number.
+        root_login_allowed: Whether root login is permitted.
+        password_auth_enabled: Whether password authentication is enabled.
+        authorized_keys: List of authorized SSH keys.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    port: int = 22
+    root_login_allowed: bool = False
+    password_auth_enabled: bool = True
+    authorized_keys: list[SshKey] = Field(default_factory=list)
+
+
+# =============================================================================
+# SNMP Models
+# =============================================================================
+
+
+class SnmpVersion(str, Enum):
+    """SNMP protocol versions."""
+
+    V1 = "v1"
+    V2C = "v2c"
+    V3 = "v3"
+
+
+class SnmpTrapReceiver(BaseModel):
+    """SNMP trap receiver configuration.
+
+    Attributes:
+        address: Trap receiver IP address or hostname.
+        port: Trap receiver port.
+        community: SNMP community string.
+        enabled: Whether this receiver is active.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    address: str = ""
+    port: int = 162
+    community: str = ""
+    enabled: bool = True
+
+
+class SnmpConfig(BaseModel):
+    """SNMP configuration.
+
+    Attributes:
+        enabled: Whether SNMP is enabled.
+        version: SNMP protocol version.
+        read_community: Read-only community string.
+        write_community: Read-write community string.
+        system_contact: System contact information.
+        system_location: System location information.
+        trap_receivers: List of trap receivers.
+        v3_enabled: Whether SNMPv3 is enabled.
+        v3_username: SNMPv3 username.
+        v3_auth_protocol: SNMPv3 authentication protocol.
+        v3_priv_protocol: SNMPv3 privacy protocol.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    version: SnmpVersion = SnmpVersion.V2C
+    read_community: str = "public"
+    write_community: str = ""
+    system_contact: str = ""
+    system_location: str = ""
+    trap_receivers: list[SnmpTrapReceiver] = Field(default_factory=list)
+    v3_enabled: bool = False
+    v3_username: str = ""
+    v3_auth_protocol: str = ""
+    v3_priv_protocol: str = ""
+
+
+# =============================================================================
+# Certificate Models
+# =============================================================================
+
+
+class CertificateType(str, Enum):
+    """Types of SSL/TLS certificates."""
+
+    SERVER = "server"
+    CLIENT = "client"
+    CA = "ca"
+
+
+class Certificate(BaseModel):
+    """SSL/TLS certificate information.
+
+    Attributes:
+        cert_id: Certificate identifier.
+        cert_type: Type of certificate.
+        subject: Certificate subject (CN, O, etc.).
+        issuer: Certificate issuer.
+        not_before: Validity start date.
+        not_after: Validity end date.
+        serial_number: Certificate serial number.
+        fingerprint_sha256: SHA-256 fingerprint.
+        fingerprint_sha1: SHA-1 fingerprint.
+        key_size: Key size in bits.
+        key_type: Key algorithm type.
+        self_signed: Whether certificate is self-signed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    cert_id: str = ""
+    cert_type: CertificateType = CertificateType.SERVER
+    subject: str = ""
+    issuer: str = ""
+    not_before: str = ""
+    not_after: str = ""
+    serial_number: str = ""
+    fingerprint_sha256: str = ""
+    fingerprint_sha1: str = ""
+    key_size: int = 0
+    key_type: str = ""
+    self_signed: bool = False
+
+
+class CertConfig(BaseModel):
+    """Certificate configuration.
+
+    Attributes:
+        certificates: List of installed certificates.
+        ca_certificates: List of CA certificates.
+        active_certificate: Currently active HTTPS certificate.
+        https_enabled: Whether HTTPS is enabled.
+        https_only: Whether only HTTPS is allowed.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    certificates: list[Certificate] = Field(default_factory=list)
+    ca_certificates: list[Certificate] = Field(default_factory=list)
+    active_certificate: Certificate | None = None
+    https_enabled: bool = True
+    https_only: bool = False
+
+
+# =============================================================================
+# NTP Models
+# =============================================================================
+
+
+class NtpServer(BaseModel):
+    """NTP server configuration.
+
+    Attributes:
+        address: NTP server address.
+        enabled: Whether this server is active.
+        prefer: Whether this is the preferred server.
+        source: Server source (static, dhcp).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    address: str = ""
+    enabled: bool = True
+    prefer: bool = False
+    source: str = "static"
+
+
+class NtpSyncStatus(BaseModel):
+    """NTP synchronization status.
+
+    Attributes:
+        synchronized: Whether time is synchronized.
+        current_server: Server currently being used.
+        stratum: NTP stratum level.
+        offset_ms: Time offset in milliseconds.
+        last_sync: Last synchronization timestamp.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    synchronized: bool = False
+    current_server: str = ""
+    stratum: int = 0
+    offset_ms: float = 0.0
+    last_sync: str = ""
+
+
+class NtpConfig(BaseModel):
+    """NTP configuration.
+
+    Attributes:
+        enabled: Whether NTP is enabled.
+        servers: List of NTP servers.
+        sync_status: Current synchronization status.
+        use_dhcp_servers: Whether to use DHCP-provided servers.
+        fallback_enabled: Whether fallback servers are enabled.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    servers: list[NtpServer] = Field(default_factory=list)
+    sync_status: NtpSyncStatus = Field(default_factory=NtpSyncStatus)
+    use_dhcp_servers: bool = False
+    fallback_enabled: bool = False
+
+
+# =============================================================================
+# Action Rules Models
+# =============================================================================
+
+
+class ActionRule(BaseModel):
+    """Action rule configuration.
+
+    Attributes:
+        id: Rule identifier.
+        name: Rule name.
+        enabled: Whether rule is active.
+        primary_condition: Primary triggering condition.
+        conditions: List of additional conditions.
+        actions: List of actions to perform.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = False
+    primary_condition: str = ""
+    conditions: list[str] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+
+
+class ActionTemplate(BaseModel):
+    """Action template definition.
+
+    Attributes:
+        id: Template identifier.
+        name: Template name.
+        template_type: Type of action template.
+        parameters: Template parameters.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    template_type: str = ""
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class ActionConfig(BaseModel):
+    """Action rules configuration.
+
+    Attributes:
+        rules: List of action rules.
+        templates: List of action templates.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    rules: list[ActionRule] = Field(default_factory=list)
+    templates: list[ActionTemplate] = Field(default_factory=list)
+
+
+# =============================================================================
+# MQTT Bridge Models
+# =============================================================================
+
+
+class MqttClient(BaseModel):
+    """MQTT client configuration.
+
+    Attributes:
+        id: Client identifier.
+        host: MQTT broker hostname or IP.
+        port: MQTT broker port.
+        protocol: Connection protocol (tcp, ssl, ws, wss).
+        username: Authentication username.
+        client_id: MQTT client identifier.
+        keep_alive: Keep-alive interval in seconds.
+        clean_session: Whether to use clean sessions.
+        use_tls: Whether to use TLS encryption.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    host: str = ""
+    port: int = 1883
+    protocol: str = "tcp"
+    username: str = ""
+    client_id: str = ""
+    keep_alive: int = 60
+    clean_session: bool = True
+    use_tls: bool = False
+
+
+class MqttEventFilter(BaseModel):
+    """MQTT event filter configuration.
+
+    Attributes:
+        id: Filter identifier.
+        name: Filter name.
+        enabled: Whether filter is active.
+        topic: MQTT topic to publish to.
+        event_types: List of event types to publish.
+        qos: Quality of Service level (0, 1, 2).
+        retain: Whether to retain messages.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = True
+    topic: str = ""
+    event_types: list[str] = Field(default_factory=list)
+    qos: int = Field(default=0, ge=0, le=2)
+    retain: bool = False
+
+
+class MqttBridgeConfig(BaseModel):
+    """MQTT event bridge configuration.
+
+    Attributes:
+        enabled: Whether MQTT bridge is enabled.
+        connected: Whether broker connection is active.
+        clients: List of MQTT clients.
+        event_filters: List of event filters.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    connected: bool = False
+    clients: list[MqttClient] = Field(default_factory=list)
+    event_filters: list[MqttEventFilter] = Field(default_factory=list)
+
+
+# =============================================================================
+# Recording Models
+# =============================================================================
+
+
+class RecordingProfile(BaseModel):
+    """Recording profile configuration.
+
+    Attributes:
+        id: Profile identifier.
+        name: Profile name.
+        format: Recording format (e.g., mkv, mp4).
+        video_codec: Video codec (e.g., h264, h265).
+        audio_enabled: Whether audio is recorded.
+        resolution: Video resolution.
+        framerate: Video framerate.
+        bitrate: Video bitrate in kbps.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    format: str = "mkv"
+    video_codec: str = "h264"
+    audio_enabled: bool = False
+    resolution: str = ""
+    framerate: int = 0
+    bitrate: int = 0
+
+
+class RecordingGroup(BaseModel):
+    """Recording group configuration.
+
+    Attributes:
+        id: Group identifier.
+        name: Group name.
+        description: Group description.
+        storage_id: Associated storage destination ID.
+        retention_days: Recording retention in days.
+        max_size_mb: Maximum storage size in MB.
+        profile_id: Associated recording profile ID.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    description: str = ""
+    storage_id: str = ""
+    retention_days: int = 0
+    max_size_mb: int = 0
+    profile_id: str = ""
+
+
+class RecordingConfig(BaseModel):
+    """Recording configuration.
+
+    Attributes:
+        groups: List of recording groups.
+        profiles: List of recording profiles.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    groups: list[RecordingGroup] = Field(default_factory=list)
+    profiles: list[RecordingProfile] = Field(default_factory=list)
+
+
+# =============================================================================
+# Remote Storage Models
+# =============================================================================
+
+
+class StorageType(str, Enum):
+    """Types of remote storage destinations."""
+
+    S3 = "s3"
+    AZURE = "azure"
+    GCS = "gcs"
+    SFTP = "sftp"
+    FTP = "ftp"
+    SMB = "smb"
+    NFS = "nfs"
+
+
+class StorageDestination(BaseModel):
+    """Remote storage destination configuration.
+
+    Attributes:
+        id: Destination identifier.
+        name: Destination name.
+        storage_type: Type of storage (s3, azure, etc.).
+        endpoint: Storage endpoint URL.
+        bucket: Bucket or container name.
+        region: Cloud region.
+        access_key_id: Access key ID.
+        prefix: Object key prefix/path.
+        enabled: Whether destination is active.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    storage_type: StorageType = StorageType.S3
+    endpoint: str = ""
+    bucket: str = ""
+    region: str = ""
+    access_key_id: str = ""
+    prefix: str = ""
+    enabled: bool = False
+
+
+class RemoteStorageConfig(BaseModel):
+    """Remote storage configuration.
+
+    Attributes:
+        destinations: List of storage destinations.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    destinations: list[StorageDestination] = Field(default_factory=list)
+
+
+# =============================================================================
+# Geolocation Models
+# =============================================================================
+
+
+class GeolocationConfig(BaseModel):
+    """Device geolocation configuration.
+
+    Attributes:
+        latitude: GPS latitude in decimal degrees.
+        longitude: GPS longitude in decimal degrees.
+        altitude: Altitude in meters.
+        direction: Heading/direction in degrees (0-360).
+        horizontal_accuracy: Horizontal accuracy in meters.
+        vertical_accuracy: Vertical accuracy in meters.
+        heading: Device heading in degrees.
+        speed: Speed in meters per second.
+        timestamp: Last location update timestamp.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    latitude: float | None = None
+    longitude: float | None = None
+    altitude: float | None = None
+    direction: float | None = Field(default=None, ge=0, le=360)
+    horizontal_accuracy: float | None = None
+    vertical_accuracy: float | None = None
+    heading: float | None = Field(default=None, ge=0, le=360)
+    speed: float | None = Field(default=None, ge=0)
+    timestamp: str | None = None
+
+
+# =============================================================================
+# Video Analytics Models
+# =============================================================================
+
+
+class ObjectClass(BaseModel):
+    """Object detection class configuration.
+
+    Attributes:
+        id: Class identifier.
+        name: Class name (e.g., human, vehicle, animal).
+        enabled: Whether class detection is active.
+        confidence_threshold: Minimum confidence for detection (0-100).
+        color: Display color for bounding boxes.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = True
+    confidence_threshold: int = Field(default=50, ge=0, le=100)
+    color: str = ""
+
+
+class AnalyticsScenario(BaseModel):
+    """Analytics scenario configuration.
+
+    Attributes:
+        id: Scenario identifier.
+        name: Scenario name.
+        scenario_type: Type of scenario (e.g., crossline, area).
+        enabled: Whether scenario is active.
+        object_classes: List of object classes to detect.
+        trigger_on_enter: Trigger when objects enter region.
+        trigger_on_exit: Trigger when objects exit region.
+        trigger_on_presence: Trigger on continued presence.
+        dwell_time: Time in seconds before presence trigger.
+        region: Region/zone definition as coordinates.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    scenario_type: str = ""
+    enabled: bool = False
+    object_classes: list[str] = Field(default_factory=list)
+    trigger_on_enter: bool = True
+    trigger_on_exit: bool = False
+    trigger_on_presence: bool = False
+    dwell_time: int = Field(default=0, ge=0)
+    region: dict[str, Any] = Field(default_factory=dict)
+
+
+class AnalyticsProfile(BaseModel):
+    """Analytics profile configuration.
+
+    Attributes:
+        id: Profile identifier.
+        name: Profile name.
+        enabled: Whether profile is active.
+        camera_id: Associated camera/video source.
+        scenarios: List of scenario IDs in this profile.
+        sensitivity: Detection sensitivity (0-100).
+        min_object_size: Minimum object size percentage.
+        max_object_size: Maximum object size percentage.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = False
+    camera_id: str = ""
+    scenarios: list[str] = Field(default_factory=list)
+    sensitivity: int = Field(default=50, ge=0, le=100)
+    min_object_size: int = Field(default=0, ge=0, le=100)
+    max_object_size: int = Field(default=100, ge=0, le=100)
+
+
+class AnalyticsConfig(BaseModel):
+    """Video analytics configuration.
+
+    Attributes:
+        enabled: Whether video analytics is enabled.
+        profiles: List of analytics profiles.
+        scenarios: List of analytics scenarios.
+        object_classes: List of object detection classes.
+        metadata_enabled: Whether metadata output is enabled.
+        overlay_enabled: Whether overlay display is enabled.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    profiles: list[AnalyticsProfile] = Field(default_factory=list)
+    scenarios: list[AnalyticsScenario] = Field(default_factory=list)
+    object_classes: list[ObjectClass] = Field(default_factory=list)
+    metadata_enabled: bool = False
+    overlay_enabled: bool = False
+
+
+# =============================================================================
+# Best Snapshot Models
+# =============================================================================
+
+
+class SnapshotProfile(BaseModel):
+    """Snapshot profile configuration.
+
+    Attributes:
+        id: Profile identifier.
+        name: Profile name.
+        enabled: Whether profile is active.
+        resolution: Image resolution (e.g., 1920x1080).
+        compression: JPEG compression level (0-100).
+        rotation: Image rotation in degrees.
+        mirror: Whether to mirror image.
+        overlay_enabled: Whether to include overlays.
+        timestamp_enabled: Whether to include timestamp.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = True
+    resolution: str = ""
+    compression: int = Field(default=25, ge=0, le=100)
+    rotation: int = Field(default=0, ge=0, le=360)
+    mirror: bool = False
+    overlay_enabled: bool = False
+    timestamp_enabled: bool = True
+
+
+class SnapshotTrigger(BaseModel):
+    """Snapshot trigger configuration.
+
+    Attributes:
+        id: Trigger identifier.
+        name: Trigger name.
+        enabled: Whether trigger is active.
+        trigger_type: Type of trigger (e.g., motion, event).
+        profile_id: Associated snapshot profile.
+        pre_trigger_time: Pre-trigger buffer in seconds.
+        post_trigger_time: Post-trigger buffer in seconds.
+        event_filter: Event filter expression.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = True
+    trigger_type: str = ""
+    profile_id: str = ""
+    pre_trigger_time: int = Field(default=0, ge=0)
+    post_trigger_time: int = Field(default=0, ge=0)
+    event_filter: str = ""
+
+
+class BestSnapshotConfig(BaseModel):
+    """Best snapshot configuration.
+
+    Attributes:
+        enabled: Whether best snapshot is enabled.
+        profiles: List of snapshot profiles.
+        triggers: List of snapshot triggers.
+        default_resolution: Default image resolution.
+        default_compression: Default JPEG compression.
+        max_snapshots_per_event: Maximum snapshots per trigger event.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = True
+    profiles: list[SnapshotProfile] = Field(default_factory=list)
+    triggers: list[SnapshotTrigger] = Field(default_factory=list)
+    default_resolution: str = ""
+    default_compression: int = Field(default=25, ge=0, le=100)
+    max_snapshots_per_event: int = Field(default=1, ge=1)
+
+
+# =============================================================================
+# Analytics MQTT Models
+# =============================================================================
+
+
+class AnalyticsMqttBroker(BaseModel):
+    """Analytics MQTT broker configuration.
+
+    Attributes:
+        host: MQTT broker hostname or IP.
+        port: MQTT broker port.
+        protocol: Connection protocol (tcp, ssl, ws, wss).
+        username: Authentication username.
+        client_id: MQTT client identifier.
+        use_tls: Whether to use TLS encryption.
+        ca_certificate: CA certificate for TLS.
+        validate_server_cert: Whether to validate server certificate.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    host: str = ""
+    port: int = 1883
+    protocol: str = "tcp"
+    username: str = ""
+    client_id: str = ""
+    use_tls: bool = False
+    ca_certificate: str = ""
+    validate_server_cert: bool = True
+
+
+class AnalyticsMqttSubscription(BaseModel):
+    """Analytics MQTT subscription configuration.
+
+    Attributes:
+        id: Subscription identifier.
+        name: Subscription name.
+        enabled: Whether subscription is active.
+        topic: MQTT topic to publish to.
+        qos: Quality of Service level (0, 1, 2).
+        retain: Whether to retain messages.
+        analytics_types: List of analytics data types to publish.
+        object_classes: Object classes to include.
+        include_image: Whether to include snapshot image.
+        image_resolution: Resolution for included images.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = True
+    topic: str = ""
+    qos: int = Field(default=0, ge=0, le=2)
+    retain: bool = False
+    analytics_types: list[str] = Field(default_factory=list)
+    object_classes: list[str] = Field(default_factory=list)
+    include_image: bool = False
+    image_resolution: str = ""
+
+
+class AnalyticsMqttConfig(BaseModel):
+    """Analytics MQTT configuration.
+
+    Attributes:
+        enabled: Whether analytics MQTT is enabled.
+        connected: Whether broker connection is active.
+        broker: MQTT broker configuration.
+        subscriptions: List of analytics subscriptions.
+        include_timestamps: Whether to include timestamps in data.
+        include_coordinates: Whether to include coordinates in data.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    connected: bool = False
+    broker: AnalyticsMqttBroker | None = None
+    subscriptions: list[AnalyticsMqttSubscription] = Field(default_factory=list)
+    include_timestamps: bool = True
+    include_coordinates: bool = True
+
+
+# =============================================================================
+# Audio Multicast Models
+# =============================================================================
+
+
+class AudioStream(BaseModel):
+    """Audio stream configuration.
+
+    Attributes:
+        id: Stream identifier.
+        name: Stream name.
+        enabled: Whether stream is active.
+        codec: Audio codec (e.g., g711, aac, opus).
+        sample_rate: Sample rate in Hz.
+        bitrate: Bitrate in bps.
+        channels: Number of audio channels.
+        source: Audio source identifier.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = False
+    codec: str = ""
+    sample_rate: int = Field(default=16000, ge=8000)
+    bitrate: int = Field(default=64000, ge=8000)
+    channels: int = Field(default=1, ge=1, le=8)
+    source: str = ""
+
+
+class MulticastGroup(BaseModel):
+    """Multicast group configuration.
+
+    Attributes:
+        id: Group identifier.
+        name: Group name.
+        enabled: Whether group is active.
+        address: Multicast IP address.
+        port: Multicast port number.
+        ttl: Time-to-live for packets.
+        stream_id: Associated audio stream ID.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str = ""
+    name: str = ""
+    enabled: bool = False
+    address: str = ""
+    port: int = Field(default=0, ge=0, le=65535)
+    ttl: int = Field(default=64, ge=1, le=255)
+    stream_id: str = ""
+
+
+class AudioMulticastConfig(BaseModel):
+    """Audio multicast configuration.
+
+    Attributes:
+        enabled: Whether audio multicast is enabled.
+        groups: List of multicast groups.
+        streams: List of audio streams.
+        default_ttl: Default TTL for packets.
+        audio_source: Default audio source.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    groups: list[MulticastGroup] = Field(default_factory=list)
+    streams: list[AudioStream] = Field(default_factory=list)
+    default_ttl: int = Field(default=64, ge=1, le=255)
+    audio_source: str = ""

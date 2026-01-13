@@ -477,13 +477,13 @@ class TestCreateDefaultConfig:
     def test_contains_example_devices(self):
         """Test that default config contains example devices."""
         result = create_default_config()
-        assert "camera1:" in result
-        assert "recorder:" in result
-        assert "intercom:" in result
-        assert "speaker:" in result
+        assert "front_door:" in result
+        assert "main_nvr:" in result
+        assert "front_intercom:" in result
+        assert "office_speaker:" in result
 
     def test_contains_env_var_placeholders(self):
         """Test that default config contains environment variable placeholders."""
         result = create_default_config()
-        assert "${AXIS_ADMIN_USERNAME}" in result
-        assert "${AXIS_ADMIN_PASSWORD}" in result
+        assert "${AXIS_ROOT_USER_NAME}" in result
+        assert "${AXIS_ROOT_USER_PASSWORD}" in result

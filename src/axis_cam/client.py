@@ -280,6 +280,45 @@ class VapixClient:
         response = await self.get(path, params)
         return response.content
 
+    async def get_binary(
+        self,
+        path: str,
+        params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+    ) -> bytes:
+        """Perform a GET request for binary content with custom timeout.
+
+        Similar to get_raw but allows overriding the timeout for long-running
+        operations like server report downloads.
+
+        Args:
+            path: URL path.
+            params: Optional query parameters.
+            timeout: Optional timeout override in seconds.
+
+        Returns:
+            Raw response content as bytes.
+
+        Raises:
+            AxisConnectionError: If connection fails.
+            AxisAuthenticationError: If authentication fails.
+            AxisDeviceError: If device returns an error.
+        """
+        client = self._ensure_connected()
+        url = f"{self.base_url}{path}"
+
+        # Use custom timeout if provided, otherwise use client default
+        request_timeout = timeout if timeout is not None else self.timeout
+
+        try:
+            response = await client.get(url, params=params, timeout=request_timeout)
+            self._check_response(response)
+            return response.content
+        except httpx.ConnectError as e:
+            raise AxisConnectionError(f"Failed to connect to {self.host}: {e}") from e
+        except httpx.TimeoutException as e:
+            raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
+
     def _check_response(self, response: httpx.Response) -> None:
         """Check HTTP response for errors.
 
