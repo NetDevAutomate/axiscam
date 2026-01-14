@@ -27,10 +27,11 @@ from axis_cam.config import (
     get_config_dir,
     get_config_file,
     get_device_config,
+    get_device_config_by_host,
     load_config,
 )
 from axis_cam.devices.base import AxisDevice
-from axis_cam.models import LogType
+from axis_cam.models import LogType, ServerReportFormat
 
 # Console for rich output
 console = Console()
@@ -74,6 +75,14 @@ services_app = typer.Typer(
 )
 app.add_typer(services_app, name="services")
 
+# Download subcommand group (server reports, debug archives)
+download_app = typer.Typer(
+    name="download",
+    help="Download device reports and debug archives.",
+    no_args_is_help=True,
+)
+app.add_typer(download_app, name="download")
+
 
 # Type aliases for common options
 DeviceOption = Annotated[
@@ -96,8 +105,7 @@ UsernameOption = Annotated[
     str | None,
     typer.Option(
         "--username", "-u",
-        help="Authentication username.",
-        envvar="AXIS_ADMIN_USERNAME",
+        help="Authentication username (override for config device).",
     ),
 ]
 
@@ -105,8 +113,7 @@ PasswordOption = Annotated[
     str | None,
     typer.Option(
         "--password", "-p",
-        help="Authentication password.",
-        envvar="AXIS_ADMIN_PASSWORD",
+        help="Authentication password (override for config device).",
     ),
 ]
 
@@ -129,8 +136,8 @@ LinesOption = Annotated[
 DigestOption = Annotated[
     bool,
     typer.Option(
-        "--digest",
-        help="Use Digest authentication instead of Basic.",
+        "--digest/--no-digest",
+        help="Use Digest authentication (default) or Basic auth.",
     ),
 ]
 
@@ -196,7 +203,7 @@ def resolve_device_config(
             raise typer.Exit(1)
         return host, username, password, port, device_type
 
-    # Try to load from config
+    # Try to load from config by name
     config = get_device_config(device)
     if config:
         return (
@@ -207,8 +214,19 @@ def resolve_device_config(
             config.device_type,
         )
 
-    # Check if device name looks like a host
+    # Check if device looks like a host/IP and try to find it in config
     if device and ("." in device or device.replace(".", "").isdigit()):
+        # Try to find device by IP address in config
+        config = get_device_config_by_host(device)
+        if config:
+            return (
+                config.host,
+                username or config.username,
+                password or config.password.get_secret_value(),
+                port if port != 443 else config.port,
+                config.device_type,
+            )
+        # Not found in config - require explicit credentials
         if not username or not password:
             console.print(
                 "[red]Error:[/red] Username and password required",
@@ -243,7 +261,7 @@ def device_info(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
 ):
     """Get device information.
 
@@ -324,7 +342,7 @@ def device_status(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
 ):
     """Check device status and connectivity."""
     host_addr, user, passwd, port_num, device_type = resolve_device_config(
@@ -366,7 +384,7 @@ def list_apis(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
 ):
     """List available APIs on the device."""
     host_addr, user, passwd, port_num, device_type = resolve_device_config(
@@ -412,7 +430,7 @@ def show_lldp(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show LLDP neighbor information.
@@ -495,7 +513,7 @@ def list_params(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     group: Annotated[
         str | None, typer.Option("--group", "-g", help="Parameter group to list")
     ] = None,
@@ -586,7 +604,7 @@ def logs_system(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     lines: LinesOption = 20,
 ):
     """Get system logs from the device."""
@@ -600,7 +618,7 @@ def logs_access(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     lines: LinesOption = 20,
 ):
     """Get access logs from the device."""
@@ -614,7 +632,7 @@ def logs_audit(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     lines: LinesOption = 20,
 ):
     """Get audit logs from the device."""
@@ -628,7 +646,7 @@ def logs_all(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     lines: LinesOption = 50,
 ):
     """Get all logs from the device."""
@@ -643,7 +661,7 @@ def logs_search(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     lines: LinesOption = 50,
 ):
     """Search logs for a pattern."""
@@ -816,7 +834,7 @@ def network_show(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[
         bool, typer.Option("--json", "-j", help="Output as JSON")
     ] = False,
@@ -934,7 +952,7 @@ def network_dns(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
 ):
     """Show DNS configuration."""
     host_addr, user, passwd, port_num, device_type = resolve_device_config(
@@ -968,7 +986,7 @@ def security_firewall(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[
         bool, typer.Option("--json", "-j", help="Output as JSON")
     ] = False,
@@ -1060,7 +1078,7 @@ def security_ssh(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[
         bool, typer.Option("--json", "-j", help="Output as JSON")
     ] = False,
@@ -1154,7 +1172,7 @@ def security_certs(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[
         bool, typer.Option("--json", "-j", help="Output as JSON")
     ] = False,
@@ -1251,7 +1269,7 @@ def services_snmp(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[
         bool, typer.Option("--json", "-j", help="Output as JSON")
     ] = False,
@@ -1342,7 +1360,7 @@ def services_ntp(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = 443,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: Annotated[
         bool, typer.Option("--json", "-j", help="Output as JSON")
     ] = False,
@@ -1459,7 +1477,7 @@ def show_actions(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: JsonOption = False,
 ):
     """Show action rules configuration."""
@@ -1539,7 +1557,7 @@ def show_mqtt(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: JsonOption = False,
 ):
     """Show MQTT event bridge configuration."""
@@ -1652,7 +1670,7 @@ def show_recording(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: JsonOption = False,
 ):
     """Show recording configuration."""
@@ -1752,7 +1770,7 @@ def show_storage(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: JsonOption = False,
 ):
     """Show remote storage configuration."""
@@ -1826,7 +1844,7 @@ def show_location(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = False,
+    digest: DigestOption = True,
     json_output: JsonOption = False,
 ):
     """Show device geolocation configuration."""
@@ -1890,6 +1908,713 @@ def show_location(
             console.print(table)
 
     run_async(_show_location())
+
+
+# --- Stream Commands ---
+
+stream_app = typer.Typer(
+    name="stream",
+    help="Stream diagnostics commands (RTSP, RTP, profiles).",
+    no_args_is_help=True,
+)
+app.add_typer(stream_app, name="stream")
+
+
+@stream_app.command("show")
+def stream_show(
+    device: DeviceOption = None,
+    host: HostOption = None,
+    username: UsernameOption = None,
+    password: PasswordOption = None,
+    port: PortOption = 443,
+    digest: DigestOption = True,
+    json_output: Annotated[
+        bool, typer.Option("--json", "-j", help="Output as JSON")
+    ] = False,
+):
+    """Show stream diagnostics (RTSP, RTP, profiles).
+
+    Displays streaming configuration useful for troubleshooting
+    connectivity issues with third-party systems.
+    """
+    import json as json_mod
+
+    host_addr, user, passwd, port_num, device_type = resolve_device_config(
+        device, host, username, password, port
+    )
+
+    device_class = get_device_class(device_type)
+
+    async def _show_stream():
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+            diag = await dev.get_stream_diagnostics(device or host_addr)
+
+            if json_output:
+                data = {
+                    "device": diag.device_name,
+                    "rtsp": {
+                        "enabled": diag.rtsp.enabled,
+                        "port": diag.rtsp.port,
+                        "authentication": diag.rtsp.authentication,
+                        "timeout": diag.rtsp.timeout,
+                    },
+                    "rtp": {
+                        "start_port": diag.rtp.start_port,
+                        "end_port": diag.rtp.end_port,
+                        "multicast_enabled": diag.rtp.multicast_enabled,
+                        "multicast_address": diag.rtp.multicast_address,
+                    },
+                    "profiles": [
+                        {
+                            "name": p.name,
+                            "codec": p.video_codec,
+                            "resolution": p.resolution,
+                            "fps": p.fps,
+                            "bitrate": p.bitrate,
+                            "gop_length": p.gop_length,
+                        }
+                        for p in diag.profiles
+                    ],
+                    "errors": diag.errors,
+                }
+                console.print(json_mod.dumps(data, indent=2))
+                return
+
+            # RTSP panel
+            console.print(
+                Panel(
+                    f"[green]Enabled[/green]" if diag.rtsp.enabled else "[red]Disabled[/red]",
+                    title=f"Stream Diagnostics: {host_addr}",
+                )
+            )
+
+            # RTSP table
+            rtsp_table = Table(title="RTSP Configuration", show_header=False)
+            rtsp_table.add_column("Property", style="cyan")
+            rtsp_table.add_column("Value", style="white")
+            rtsp_table.add_row("Port", str(diag.rtsp.port))
+            rtsp_table.add_row("Authentication", diag.rtsp.authentication)
+            rtsp_table.add_row("Timeout", f"{diag.rtsp.timeout}s")
+            console.print(rtsp_table)
+
+            # RTP table
+            rtp_table = Table(title="RTP Configuration", show_header=False)
+            rtp_table.add_column("Property", style="cyan")
+            rtp_table.add_column("Value", style="white")
+            rtp_table.add_row("Port Range", f"{diag.rtp.start_port}-{diag.rtp.end_port}")
+            rtp_table.add_row(
+                "Multicast",
+                "[green]Yes[/green]" if diag.rtp.multicast_enabled else "[red]No[/red]",
+            )
+            if diag.rtp.multicast_address:
+                rtp_table.add_row("Multicast Address", diag.rtp.multicast_address)
+            console.print(rtp_table)
+
+            # Stream profiles
+            if diag.profiles:
+                profile_table = Table(title="Stream Profiles")
+                profile_table.add_column("Name", style="cyan")
+                profile_table.add_column("Codec", style="green")
+                profile_table.add_column("Resolution", style="white")
+                profile_table.add_column("FPS", style="white")
+                profile_table.add_column("Bitrate", style="white")
+                profile_table.add_column("GOP", style="dim")
+
+                for profile in diag.profiles:
+                    bitrate = f"{profile.bitrate} kbps" if profile.bitrate else "VBR"
+                    profile_table.add_row(
+                        profile.name,
+                        profile.video_codec,
+                        profile.resolution or "-",
+                        str(profile.fps),
+                        bitrate,
+                        str(profile.gop_length),
+                    )
+
+                console.print(profile_table)
+
+            # Show errors if any
+            if diag.errors:
+                console.print("\n[yellow]Warnings:[/yellow]")
+                for error in diag.errors:
+                    console.print(f"  [yellow]•[/yellow] {error}")
+
+    run_async(_show_stream())
+
+
+# --- Report Command ---
+
+@app.command("report")
+def device_report(
+    device: DeviceOption = None,
+    host: HostOption = None,
+    username: UsernameOption = None,
+    password: PasswordOption = None,
+    port: PortOption = 443,
+    digest: DigestOption = True,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Output file")
+    ] = None,
+    format_opt: Annotated[
+        str, typer.Option("--format", "-f", help="Output format (json, yaml)")
+    ] = "json",
+    full: Annotated[
+        bool, typer.Option("--full", help="Include all available configurations")
+    ] = False,
+):
+    """Generate comprehensive device report.
+
+    Collects device info, network config, security settings, stream
+    diagnostics, LLDP info, and time configuration.
+
+    Use --full to include ALL available configurations (SSH, SNMP, certs,
+    MQTT, actions, recording, storage, geolocation, analytics, etc.)
+    """
+    import json as json_mod
+
+    host_addr, user, passwd, port_num, device_type = resolve_device_config(
+        device, host, username, password, port
+    )
+
+    device_class = get_device_class(device_type)
+
+    async def _generate_report():
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+            # Collect all information
+            report: dict = {"device": device or host_addr, "errors": []}
+
+            # Device info
+            try:
+                info = await dev.get_info()
+                report["info"] = {
+                    "brand": info.brand,
+                    "model": info.product_number,
+                    "product_name": info.product_full_name,
+                    "serial_number": info.serial_number,
+                    "firmware": info.firmware_version,
+                    "hardware_id": info.hardware_id,
+                    "architecture": info.architecture,
+                    "soc": info.soc,
+                }
+            except Exception as e:
+                report["errors"].append(f"Device info: {e}")
+
+            # Time info
+            try:
+                time_info = await dev.get_time_info()
+                report["time"] = {
+                    "utc_time": str(time_info.utc_time) if time_info.utc_time else None,
+                    "timezone": time_info.timezone,
+                }
+            except Exception as e:
+                report["errors"].append(f"Time info: {e}")
+
+            # Network config
+            try:
+                network = await dev.get_network_config()
+                if network.interfaces:
+                    iface = network.interfaces[0]
+                    report["network"] = {
+                        "interface": iface.name,
+                        "ip_address": iface.ip_address,
+                        "mac_address": iface.mac_address,
+                        "dhcp": iface.dhcp_enabled,
+                    }
+            except Exception as e:
+                report["errors"].append(f"Network config: {e}")
+
+            # LLDP info
+            try:
+                lldp = await dev.get_lldp_info()
+                report["lldp"] = {
+                    "enabled": lldp.activated,
+                    "neighbors": [
+                        {
+                            "system": n.sys_name,
+                            "port": n.port_id.value,
+                            "port_desc": n.port_descr,
+                        }
+                        for n in lldp.neighbors
+                    ],
+                }
+            except Exception as e:
+                report["errors"].append(f"LLDP info: {e}")
+
+            # Stream diagnostics (cameras only)
+            if device_type == "camera":
+                try:
+                    stream = await dev.get_stream_diagnostics()
+                    report["stream"] = {
+                        "rtsp_port": stream.rtsp.port,
+                        "rtsp_auth": stream.rtsp.authentication,
+                        "rtp_range": f"{stream.rtp.start_port}-{stream.rtp.end_port}",
+                        "profiles": [
+                            {"name": p.name, "codec": p.video_codec, "resolution": p.resolution}
+                            for p in stream.profiles
+                        ],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Stream diagnostics: {e}")
+
+            # Security status
+            try:
+                firewall = await dev.get_firewall_config()
+                report["security"] = {
+                    "firewall_enabled": firewall.enabled,
+                    "ipv4_rules_count": len(firewall.ipv4_rules),
+                    "ipv6_rules_count": len(firewall.ipv6_rules),
+                }
+            except Exception as e:
+                report["errors"].append(f"Security config: {e}")
+
+            # NTP status
+            try:
+                ntp = await dev.get_ntp_config()
+                report["ntp"] = {
+                    "enabled": ntp.enabled,
+                    "servers": [s.address for s in ntp.servers] if ntp.servers else [],
+                }
+            except Exception as e:
+                report["errors"].append(f"NTP config: {e}")
+
+            # Full configuration export
+            if full:
+                # SSH config
+                try:
+                    ssh = await dev.get_ssh_config()
+                    report["ssh"] = {
+                        "enabled": ssh.enabled,
+                        "port": ssh.port,
+                    }
+                except Exception as e:
+                    report["errors"].append(f"SSH config: {e}")
+
+                # SNMP config
+                try:
+                    snmp = await dev.get_snmp_config()
+                    report["snmp"] = {
+                        "enabled": snmp.enabled,
+                        "version": snmp.version.value if snmp.version else None,
+                        "v3_enabled": snmp.v3_enabled,
+                        "read_community": snmp.read_community,
+                        "system_location": snmp.system_location,
+                        "system_contact": snmp.system_contact,
+                    }
+                except Exception as e:
+                    report["errors"].append(f"SNMP config: {e}")
+
+                # Certificate config
+                try:
+                    cert = await dev.get_cert_config()
+                    report["certificates"] = {
+                        "count": len(cert.certificates) if cert.certificates else 0,
+                        "certificates": [
+                            {
+                                "cert_id": c.cert_id,
+                                "subject": c.subject,
+                                "issuer": c.issuer,
+                                "not_before": c.not_before if c.not_before else None,
+                                "not_after": c.not_after if c.not_after else None,
+                            }
+                            for c in (cert.certificates or [])
+                        ],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Certificate config: {e}")
+
+                # Action rules
+                try:
+                    actions = await dev.get_action_config()
+                    report["actions"] = {
+                        "rules_count": len(actions.rules) if actions.rules else 0,
+                        "rules": [
+                            {"id": r.id, "name": r.name, "enabled": r.enabled}
+                            for r in (actions.rules or [])
+                        ],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Action config: {e}")
+
+                # MQTT config
+                try:
+                    mqtt = await dev.get_mqtt_config()
+                    report["mqtt"] = {
+                        "enabled": mqtt.enabled,
+                        "connected": mqtt.connected,
+                        "clients": [
+                            {
+                                "id": c.id,
+                                "host": c.host,
+                                "port": c.port,
+                                "client_id": c.client_id,
+                            }
+                            for c in (mqtt.clients or [])
+                        ],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"MQTT config: {e}")
+
+                # Recording config
+                try:
+                    recording = await dev.get_recording_config()
+                    report["recording"] = {
+                        "groups_count": len(recording.groups) if recording.groups else 0,
+                        "groups": [
+                            {"id": g.id, "name": g.name}
+                            for g in (recording.groups or [])
+                        ],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Recording config: {e}")
+
+                # Storage config
+                try:
+                    storage = await dev.get_storage_config()
+                    report["storage"] = {
+                        "destinations_count": len(storage.destinations) if storage.destinations else 0,
+                        "destinations": [
+                            {
+                                "id": d.id,
+                                "storage_type": d.storage_type.value if d.storage_type else None,
+                                "enabled": d.enabled,
+                            }
+                            for d in (storage.destinations or [])
+                        ],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Storage config: {e}")
+
+                # Geolocation
+                try:
+                    geo = await dev.get_geolocation_config()
+                    report["geolocation"] = {
+                        "latitude": geo.latitude,
+                        "longitude": geo.longitude,
+                        "altitude": geo.altitude,
+                        "direction": geo.direction,
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Geolocation config: {e}")
+
+                # Analytics (cameras)
+                if device_type == "camera":
+                    try:
+                        analytics = await dev.get_analytics_config()
+                        report["analytics"] = {
+                            "profiles_count": len(analytics.profiles) if analytics.profiles else 0,
+                            "profiles": [
+                                {"id": p.id, "name": p.name, "enabled": p.enabled}
+                                for p in (analytics.profiles or [])
+                            ],
+                        }
+                    except Exception as e:
+                        report["errors"].append(f"Analytics config: {e}")
+
+                # OIDC config
+                try:
+                    oidc = await dev.get_oidc_config()
+                    report["oidc"] = {
+                        "enabled": oidc.enabled,
+                        "issuer_uri": oidc.provider.issuer_uri if oidc.provider else None,
+                        "client_id": oidc.provider.client_id if oidc.provider else None,
+                    }
+                except Exception as e:
+                    report["errors"].append(f"OIDC config: {e}")
+
+                # OAuth config
+                try:
+                    oauth = await dev.get_oauth_config()
+                    report["oauth"] = {
+                        "enabled": oauth.enabled,
+                    }
+                except Exception as e:
+                    report["errors"].append(f"OAuth config: {e}")
+
+                # Crypto policy
+                try:
+                    crypto = await dev.get_crypto_policy_config()
+                    report["crypto_policy"] = {
+                        "tls_min_version": crypto.tls_min_version.value if crypto.tls_min_version else None,
+                        "tls_max_version": crypto.tls_max_version.value if crypto.tls_max_version else None,
+                        "cipher_suites": [c.name for c in (crypto.cipher_suites or [])],
+                    }
+                except Exception as e:
+                    report["errors"].append(f"Crypto policy config: {e}")
+
+            # Format output
+            if format_opt == "yaml":
+                try:
+                    import yaml
+                    output_str = yaml.dump(report, default_flow_style=False, sort_keys=False)
+                except ImportError:
+                    output_str = json_mod.dumps(report, indent=2)
+                    console.print("[yellow]PyYAML not installed, using JSON[/yellow]")
+            elif format_opt == "text":
+                lines = [f"Device Report: {report['device']}", "=" * 50]
+                if "info" in report:
+                    lines.append(f"Model: {report['info'].get('model', '-')}")
+                    lines.append(f"Serial: {report['info'].get('serial_number', '-')}")
+                    lines.append(f"Firmware: {report['info'].get('firmware', '-')}")
+                if "network" in report:
+                    lines.append(f"IP: {report['network'].get('ip_address', '-')}")
+                    lines.append(f"MAC: {report['network'].get('mac_address', '-')}")
+                if "lldp" in report and report["lldp"]["neighbors"]:
+                    lines.append(f"Connected to: {report['lldp']['neighbors'][0].get('system', '-')}")
+                output_str = "\n".join(lines)
+            else:
+                output_str = json_mod.dumps(report, indent=2)
+
+            # Output
+            if output:
+                output.write_text(output_str)
+                console.print(f"[green]Report saved to:[/green] {output}")
+            else:
+                console.print(output_str)
+
+    run_async(_generate_report())
+
+
+@app.command("devices")
+def list_devices():
+    """List all configured devices."""
+    config = load_config()
+
+    if not config.devices:
+        console.print("[yellow]No devices configured[/yellow]")
+        console.print("Run 'axiscam init' to create a configuration file")
+        return
+
+    table = Table(title="Configured Devices")
+    table.add_column("Name", style="cyan")
+    table.add_column("Type", style="green")
+    table.add_column("Host", style="white")
+    table.add_column("Port", style="dim")
+    table.add_column("Friendly Name", style="white")
+
+    for name, dev in config.devices.items():
+        default_marker = " *" if name == config.default_device else ""
+        table.add_row(
+            f"{name}{default_marker}",
+            dev.device_type,
+            dev.host,
+            str(dev.port),
+            dev.name or "-",
+        )
+
+    console.print(table)
+    if config.default_device:
+        console.print(f"\n[dim]* = default device[/dim]")
+
+
+@app.command("migrate")
+def migrate_config():
+    """Migrate configuration from legacy path to new path.
+
+    Copies configuration from ~/.config/axis/ to ~/.config/axiscam/
+    if the legacy path exists and the new path doesn't.
+    """
+    import shutil
+    from platformdirs import user_config_dir
+
+    legacy_dir = Path(user_config_dir("axis"))
+    new_dir = Path(user_config_dir("axiscam"))
+
+    legacy_config = legacy_dir / "config.yaml"
+    new_config = new_dir / "config.yaml"
+
+    if not legacy_config.exists():
+        console.print(f"[yellow]No legacy config found at:[/yellow] {legacy_config}")
+        return
+
+    if new_config.exists():
+        console.print(f"[yellow]Config already exists at:[/yellow] {new_config}")
+        console.print("Use 'axiscam init --force' to overwrite")
+        return
+
+    # Create new directory
+    new_dir.mkdir(parents=True, exist_ok=True)
+
+    # Copy config file
+    shutil.copy2(legacy_config, new_config)
+
+    # Set secure permissions (owner read/write only)
+    import os
+    os.chmod(new_config, 0o600)
+
+    # Also copy .env if it exists
+    legacy_env = legacy_dir / ".env"
+    if legacy_env.exists():
+        new_env = new_dir / ".env"
+        shutil.copy2(legacy_env, new_env)
+        os.chmod(new_env, 0o600)
+        console.print(f"[green]Copied .env file[/green]")
+
+    console.print(f"[green]Config migrated to:[/green] {new_config}")
+    console.print("\n[dim]Legacy config preserved at original location.[/dim]")
+    console.print("[dim]Delete ~/.config/axis/ manually when ready.[/dim]")
+
+
+# =============================================================================
+# Download Commands
+# =============================================================================
+
+
+@download_app.command("report")
+def download_server_report(
+    device: DeviceOption = None,
+    host: HostOption = None,
+    username: UsernameOption = None,
+    password: PasswordOption = None,
+    port: PortOption = 443,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output", "-o",
+            help="Output file path. If not specified, auto-generates filename.",
+        ),
+    ] = None,
+    format_opt: Annotated[
+        str,
+        typer.Option(
+            "--format", "-f",
+            help="Report format: zip_with_image (default), zip, or text.",
+        ),
+    ] = "zip_with_image",
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout", "-t",
+            help="Download timeout in seconds.",
+        ),
+    ] = 60.0,
+    digest: DigestOption = True,
+):
+    """Download server report from an AXIS device.
+
+    The server report contains diagnostic information including system logs,
+    configuration, and optionally a snapshot image.
+
+    Examples:
+        axiscam download report -d front_of_house -o ~/report.zip
+        axiscam download report -d camera1 --format text -o ~/report.txt
+        axiscam download report -H 192.168.1.10 -u admin -p secret
+    """
+    # Resolve device configuration
+    host_addr, user, passwd, port_num, device_type = resolve_device_config(
+        device, host, username, password, port
+    )
+
+    # Map format string to enum
+    format_map = {
+        "zip_with_image": ServerReportFormat.ZIP_WITH_IMAGE,
+        "zip": ServerReportFormat.ZIP,
+        "text": ServerReportFormat.TEXT,
+    }
+    report_format = format_map.get(format_opt.lower())
+    if not report_format:
+        console.print(f"[red]Error:[/red] Invalid format '{format_opt}'")
+        console.print("Valid formats: zip_with_image, zip, text")
+        raise typer.Exit(1)
+
+    # Determine output filename
+    if not output:
+        device_name = device or host_addr.replace(".", "_")
+        ext = ".txt" if report_format == ServerReportFormat.TEXT else ".zip"
+        output = Path(f"server_report_{device_name}{ext}")
+
+    device_class = get_device_class(device_type)
+
+    async def _download():
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+            with console.status(f"[bold blue]Downloading server report from {host_addr}...[/bold blue]"):
+                report = await dev.download_server_report(
+                    format=report_format,
+                    timeout=timeout,
+                )
+
+            if not report.success:
+                console.print(f"[red]Error:[/red] {report.error}")
+                raise typer.Exit(1)
+
+            # Write to file
+            output.write_bytes(report.content)
+            size_kb = report.size_bytes / 1024
+            console.print(f"[green]Server report downloaded:[/green] {output}")
+            console.print(f"[dim]Size: {size_kb:.1f} KB, Format: {report_format.value}[/dim]")
+
+    run_async(_download())
+
+
+@download_app.command("debug")
+def download_debug_archive(
+    device: DeviceOption = None,
+    host: HostOption = None,
+    username: UsernameOption = None,
+    password: PasswordOption = None,
+    port: PortOption = 443,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output", "-o",
+            help="Output file path. If not specified, auto-generates filename.",
+        ),
+    ] = None,
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout", "-t",
+            help="Download timeout in seconds (debug archives can be large).",
+        ),
+    ] = 120.0,
+    digest: DigestOption = True,
+):
+    """Download debug archive from an AXIS device.
+
+    The debug archive (debug.tgz) is a comprehensive diagnostic package
+    containing system logs, configuration files, core dumps, and other
+    debugging information. This file is typically requested by AXIS
+    technical support for troubleshooting.
+
+    Note: Debug archives can be large and may take longer to generate
+    and download. The default timeout is 120 seconds.
+
+    Examples:
+        axiscam download debug -d front_of_house -o ~/debug.tgz
+        axiscam download debug -d camera1 --timeout 180
+        axiscam download debug -H 192.168.1.10 -u admin -p secret
+    """
+    # Resolve device configuration
+    host_addr, user, passwd, port_num, device_type = resolve_device_config(
+        device, host, username, password, port
+    )
+
+    # Determine output filename
+    if not output:
+        device_name = device or host_addr.replace(".", "_")
+        output = Path(f"debug_{device_name}.tgz")
+
+    device_class = get_device_class(device_type)
+
+    async def _download():
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+            with console.status(f"[bold blue]Downloading debug archive from {host_addr}...[/bold blue]"):
+                report = await dev.download_debug_archive(timeout=timeout)
+
+            if not report.success:
+                console.print(f"[red]Error:[/red] {report.error}")
+                raise typer.Exit(1)
+
+            # Write to file
+            output.write_bytes(report.content)
+            size_kb = report.size_bytes / 1024
+            if size_kb > 1024:
+                size_str = f"{size_kb / 1024:.1f} MB"
+            else:
+                size_str = f"{size_kb:.1f} KB"
+            console.print(f"[green]Debug archive downloaded:[/green] {output}")
+            console.print(f"[dim]Size: {size_str}[/dim]")
+
+    run_async(_download())
 
 
 def main():

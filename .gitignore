@@ -30,3 +30,7 @@ build/
 
 # macOS
 .DS_Store
+
+# Project Spcficic
+docs/
+specs/

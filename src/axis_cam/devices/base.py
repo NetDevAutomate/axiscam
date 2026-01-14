@@ -13,6 +13,7 @@ from axis_cam.api.analytics import VideoAnalyticsAPI
 from axis_cam.api.analytics_mqtt import AnalyticsMqttAPI
 from axis_cam.api.audio_multicast import AudioMulticastAPI
 from axis_cam.api.cert import CertAPI
+from axis_cam.api.crypto_policy import CryptoPolicyAPI
 from axis_cam.api.device_info import BasicDeviceInfoAPI
 from axis_cam.api.firewall import FirewallAPI
 from axis_cam.api.geolocation import GeolocationAPI
@@ -20,7 +21,10 @@ from axis_cam.api.lldp import LldpAPI
 from axis_cam.api.logs import LogsAPI
 from axis_cam.api.mqtt import MqttBridgeAPI
 from axis_cam.api.network import NetworkSettingsAPI
+from axis_cam.api.networkpairing import NetworkPairingAPI
 from axis_cam.api.ntp import NtpAPI
+from axis_cam.api.oauth import OAuthAPI
+from axis_cam.api.oidc import OidcAPI
 from axis_cam.api.param import ParamAPI
 from axis_cam.api.recording import RecordingAPI
 from axis_cam.api.serverreport import ServerReportAPI
@@ -28,7 +32,9 @@ from axis_cam.api.snapshot import BestSnapshotAPI
 from axis_cam.api.snmp import SnmpAPI
 from axis_cam.api.ssh import SshAPI
 from axis_cam.api.storage import RemoteStorageAPI
+from axis_cam.api.stream import StreamAPI, StreamDiagnostics
 from axis_cam.api.time import TimeAPI
+from axis_cam.api.virtualhost import VirtualHostAPI
 from axis_cam.client import VapixClient
 from axis_cam.models import (
     ActionConfig,
@@ -38,6 +44,7 @@ from axis_cam.models import (
     BasicDeviceInfo,
     BestSnapshotConfig,
     CertConfig,
+    CryptoPolicyConfig,
     DeviceCapabilities,
     DeviceStatus,
     DeviceType,
@@ -48,7 +55,10 @@ from axis_cam.models import (
     LogType,
     MqttBridgeConfig,
     NetworkConfig,
+    NetworkPairingConfig,
     NtpConfig,
+    OAuthConfig,
+    OidcConfig,
     RecordingConfig,
     RemoteStorageConfig,
     ServerReport,
@@ -56,6 +66,7 @@ from axis_cam.models import (
     SnmpConfig,
     SshConfig,
     TimeInfo,
+    VirtualHostConfig,
 )
 
 
@@ -98,6 +109,12 @@ class AxisDevice(ABC):
         analytics_mqtt: API module for analytics MQTT publishing.
         audio_multicast: API module for audio multicast control.
         serverreport: API module for server report and debug archive downloads.
+        oidc: API module for OpenID Connect configuration.
+        oauth: API module for OAuth 2.0 Client Credentials Grant.
+        virtualhost: API module for virtual host configuration.
+        crypto_policy: API module for cryptographic policy settings.
+        networkpairing: API module for network pairing.
+        stream: API module for stream diagnostics (RTSP, RTP, profiles).
     """
 
     # Device type identifier - must be set by subclasses
@@ -125,12 +142,14 @@ class AxisDevice(ABC):
             use_digest_auth: Use Digest auth instead of Basic.
         """
         self._host = host
+        # Auto-detect HTTPS based on port (443 = HTTPS, otherwise HTTP)
+        use_https = port == 443
         self._client = VapixClient(
             host=host,
             username=username,
             password=password,
             port=port,
-            use_https=True,  # AXIS devices typically use HTTPS
+            use_https=use_https,
             verify_ssl=ssl_verify,
             timeout=timeout,
             use_digest_auth=use_digest_auth,
@@ -164,6 +183,16 @@ class AxisDevice(ABC):
         self.analytics_mqtt = AnalyticsMqttAPI(self._client)
         self.audio_multicast = AudioMulticastAPI(self._client)
         self.serverreport = ServerReportAPI(self._client)
+
+        # Initialize lower-priority API modules
+        self.oidc = OidcAPI(self._client)
+        self.oauth = OAuthAPI(self._client)
+        self.virtualhost = VirtualHostAPI(self._client)
+        self.crypto_policy = CryptoPolicyAPI(self._client)
+        self.networkpairing = NetworkPairingAPI(self._client)
+
+        # Initialize stream diagnostics API
+        self.stream = StreamAPI(self._client)
 
         # Track discovered capabilities
         self._capabilities: DeviceCapabilities | None = None
@@ -481,6 +510,63 @@ class AxisDevice(ABC):
             ServerReport model with debug archive content.
         """
         return await self.serverreport.get_debug_archive(timeout=timeout)
+
+    async def get_oidc_config(self) -> OidcConfig:
+        """Get OpenID Connect configuration.
+
+        Returns:
+            OidcConfig model with OIDC settings.
+        """
+        return await self.oidc.get_config()
+
+    async def get_oauth_config(self) -> OAuthConfig:
+        """Get OAuth 2.0 Client Credentials Grant configuration.
+
+        Returns:
+            OAuthConfig model with OAuth settings.
+        """
+        return await self.oauth.get_config()
+
+    async def get_virtualhost_config(self) -> VirtualHostConfig:
+        """Get virtual host configuration.
+
+        Returns:
+            VirtualHostConfig model with virtual host settings.
+        """
+        return await self.virtualhost.get_config()
+
+    async def get_crypto_policy_config(self) -> CryptoPolicyConfig:
+        """Get cryptographic policy configuration.
+
+        Returns:
+            CryptoPolicyConfig model with crypto settings.
+        """
+        return await self.crypto_policy.get_config()
+
+    async def get_networkpairing_config(self) -> NetworkPairingConfig:
+        """Get network pairing configuration.
+
+        Returns:
+            NetworkPairingConfig model with pairing settings.
+        """
+        return await self.networkpairing.get_config()
+
+    async def get_stream_diagnostics(
+        self, device_name: str | None = None
+    ) -> StreamDiagnostics:
+        """Get stream diagnostics including RTSP, RTP, and profile settings.
+
+        This method retrieves comprehensive streaming configuration useful
+        for troubleshooting connectivity issues with third-party systems.
+
+        Args:
+            device_name: Optional device name for the report.
+
+        Returns:
+            StreamDiagnostics model with RTSP, RTP, profiles, and network info.
+        """
+        name = device_name or self._host
+        return await self.stream.get_diagnostics(name)
 
     @abstractmethod
     async def get_device_specific_info(self) -> dict[str, Any]:

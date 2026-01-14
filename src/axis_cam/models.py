@@ -1574,3 +1574,354 @@ class AudioMulticastConfig(BaseModel):
     streams: list[AudioStream] = Field(default_factory=list)
     default_ttl: int = Field(default=64, ge=1, le=255)
     audio_source: str = ""
+
+
+# =============================================================================
+# OIDC Setup Models (OpenID Connect)
+# =============================================================================
+
+
+class OidcProviderConfig(BaseModel):
+    """OpenID Connect provider configuration.
+
+    Attributes:
+        issuer_uri: OIDC provider issuer URI.
+        client_id: Client ID for the OIDC application.
+        authorization_endpoint: Authorization endpoint URL.
+        token_endpoint: Token endpoint URL.
+        userinfo_endpoint: UserInfo endpoint URL.
+        jwks_uri: JSON Web Key Set URI.
+        scopes: List of requested scopes.
+        response_type: OAuth response type.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    issuer_uri: str = ""
+    client_id: str = ""
+    authorization_endpoint: str = ""
+    token_endpoint: str = ""
+    userinfo_endpoint: str = ""
+    jwks_uri: str = ""
+    scopes: list[str] = Field(default_factory=lambda: ["openid", "profile"])
+    response_type: str = "code"
+
+
+class OidcClaimMapping(BaseModel):
+    """Mapping between OIDC claims and device attributes.
+
+    Attributes:
+        claim_name: Name of the OIDC claim.
+        device_attribute: Device attribute to map to.
+        required: Whether the claim is required.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    claim_name: str = ""
+    device_attribute: str = ""
+    required: bool = False
+
+
+class OidcConfig(BaseModel):
+    """OpenID Connect configuration.
+
+    Attributes:
+        enabled: Whether OIDC authentication is enabled.
+        provider: OIDC provider configuration.
+        redirect_uri: Redirect URI for OIDC flow.
+        logout_uri: Logout redirect URI.
+        claim_mappings: List of claim-to-attribute mappings.
+        admin_claim: Claim that grants admin access.
+        admin_claim_value: Value of admin claim for access grant.
+        session_timeout: Session timeout in seconds.
+        allow_local_auth: Whether to allow local authentication as fallback.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    provider: OidcProviderConfig | None = None
+    redirect_uri: str = ""
+    logout_uri: str = ""
+    claim_mappings: list[OidcClaimMapping] = Field(default_factory=list)
+    admin_claim: str = ""
+    admin_claim_value: str = ""
+    session_timeout: int = Field(default=3600, ge=60)
+    allow_local_auth: bool = True
+
+
+# =============================================================================
+# OAuth Client Credentials Grant Models
+# =============================================================================
+
+
+class OAuthCredentialConfig(BaseModel):
+    """OAuth 2.0 client credentials configuration.
+
+    Attributes:
+        credential_id: Unique identifier for the credential set.
+        name: Friendly name for the credential.
+        token_endpoint: OAuth token endpoint URL.
+        client_id: OAuth client ID.
+        scope: Requested OAuth scopes.
+        enabled: Whether this credential is active.
+        grant_type: OAuth grant type (typically client_credentials).
+        token_refresh_margin: Seconds before expiry to refresh token.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    credential_id: str = ""
+    name: str = ""
+    token_endpoint: str = ""
+    client_id: str = ""
+    scope: str = ""
+    enabled: bool = False
+    grant_type: str = "client_credentials"
+    token_refresh_margin: int = Field(default=60, ge=0)
+
+
+class OAuthTokenStatus(BaseModel):
+    """OAuth token status information.
+
+    Attributes:
+        credential_id: Associated credential ID.
+        valid: Whether the current token is valid.
+        expires_at: Token expiration timestamp.
+        scope: Granted scope.
+        error: Last error message if any.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    credential_id: str = ""
+    valid: bool = False
+    expires_at: str = ""
+    scope: str = ""
+    error: str = ""
+
+
+class OAuthConfig(BaseModel):
+    """OAuth 2.0 Client Credentials Grant configuration.
+
+    Attributes:
+        enabled: Whether OAuth client credentials is enabled.
+        credentials: List of configured credentials.
+        token_statuses: Status of each credential's token.
+        default_credential: Default credential ID to use.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    credentials: list[OAuthCredentialConfig] = Field(default_factory=list)
+    token_statuses: list[OAuthTokenStatus] = Field(default_factory=list)
+    default_credential: str = ""
+
+
+# =============================================================================
+# Virtual Host Models
+# =============================================================================
+
+
+class VirtualHost(BaseModel):
+    """Virtual host configuration.
+
+    Attributes:
+        host_id: Unique identifier for the virtual host.
+        hostname: Hostname/domain for this virtual host.
+        enabled: Whether this virtual host is active.
+        certificate_id: SSL certificate ID for HTTPS.
+        redirect_http_to_https: Whether to redirect HTTP to HTTPS.
+        default_host: Whether this is the default host.
+        allowed_methods: List of allowed HTTP methods.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    host_id: str = ""
+    hostname: str = ""
+    enabled: bool = True
+    certificate_id: str = ""
+    redirect_http_to_https: bool = True
+    default_host: bool = False
+    allowed_methods: list[str] = Field(
+        default_factory=lambda: ["GET", "POST", "PUT", "DELETE"]
+    )
+
+
+class VirtualHostConfig(BaseModel):
+    """Virtual host configuration.
+
+    Attributes:
+        enabled: Whether virtual hosting is enabled.
+        hosts: List of configured virtual hosts.
+        default_certificate: Default SSL certificate ID.
+        strict_host_checking: Whether to enforce strict host header checking.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    hosts: list[VirtualHost] = Field(default_factory=list)
+    default_certificate: str = ""
+    strict_host_checking: bool = True
+
+
+# =============================================================================
+# Cryptographic Policy Models
+# =============================================================================
+
+
+class TlsVersion(str, Enum):
+    """TLS protocol versions."""
+
+    TLS_1_0 = "1.0"
+    TLS_1_1 = "1.1"
+    TLS_1_2 = "1.2"
+    TLS_1_3 = "1.3"
+
+
+class CipherSuite(BaseModel):
+    """TLS cipher suite configuration.
+
+    Attributes:
+        name: Cipher suite name.
+        enabled: Whether this cipher is enabled.
+        strength: Cipher strength classification.
+        key_exchange: Key exchange algorithm.
+        authentication: Authentication algorithm.
+        encryption: Encryption algorithm.
+        mac: MAC algorithm.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str = ""
+    enabled: bool = True
+    strength: str = ""  # "strong", "medium", "weak"
+    key_exchange: str = ""
+    authentication: str = ""
+    encryption: str = ""
+    mac: str = ""
+
+
+class CryptoPolicyConfig(BaseModel):
+    """Cryptographic policy configuration.
+
+    Attributes:
+        tls_min_version: Minimum TLS version allowed.
+        tls_max_version: Maximum TLS version allowed.
+        cipher_suites: List of cipher suite configurations.
+        weak_ciphers_enabled: Whether weak ciphers are allowed.
+        prefer_server_ciphers: Whether to prefer server cipher order.
+        session_tickets_enabled: Whether TLS session tickets are enabled.
+        ocsp_stapling_enabled: Whether OCSP stapling is enabled.
+        hsts_enabled: Whether HTTP Strict Transport Security is enabled.
+        hsts_max_age: HSTS max-age in seconds.
+        hsts_include_subdomains: Whether HSTS includes subdomains.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    tls_min_version: TlsVersion = TlsVersion.TLS_1_2
+    tls_max_version: TlsVersion = TlsVersion.TLS_1_3
+    cipher_suites: list[CipherSuite] = Field(default_factory=list)
+    weak_ciphers_enabled: bool = False
+    prefer_server_ciphers: bool = True
+    session_tickets_enabled: bool = True
+    ocsp_stapling_enabled: bool = False
+    hsts_enabled: bool = False
+    hsts_max_age: int = Field(default=31536000, ge=0)  # 1 year default
+    hsts_include_subdomains: bool = False
+
+
+# =============================================================================
+# Network Pairing Models
+# =============================================================================
+
+
+class PairingMode(str, Enum):
+    """Network pairing modes."""
+
+    DISABLED = "disabled"
+    MANUAL = "manual"
+    AUTOMATIC = "automatic"
+    DISCOVERY = "discovery"
+
+
+class PairedDevice(BaseModel):
+    """Information about a paired device.
+
+    Attributes:
+        device_id: Unique identifier of the paired device.
+        name: Friendly name of the paired device.
+        address: IP address or hostname.
+        device_type: Type of paired device.
+        paired_at: Timestamp when pairing was established.
+        last_seen: Timestamp of last communication.
+        online: Whether the device is currently online.
+        trust_level: Trust level (e.g., "full", "limited").
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    device_id: str = ""
+    name: str = ""
+    address: str = ""
+    device_type: str = ""
+    paired_at: str = ""
+    last_seen: str = ""
+    online: bool = False
+    trust_level: str = "full"
+
+
+class PairingRequest(BaseModel):
+    """Pending pairing request information.
+
+    Attributes:
+        request_id: Unique identifier for the request.
+        device_name: Name of the requesting device.
+        device_address: Address of the requesting device.
+        device_type: Type of the requesting device.
+        requested_at: Timestamp when request was received.
+        expires_at: Timestamp when request expires.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    request_id: str = ""
+    device_name: str = ""
+    device_address: str = ""
+    device_type: str = ""
+    requested_at: str = ""
+    expires_at: str = ""
+
+
+class NetworkPairingConfig(BaseModel):
+    """Network pairing configuration.
+
+    Attributes:
+        enabled: Whether network pairing is enabled.
+        mode: Pairing mode (disabled, manual, automatic, discovery).
+        discovery_enabled: Whether device discovery is active.
+        pairing_token: Current pairing token (if in pairing mode).
+        token_expiry: Token expiration timestamp.
+        paired_devices: List of currently paired devices.
+        pending_requests: List of pending pairing requests.
+        max_paired_devices: Maximum number of devices that can be paired.
+        auto_approve_same_network: Auto-approve devices on same network.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    enabled: bool = False
+    mode: PairingMode = PairingMode.DISABLED
+    discovery_enabled: bool = False
+    pairing_token: str = ""
+    token_expiry: str = ""
+    paired_devices: list[PairedDevice] = Field(default_factory=list)
+    pending_requests: list[PairingRequest] = Field(default_factory=list)
+    max_paired_devices: int = Field(default=10, ge=1)
+    auto_approve_same_network: bool = False
