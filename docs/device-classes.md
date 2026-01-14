@@ -284,7 +284,7 @@ from axis_cam import AxisCamera
 async with AxisCamera(
     host="192.168.1.10",
     username="admin",
-    password="secure_password",
+    password="your_password",  # pragma: allowlist secret
     port=443,
     use_digest_auth=True,
 ) as camera:

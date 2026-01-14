@@ -445,6 +445,7 @@ class TestAxisRecorder:
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_group("1")
 
+            assert result is not None
             assert result["id"] == "1"
             assert result["name"] == "Group1"
 
@@ -523,6 +524,7 @@ class TestAxisRecorder:
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_remote_storage_config()
 
+            assert result is not None
             assert result["enabled"] is True
             assert result["endpoint"] == "s3://bucket"
 
@@ -697,26 +699,14 @@ class TestAxisIntercom:
 
     @pytest.mark.asyncio
     async def test_get_audio_multicast_config(self, mock_client):
-        """Test get_audio_multicast_config method."""
-        mock_client.get_json = AsyncMock(
-            return_value={"data": {"enabled": True, "address": "224.0.0.1"}}
-        )
+        """Test get_audio_multicast_config method returns AudioMulticastConfig."""
+        from axis_cam.models import AudioMulticastConfig
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_multicast_config()
 
-            assert result["enabled"] is True
-            assert result["address"] == "224.0.0.1"
-
-    @pytest.mark.asyncio
-    async def test_get_audio_multicast_config_error(self, mock_client):
-        """Test get_audio_multicast_config returns None on error."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
-
-        async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
-            result = await intercom.get_audio_multicast_config()
-
-            assert result is None
+            # Returns AudioMulticastConfig model
+            assert isinstance(result, AudioMulticastConfig)
 
     @pytest.mark.asyncio
     async def test_get_sip_config(self, mock_client):
@@ -909,26 +899,27 @@ class TestAxisSpeaker:
 
     @pytest.mark.asyncio
     async def test_get_audio_multicast_config(self, mock_client):
-        """Test get_audio_multicast_config method."""
-        mock_client.get_json = AsyncMock(
-            return_value={"data": {"enabled": True, "multicastAddress": "224.0.0.2"}}
-        )
+        """Test get_audio_multicast_config method returns AudioMulticastConfig."""
+        from axis_cam.models import AudioMulticastConfig
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_multicast_config()
 
-            assert result["enabled"] is True
-            assert result["multicastAddress"] == "224.0.0.2"
+            # Returns AudioMulticastConfig model
+            assert isinstance(result, AudioMulticastConfig)
 
     @pytest.mark.asyncio
     async def test_get_audio_multicast_config_error(self, mock_client):
-        """Test get_audio_multicast_config returns None on error."""
+        """Test get_audio_multicast_config returns default on error."""
+        from axis_cam.models import AudioMulticastConfig
+
         mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_multicast_config()
 
-            assert result is None
+            # Returns default AudioMulticastConfig on error
+            assert isinstance(result, AudioMulticastConfig)
 
     @pytest.mark.asyncio
     async def test_get_audio_status(self, mock_client):

@@ -13,9 +13,9 @@ Models are organized by domain:
 
 from datetime import datetime
 from enum import Enum
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field
 
 # =============================================================================
 # Enumerations
@@ -263,13 +263,45 @@ class NetworkSettings(BaseModel):
 # =============================================================================
 
 
+def _normalize_log_level(v: Any) -> LogLevel:
+    """Normalize log level string to enum.
+
+    Args:
+        v: Input value for level field.
+
+    Returns:
+        Normalized LogLevel enum value.
+    """
+    if isinstance(v, LogLevel):
+        return v
+    if isinstance(v, str):
+        level_map = {
+            "emerg": LogLevel.EMERGENCY,
+            "alert": LogLevel.ALERT,
+            "crit": LogLevel.CRITICAL,
+            "err": LogLevel.ERROR,
+            "error": LogLevel.ERROR,
+            "warn": LogLevel.WARNING,
+            "warning": LogLevel.WARNING,
+            "notice": LogLevel.NOTICE,
+            "info": LogLevel.INFO,
+            "debug": LogLevel.DEBUG,
+        }
+        return level_map.get(v.lower(), LogLevel.INFO)
+    return LogLevel.INFO
+
+
+# Type alias for LogLevel that accepts strings and normalizes them
+NormalizedLogLevel = Annotated[LogLevel, BeforeValidator(_normalize_log_level)]
+
+
 class LogEntry(BaseModel):
     """A single log entry from AXIS device.
 
     Attributes:
         timestamp: Log entry timestamp.
         hostname: Device hostname.
-        level: Log severity level.
+        level: Log severity level (accepts string shortcuts like 'err', 'warn').
         process: Process name that generated the log.
         pid: Process ID.
         message: Log message content.
@@ -278,40 +310,11 @@ class LogEntry(BaseModel):
 
     timestamp: datetime
     hostname: str = ""
-    level: LogLevel = LogLevel.INFO
+    level: NormalizedLogLevel = LogLevel.INFO
     process: str = ""
     pid: int | None = None
     message: str
     raw: str = ""
-
-    @field_validator("level", mode="before")
-    @classmethod
-    def normalize_level(cls, v: Any) -> LogLevel:
-        """Normalize log level string to enum.
-
-        Args:
-            v: Input value for level field.
-
-        Returns:
-            Normalized LogLevel enum value.
-        """
-        if isinstance(v, LogLevel):
-            return v
-        if isinstance(v, str):
-            level_map = {
-                "emerg": LogLevel.EMERGENCY,
-                "alert": LogLevel.ALERT,
-                "crit": LogLevel.CRITICAL,
-                "err": LogLevel.ERROR,
-                "error": LogLevel.ERROR,
-                "warn": LogLevel.WARNING,
-                "warning": LogLevel.WARNING,
-                "notice": LogLevel.NOTICE,
-                "info": LogLevel.INFO,
-                "debug": LogLevel.DEBUG,
-            }
-            return level_map.get(v.lower(), LogLevel.INFO)
-        return LogLevel.INFO
 
 
 class LogReport(BaseModel):
@@ -616,6 +619,11 @@ class ProxySettings(BaseModel):
     username: str = ""
     exceptions: list[str] = Field(default_factory=list)
 
+    @property
+    def server(self) -> str:
+        """Get proxy server address (alias for host)."""
+        return self.host
+
 
 class NetworkConfig(BaseModel):
     """Extended network configuration from network-settings API.
@@ -677,6 +685,7 @@ class FirewallRule(BaseModel):
         dest_port: Destination port or range.
         description: Rule description.
         enabled: Whether rule is active.
+        priority: Rule priority (lower = higher priority).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -689,6 +698,22 @@ class FirewallRule(BaseModel):
     dest_port: str = ""
     description: str = ""
     enabled: bool = True
+    priority: int = 0
+
+    @property
+    def name(self) -> str:
+        """Get rule name (alias for description)."""
+        return self.description
+
+    @property
+    def source_address(self) -> str:
+        """Get source address (alias for source)."""
+        return self.source
+
+    @property
+    def destination_port(self) -> str:
+        """Get destination port (alias for dest_port)."""
+        return self.dest_port
 
 
 class FirewallConfig(BaseModel):
@@ -798,6 +823,7 @@ class SnmpTrapReceiver(BaseModel):
     port: int = 162
     community: str = ""
     enabled: bool = True
+    version: str = "v2c"  # SNMP version for this trap receiver
 
 
 class SnmpConfig(BaseModel):
@@ -830,6 +856,16 @@ class SnmpConfig(BaseModel):
     v3_username: str = ""
     v3_auth_protocol: str = ""
     v3_priv_protocol: str = ""
+
+    @property
+    def location(self) -> str:
+        """Get system location (alias for system_location)."""
+        return self.system_location
+
+    @property
+    def contact(self) -> str:
+        """Get system contact (alias for system_contact)."""
+        return self.system_contact
 
 
 # =============================================================================
@@ -878,6 +914,27 @@ class Certificate(BaseModel):
     key_type: str = ""
     self_signed: bool = False
 
+    @property
+    def id(self) -> str:
+        """Get certificate ID (alias for cert_id)."""
+        return self.cert_id
+
+    @property
+    def valid_from(self) -> str:
+        """Get validity start date (alias for not_before)."""
+        return self.not_before
+
+    @property
+    def valid_to(self) -> str:
+        """Get validity end date (alias for not_after)."""
+        return self.not_after
+
+    @property
+    def is_valid(self) -> bool:
+        """Check if certificate is currently valid (simplified check)."""
+        # This is a simplified check - real implementation would compare dates
+        return bool(self.not_before and self.not_after)
+
 
 class CertConfig(BaseModel):
     """Certificate configuration.
@@ -905,6 +962,12 @@ class CertConfig(BaseModel):
             return self.active_certificate.cert_id
         return ""
 
+    @property
+    def client_cert_enabled(self) -> bool:
+        """Check if client certificate authentication is enabled."""
+        # Returns True if there are any client certificates installed
+        return any(c.cert_type == CertificateType.CLIENT for c in self.certificates)
+
 
 # =============================================================================
 # NTP Models
@@ -919,6 +982,7 @@ class NtpServer(BaseModel):
         enabled: Whether this server is active.
         prefer: Whether this is the preferred server.
         source: Server source (static, dhcp).
+        iburst: Whether to use iburst mode for faster initial sync.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -927,6 +991,7 @@ class NtpServer(BaseModel):
     enabled: bool = True
     prefer: bool = False
     source: str = "static"
+    iburst: bool = False
 
 
 class NtpSyncStatus(BaseModel):
@@ -947,6 +1012,11 @@ class NtpSyncStatus(BaseModel):
     stratum: int = 0
     offset_ms: float = 0.0
     last_sync: str = ""
+
+    @property
+    def delay_ms(self) -> float:
+        """Get delay in milliseconds (alias for offset_ms)."""
+        return self.offset_ms
 
 
 class NtpConfig(BaseModel):

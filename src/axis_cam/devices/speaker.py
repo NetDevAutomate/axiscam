@@ -7,7 +7,7 @@ AXIS network speakers and audio devices (C-series).
 from typing import Any
 
 from axis_cam.devices.base import AxisDevice
-from axis_cam.models import DeviceType
+from axis_cam.models import AudioMulticastConfig, DeviceType
 
 
 class AxisSpeaker(AxisDevice):
@@ -69,17 +69,14 @@ class AxisSpeaker(AxisDevice):
         except Exception:
             return {}
 
-    async def get_audio_multicast_config(self) -> dict[str, Any] | None:
+    async def get_audio_multicast_config(self) -> AudioMulticastConfig:
         """Get audio multicast configuration.
 
         Returns:
-            Audio multicast configuration or None.
+            AudioMulticastConfig model with multicast groups and streams.
         """
-        try:
-            response = await self._client.get_json(self.AUDIO_MULTICAST_PATH)
-            return response.get("data")
-        except Exception:
-            return None
+        # Use the base class implementation via the audio_multicast API
+        return await self.audio_multicast.get_config()
 
     async def get_audio_status(self) -> dict[str, Any]:
         """Get audio subsystem status.

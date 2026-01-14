@@ -6,7 +6,7 @@ interacting with specific device types.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, Self
 
 from axis_cam.api.action import ActionAPI
 from axis_cam.api.analytics import VideoAnalyticsAPI
@@ -208,7 +208,7 @@ class AxisDevice(ABC):
         """Get the underlying VAPIX client."""
         return self._client
 
-    async def __aenter__(self) -> "AxisDevice":
+    async def __aenter__(self) -> Self:
         """Async context manager entry."""
         await self._client.__aenter__()
         return self
