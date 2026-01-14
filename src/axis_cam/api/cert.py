@@ -111,9 +111,7 @@ class CertAPI(BaseAPI):
             https_only=data.get("httpsOnly", False),
         )
 
-    def _parse_certificate(
-        self, data: dict[str, Any], is_ca: bool = False
-    ) -> Certificate | None:
+    def _parse_certificate(self, data: dict[str, Any], is_ca: bool = False) -> Certificate | None:
         """Parse a single certificate.
 
         Args:

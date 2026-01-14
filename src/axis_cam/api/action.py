@@ -123,9 +123,7 @@ class ActionAPI(BaseAPI):
             actions=data.get("actions", []),
         )
 
-    def _parse_template(
-        self, template_id: str, data: dict[str, Any]
-    ) -> ActionTemplate:
+    def _parse_template(self, template_id: str, data: dict[str, Any]) -> ActionTemplate:
         """Parse action template data.
 
         Args:

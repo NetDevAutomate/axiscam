@@ -123,9 +123,7 @@ class MqttBridgeAPI(BaseAPI):
             use_tls=data.get("useTls", False),
         )
 
-    def _parse_filter(
-        self, filter_id: str, data: dict[str, Any]
-    ) -> MqttEventFilter:
+    def _parse_filter(self, filter_id: str, data: dict[str, Any]) -> MqttEventFilter:
         """Parse MQTT event filter data.
 
         Args:

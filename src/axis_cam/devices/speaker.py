@@ -88,9 +88,7 @@ class AxisSpeaker(AxisDevice):
             Dictionary with audio device status.
         """
         try:
-            response = await self._client.get_json(
-                "/axis-cgi/audio/audiostatus.cgi"
-            )
+            response = await self._client.get_json("/axis-cgi/audio/audiostatus.cgi")
             return response
         except Exception:
             return {}
@@ -102,9 +100,7 @@ class AxisSpeaker(AxisDevice):
             Dictionary with audio device details.
         """
         try:
-            response = await self._client.get_json(
-                "/axis-cgi/audio/getaudiodevices.cgi"
-            )
+            response = await self._client.get_json("/axis-cgi/audio/getaudiodevices.cgi")
             return response
         except Exception:
             return {}

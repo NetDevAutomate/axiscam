@@ -21,9 +21,9 @@ from axis_cam.devices.recorder import AxisRecorder
 from axis_cam.devices.speaker import AxisSpeaker
 
 __all__ = [
-    "AxisDevice",
     "AxisCamera",
-    "AxisRecorder",
+    "AxisDevice",
     "AxisIntercom",
+    "AxisRecorder",
     "AxisSpeaker",
 ]

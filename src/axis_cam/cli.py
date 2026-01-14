@@ -88,7 +88,8 @@ app.add_typer(download_app, name="download")
 DeviceOption = Annotated[
     str | None,
     typer.Option(
-        "--device", "-d",
+        "--device",
+        "-d",
         help="Device name from config or host address.",
     ),
 ]
@@ -96,7 +97,8 @@ DeviceOption = Annotated[
 HostOption = Annotated[
     str | None,
     typer.Option(
-        "--host", "-H",
+        "--host",
+        "-H",
         help="Device IP address or hostname (overrides --device).",
     ),
 ]
@@ -104,7 +106,8 @@ HostOption = Annotated[
 UsernameOption = Annotated[
     str | None,
     typer.Option(
-        "--username", "-u",
+        "--username",
+        "-u",
         help="Authentication username (override for config device).",
     ),
 ]
@@ -112,7 +115,8 @@ UsernameOption = Annotated[
 PasswordOption = Annotated[
     str | None,
     typer.Option(
-        "--password", "-p",
+        "--password",
+        "-p",
         help="Authentication password (override for config device).",
     ),
 ]
@@ -120,7 +124,8 @@ PasswordOption = Annotated[
 PortOption = Annotated[
     int,
     typer.Option(
-        "--port", "-P",
+        "--port",
+        "-P",
         help="HTTPS port number.",
     ),
 ]
@@ -128,7 +133,8 @@ PortOption = Annotated[
 LinesOption = Annotated[
     int | None,
     typer.Option(
-        "--lines", "-n",
+        "--lines",
+        "-n",
         help="Number of log entries to show.",
     ),
 ]
@@ -412,9 +418,7 @@ def list_apis(
                             state_color = "yellow"
                         else:
                             state_color = "red"
-                        tree.add(
-                            f"{api_name} v{version} [{state_color}]{state}[/{state_color}]"
-                        )
+                        tree.add(f"{api_name} v{version} [{state_color}]{state}[/{state_color}]")
                 else:
                     tree.add(f"{api_name}")
 
@@ -517,15 +521,9 @@ def list_params(
     group: Annotated[
         str | None, typer.Option("--group", "-g", help="Parameter group to list")
     ] = None,
-    search: Annotated[
-        str | None, typer.Option("--search", "-s", help="Search pattern")
-    ] = None,
-    export: Annotated[
-        bool, typer.Option("--export", "-e", help="Export as JSON")
-    ] = False,
-    output: Annotated[
-        Path | None, typer.Option("--output", "-o", help="Output file")
-    ] = None,
+    search: Annotated[str | None, typer.Option("--search", "-s", help="Search pattern")] = None,
+    export: Annotated[bool, typer.Option("--export", "-e", help="Export as JSON")] = False,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
 ):
     """List device parameters."""
     host_addr, user, passwd, port_num, device_type = resolve_device_config(
@@ -539,6 +537,7 @@ def list_params(
             if export:
                 # Export all parameters as JSON
                 import json
+
                 data = await dev.params.export()
                 json_output = json.dumps(data, indent=2, sort_keys=True)
 
@@ -596,6 +595,7 @@ def list_params(
 
 
 # --- Log Commands ---
+
 
 @logs_app.command("system")
 def logs_system(
@@ -751,6 +751,7 @@ def _print_log_entry(entry):
 
 # --- Config Commands ---
 
+
 @app.command("config")
 def show_config():
     """Show current configuration."""
@@ -816,6 +817,7 @@ def show_version():
 
 # --- Completions ---
 
+
 def complete_device_names() -> list[str]:
     """Completion for device names from config."""
     try:
@@ -827,6 +829,7 @@ def complete_device_names() -> list[str]:
 
 # --- Network Commands ---
 
+
 @network_app.command("show")
 def network_show(
     device: DeviceOption = None,
@@ -835,9 +838,7 @@ def network_show(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show network configuration."""
     import json
@@ -848,9 +849,7 @@ def network_show(
     device_class = get_device_class(device_type)
 
     async def _show_network():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_network_config()
 
             if json_output:
@@ -899,11 +898,7 @@ def network_show(
                 table.add_column("Status", style="white")
 
                 for iface in config.interfaces:
-                    dhcp = (
-                        "[green]Yes[/green]"
-                        if iface.dhcp_enabled
-                        else "[red]No[/red]"
-                    )
+                    dhcp = "[green]Yes[/green]" if iface.dhcp_enabled else "[red]No[/red]"
                     table.add_row(
                         iface.name,
                         iface.ip_address,
@@ -930,15 +925,11 @@ def network_show(
             svc_table.add_column("Status", style="white")
             svc_table.add_row(
                 "Bonjour",
-                "[green]Enabled[/green]"
-                if config.bonjour_enabled
-                else "[red]Disabled[/red]",
+                "[green]Enabled[/green]" if config.bonjour_enabled else "[red]Disabled[/red]",
             )
             svc_table.add_row(
                 "UPnP",
-                "[green]Enabled[/green]"
-                if config.upnp_enabled
-                else "[red]Disabled[/red]",
+                "[green]Enabled[/green]" if config.upnp_enabled else "[red]Disabled[/red]",
             )
             console.print(svc_table)
 
@@ -961,9 +952,7 @@ def network_dns(
     device_class = get_device_class(device_type)
 
     async def _show_dns():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             dns = await dev.network.get_dns()
 
             table = Table(title=f"DNS Configuration: {host_addr}", show_header=False)
@@ -979,6 +968,7 @@ def network_dns(
 
 # --- Security Commands ---
 
+
 @security_app.command("firewall")
 def security_firewall(
     device: DeviceOption = None,
@@ -987,9 +977,7 @@ def security_firewall(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show firewall configuration."""
     import json
@@ -1000,9 +988,7 @@ def security_firewall(
     device_class = get_device_class(device_type)
 
     async def _show_firewall():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_firewall_config()
 
             if json_output:
@@ -1026,14 +1012,11 @@ def security_firewall(
                 return
 
             # Status panel
-            status = (
-                "[green]Enabled[/green]" if config.enabled else "[red]Disabled[/red]"
-            )
+            status = "[green]Enabled[/green]" if config.enabled else "[red]Disabled[/red]"
             policy_color = "green" if config.default_policy.value == "allow" else "red"
             policy_val = config.default_policy.value.upper()
             panel_content = (
-                f"Status: {status}\n"
-                f"Default Policy: [{policy_color}]{policy_val}[/{policy_color}]"
+                f"Status: {status}\nDefault Policy: [{policy_color}]{policy_val}[/{policy_color}]"
             )
             console.print(Panel(panel_content, title=f"Firewall: {host_addr}"))
 
@@ -1049,11 +1032,7 @@ def security_firewall(
                 table.add_column("Priority", style="dim")
 
                 for rule in config.rules:
-                    enabled = (
-                        "[green]Yes[/green]"
-                        if rule.enabled
-                        else "[red]No[/red]"
-                    )
+                    enabled = "[green]Yes[/green]" if rule.enabled else "[red]No[/red]"
                     action_color = "green" if rule.action.value == "allow" else "red"
                     table.add_row(
                         rule.name,
@@ -1079,9 +1058,7 @@ def security_ssh(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show SSH configuration."""
     import json
@@ -1092,9 +1069,7 @@ def security_ssh(
     device_class = get_device_class(device_type)
 
     async def _show_ssh():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_ssh_config()
 
             if json_output:
@@ -1131,23 +1106,17 @@ def security_ssh(
             table.add_column("Value", style="white")
             table.add_row(
                 "Root Login",
-                "[green]Enabled[/green]"
-                if config.root_login_enabled
-                else "[red]Disabled[/red]",
+                "[green]Enabled[/green]" if config.root_login_enabled else "[red]Disabled[/red]",
             )
             table.add_row(
                 "Password Auth",
-                "[green]Enabled[/green]"
-                if config.password_auth_enabled
-                else "[red]Disabled[/red]",
+                "[green]Enabled[/green]" if config.password_auth_enabled else "[red]Disabled[/red]",
             )
             console.print(table)
 
             # Authorized keys
             if config.authorized_keys:
-                keys_table = Table(
-                    title=f"Authorized Keys ({len(config.authorized_keys)})"
-                )
+                keys_table = Table(title=f"Authorized Keys ({len(config.authorized_keys)})")
                 keys_table.add_column("Name", style="cyan")
                 keys_table.add_column("Type", style="white")
                 keys_table.add_column("Fingerprint", style="dim")
@@ -1173,9 +1142,7 @@ def security_certs(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show certificate configuration."""
     import json
@@ -1186,9 +1153,7 @@ def security_certs(
     device_class = get_device_class(device_type)
 
     async def _show_certs():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_cert_config()
 
             if json_output:
@@ -1214,17 +1179,12 @@ def security_certs(
             # Status panel
             cert_id = config.https_cert_id or "(default)"
             client_auth = (
-                "[green]Enabled[/green]"
-                if config.client_cert_enabled
-                else "[red]Disabled[/red]"
+                "[green]Enabled[/green]" if config.client_cert_enabled else "[red]Disabled[/red]"
             )
             panel_content = (
-                f"HTTPS Certificate ID: [cyan]{cert_id}[/cyan]\n"
-                f"Client Cert Auth: {client_auth}"
+                f"HTTPS Certificate ID: [cyan]{cert_id}[/cyan]\nClient Cert Auth: {client_auth}"
             )
-            console.print(
-                Panel(panel_content, title=f"Certificate Configuration: {host_addr}")
-            )
+            console.print(Panel(panel_content, title=f"Certificate Configuration: {host_addr}"))
 
             # Certificates table
             if config.certificates:
@@ -1237,13 +1197,9 @@ def security_certs(
                 table.add_column("Status", style="white")
 
                 for cert in config.certificates:
-                    valid_to = (
-                        cert.valid_to.strftime("%Y-%m-%d") if cert.valid_to else "-"
-                    )
+                    valid_to = cert.valid_to.strftime("%Y-%m-%d") if cert.valid_to else "-"
                     status = (
-                        "[green]Valid[/green]"
-                        if cert.is_valid
-                        else "[red]Invalid/Expired[/red]"
+                        "[green]Valid[/green]" if cert.is_valid else "[red]Invalid/Expired[/red]"
                     )
                     table.add_row(
                         cert.id,
@@ -1262,6 +1218,7 @@ def security_certs(
 
 # --- Services Commands ---
 
+
 @services_app.command("snmp")
 def services_snmp(
     device: DeviceOption = None,
@@ -1270,9 +1227,7 @@ def services_snmp(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show SNMP configuration."""
     import json
@@ -1283,9 +1238,7 @@ def services_snmp(
     device_class = get_device_class(device_type)
 
     async def _show_snmp():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_snmp_config()
 
             if json_output:
@@ -1333,9 +1286,7 @@ def services_snmp(
 
             # Trap receivers
             if config.trap_receivers:
-                trap_table = Table(
-                    title=f"Trap Receivers ({len(config.trap_receivers)})"
-                )
+                trap_table = Table(title=f"Trap Receivers ({len(config.trap_receivers)})")
                 trap_table.add_column("Address", style="cyan")
                 trap_table.add_column("Port", style="white")
                 trap_table.add_column("Community", style="white")
@@ -1361,9 +1312,7 @@ def services_ntp(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show NTP configuration."""
     import json
@@ -1374,9 +1323,7 @@ def services_ntp(
     device_class = get_device_class(device_type)
 
     async def _show_ntp():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_ntp_config()
 
             if json_output:
@@ -1405,11 +1352,7 @@ def services_ntp(
 
             # Status panel
             status = "[green]Enabled[/green]" if config.enabled else "[red]Disabled[/red]"
-            dhcp = (
-                "[green]Yes[/green]"
-                if config.use_dhcp_servers
-                else "[red]No[/red]"
-            )
+            dhcp = "[green]Yes[/green]" if config.use_dhcp_servers else "[red]No[/red]"
             console.print(
                 Panel(
                     f"Status: {status}\nUse DHCP Servers: {dhcp}",
@@ -1489,9 +1432,7 @@ def show_actions(
     device_class = get_device_class(device_type)
 
     async def _show_actions():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_action_config()
 
             if json_output:
@@ -1529,9 +1470,7 @@ def show_actions(
 
                 for rule in config.rules:
                     enabled = "[green]Yes[/green]" if rule.enabled else "[red]No[/red]"
-                    table.add_row(
-                        rule.id, rule.name, enabled, rule.primary_condition or "-"
-                    )
+                    table.add_row(rule.id, rule.name, enabled, rule.primary_condition or "-")
                 console.print(table)
             else:
                 console.print("[yellow]No action rules configured[/yellow]")
@@ -1569,9 +1508,7 @@ def show_mqtt(
     device_class = get_device_class(device_type)
 
     async def _show_mqtt():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_mqtt_config()
 
             if json_output:
@@ -1682,9 +1619,7 @@ def show_recording(
     device_class = get_device_class(device_type)
 
     async def _show_recording():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_recording_config()
 
             if json_output:
@@ -1782,9 +1717,7 @@ def show_storage(
     device_class = get_device_class(device_type)
 
     async def _show_storage():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_storage_config()
 
             if json_output:
@@ -1856,9 +1789,7 @@ def show_location(
     device_class = get_device_class(device_type)
 
     async def _show_location():
-        async with device_class(
-            host_addr, user, passwd, port_num, use_digest_auth=digest
-        ) as dev:
+        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
             config = await dev.get_geolocation_config()
 
             if json_output:
@@ -1928,9 +1859,7 @@ def stream_show(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    json_output: Annotated[
-        bool, typer.Option("--json", "-j", help="Output as JSON")
-    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show stream diagnostics (RTSP, RTP, profiles).
 
@@ -1983,7 +1912,7 @@ def stream_show(
             # RTSP panel
             console.print(
                 Panel(
-                    f"[green]Enabled[/green]" if diag.rtsp.enabled else "[red]Disabled[/red]",
+                    "[green]Enabled[/green]" if diag.rtsp.enabled else "[red]Disabled[/red]",
                     title=f"Stream Diagnostics: {host_addr}",
                 )
             )
@@ -2044,6 +1973,7 @@ def stream_show(
 
 # --- Report Command ---
 
+
 @app.command("report")
 def device_report(
     device: DeviceOption = None,
@@ -2052,9 +1982,7 @@ def device_report(
     password: PasswordOption = None,
     port: PortOption = 443,
     digest: DigestOption = True,
-    output: Annotated[
-        Path | None, typer.Option("--output", "-o", help="Output file")
-    ] = None,
+    output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
     format_opt: Annotated[
         str, typer.Option("--format", "-f", help="Output format (json, yaml)")
     ] = "json",
@@ -2259,10 +2187,7 @@ def device_report(
                     recording = await dev.get_recording_config()
                     report["recording"] = {
                         "groups_count": len(recording.groups) if recording.groups else 0,
-                        "groups": [
-                            {"id": g.id, "name": g.name}
-                            for g in (recording.groups or [])
-                        ],
+                        "groups": [{"id": g.id, "name": g.name} for g in (recording.groups or [])],
                     }
                 except Exception as e:
                     report["errors"].append(f"Recording config: {e}")
@@ -2271,7 +2196,9 @@ def device_report(
                 try:
                     storage = await dev.get_storage_config()
                     report["storage"] = {
-                        "destinations_count": len(storage.destinations) if storage.destinations else 0,
+                        "destinations_count": len(storage.destinations)
+                        if storage.destinations
+                        else 0,
                         "destinations": [
                             {
                                 "id": d.id,
@@ -2334,8 +2261,12 @@ def device_report(
                 try:
                     crypto = await dev.get_crypto_policy_config()
                     report["crypto_policy"] = {
-                        "tls_min_version": crypto.tls_min_version.value if crypto.tls_min_version else None,
-                        "tls_max_version": crypto.tls_max_version.value if crypto.tls_max_version else None,
+                        "tls_min_version": crypto.tls_min_version.value
+                        if crypto.tls_min_version
+                        else None,
+                        "tls_max_version": crypto.tls_max_version.value
+                        if crypto.tls_max_version
+                        else None,
                         "cipher_suites": [c.name for c in (crypto.cipher_suites or [])],
                     }
                 except Exception as e:
@@ -2345,6 +2276,7 @@ def device_report(
             if format_opt == "yaml":
                 try:
                     import yaml
+
                     output_str = yaml.dump(report, default_flow_style=False, sort_keys=False)
                 except ImportError:
                     output_str = json_mod.dumps(report, indent=2)
@@ -2359,7 +2291,9 @@ def device_report(
                     lines.append(f"IP: {report['network'].get('ip_address', '-')}")
                     lines.append(f"MAC: {report['network'].get('mac_address', '-')}")
                 if "lldp" in report and report["lldp"]["neighbors"]:
-                    lines.append(f"Connected to: {report['lldp']['neighbors'][0].get('system', '-')}")
+                    lines.append(
+                        f"Connected to: {report['lldp']['neighbors'][0].get('system', '-')}"
+                    )
                 output_str = "\n".join(lines)
             else:
                 output_str = json_mod.dumps(report, indent=2)
@@ -2403,7 +2337,7 @@ def list_devices():
 
     console.print(table)
     if config.default_device:
-        console.print(f"\n[dim]* = default device[/dim]")
+        console.print("\n[dim]* = default device[/dim]")
 
 
 @app.command("migrate")
@@ -2414,6 +2348,7 @@ def migrate_config():
     if the legacy path exists and the new path doesn't.
     """
     import shutil
+
     from platformdirs import user_config_dir
 
     legacy_dir = Path(user_config_dir("axis"))
@@ -2438,16 +2373,15 @@ def migrate_config():
     shutil.copy2(legacy_config, new_config)
 
     # Set secure permissions (owner read/write only)
-    import os
-    os.chmod(new_config, 0o600)
+    new_config.chmod(0o600)
 
     # Also copy .env if it exists
     legacy_env = legacy_dir / ".env"
     if legacy_env.exists():
         new_env = new_dir / ".env"
         shutil.copy2(legacy_env, new_env)
-        os.chmod(new_env, 0o600)
-        console.print(f"[green]Copied .env file[/green]")
+        new_env.chmod(0o600)
+        console.print("[green]Copied .env file[/green]")
 
     console.print(f"[green]Config migrated to:[/green] {new_config}")
     console.print("\n[dim]Legacy config preserved at original location.[/dim]")
@@ -2469,21 +2403,24 @@ def download_server_report(
     output: Annotated[
         Path | None,
         typer.Option(
-            "--output", "-o",
+            "--output",
+            "-o",
             help="Output file path. If not specified, auto-generates filename.",
         ),
     ] = None,
     format_opt: Annotated[
         str,
         typer.Option(
-            "--format", "-f",
+            "--format",
+            "-f",
             help="Report format: zip_with_image (default), zip, or text.",
         ),
     ] = "zip_with_image",
     timeout: Annotated[
         float,
         typer.Option(
-            "--timeout", "-t",
+            "--timeout",
+            "-t",
             help="Download timeout in seconds.",
         ),
     ] = 60.0,
@@ -2526,7 +2463,9 @@ def download_server_report(
 
     async def _download():
         async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
-            with console.status(f"[bold blue]Downloading server report from {host_addr}...[/bold blue]"):
+            with console.status(
+                f"[bold blue]Downloading server report from {host_addr}...[/bold blue]"
+            ):
                 report = await dev.download_server_report(
                     format=report_format,
                     timeout=timeout,
@@ -2555,14 +2494,16 @@ def download_debug_archive(
     output: Annotated[
         Path | None,
         typer.Option(
-            "--output", "-o",
+            "--output",
+            "-o",
             help="Output file path. If not specified, auto-generates filename.",
         ),
     ] = None,
     timeout: Annotated[
         float,
         typer.Option(
-            "--timeout", "-t",
+            "--timeout",
+            "-t",
             help="Download timeout in seconds (debug archives can be large).",
         ),
     ] = 120.0,
@@ -2597,7 +2538,9 @@ def download_debug_archive(
 
     async def _download():
         async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
-            with console.status(f"[bold blue]Downloading debug archive from {host_addr}...[/bold blue]"):
+            with console.status(
+                f"[bold blue]Downloading debug archive from {host_addr}...[/bold blue]"
+            ):
                 report = await dev.download_debug_archive(timeout=timeout)
 
             if not report.success:
@@ -2607,10 +2550,7 @@ def download_debug_archive(
             # Write to file
             output.write_bytes(report.content)
             size_kb = report.size_bytes / 1024
-            if size_kb > 1024:
-                size_str = f"{size_kb / 1024:.1f} MB"
-            else:
-                size_str = f"{size_kb:.1f} KB"
+            size_str = f"{size_kb / 1024:.1f} MB" if size_kb > 1024 else f"{size_kb:.1f} KB"
             console.print(f"[green]Debug archive downloaded:[/green] {output}")
             console.print(f"[dim]Size: {size_str}[/dim]")
 

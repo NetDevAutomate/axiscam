@@ -1,11 +1,11 @@
 """Tests for CLI module."""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 from typer.testing import CliRunner
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from axis_cam.cli import app, get_device_class, resolve_device_config
-
 
 runner = CliRunner()
 
@@ -79,7 +79,7 @@ class TestResolveDeviceConfig:
 
     def test_resolve_with_host(self):
         """Test resolve_device_config with host override."""
-        host, username, password, port, device_type = resolve_device_config(
+        host, username, password, _port, _device_type = resolve_device_config(
             device=None,
             host="192.168.1.10",
             username="admin",
@@ -91,7 +91,7 @@ class TestResolveDeviceConfig:
 
     def test_resolve_host_overrides_device(self):
         """Test that host parameter overrides device name."""
-        host, username, password, port, device_type = resolve_device_config(
+        host, _username, _password, _port, _device_type = resolve_device_config(
             device="some_device",
             host="192.168.1.50",
             username="user",
@@ -102,6 +102,7 @@ class TestResolveDeviceConfig:
     def test_resolve_missing_credentials(self):
         """Test resolve_device_config with missing credentials raises error."""
         import typer
+
         with pytest.raises(typer.Exit):
             resolve_device_config(
                 device=None,
@@ -113,8 +114,6 @@ class TestResolveDeviceConfig:
     @patch("axis_cam.cli.get_device_config")
     def test_resolve_with_device_name(self, mock_get_config):
         """Test resolve_device_config with device name from config."""
-        from axis_cam.config import DeviceConfig
-        from axis_cam.models import DeviceType
         from pydantic import SecretStr
 
         mock_config = MagicMock()
@@ -125,7 +124,7 @@ class TestResolveDeviceConfig:
         mock_config.device_type = "camera"
         mock_get_config.return_value = mock_config
 
-        host, username, password, port, device_type = resolve_device_config(
+        host, username, _password, _port, _device_type = resolve_device_config(
             device="test_camera",
             host=None,
             username=None,
@@ -139,7 +138,7 @@ class TestResolveDeviceConfig:
         """Test resolve_device_config when device looks like IP address."""
         mock_get_config.return_value = None  # No config found
 
-        host, username, password, port, device_type = resolve_device_config(
+        host, _username, _password, _port, _device_type = resolve_device_config(
             device="192.168.1.200",
             host=None,
             username="admin",
@@ -151,6 +150,7 @@ class TestResolveDeviceConfig:
     def test_resolve_no_device_or_host(self, mock_get_config):
         """Test resolve_device_config raises error when nothing provided."""
         import typer
+
         mock_get_config.return_value = None
 
         with pytest.raises(typer.Exit):
@@ -169,7 +169,11 @@ class TestInfoCommand:
         """Test info command requires device or host."""
         result = runner.invoke(app, ["info"])
         # Should exit with error when no device specified
-        assert result.exit_code != 0 or "error" in result.stdout.lower() or "device" in result.stdout.lower()
+        assert (
+            result.exit_code != 0
+            or "error" in result.stdout.lower()
+            or "device" in result.stdout.lower()
+        )
 
 
 class TestLogsCommands:
@@ -179,12 +183,20 @@ class TestLogsCommands:
         """Test logs system command requires device."""
         result = runner.invoke(app, ["logs", "system"])
         # Should exit with error when no device specified
-        assert result.exit_code != 0 or "error" in result.stdout.lower() or "device" in result.stdout.lower()
+        assert (
+            result.exit_code != 0
+            or "error" in result.stdout.lower()
+            or "device" in result.stdout.lower()
+        )
 
     def test_logs_access_requires_device(self):
         """Test logs access command requires device."""
         result = runner.invoke(app, ["logs", "access"])
-        assert result.exit_code != 0 or "error" in result.stdout.lower() or "device" in result.stdout.lower()
+        assert (
+            result.exit_code != 0
+            or "error" in result.stdout.lower()
+            or "device" in result.stdout.lower()
+        )
 
 
 class TestConfigCommand:

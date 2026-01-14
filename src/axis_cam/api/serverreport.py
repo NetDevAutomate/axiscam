@@ -12,9 +12,7 @@ Report Modes:
     - text: Plain text server report
 """
 
-from enum import Enum
 from pathlib import Path
-from typing import Any
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.models import ServerReport, ServerReportFormat
@@ -108,7 +106,7 @@ class ServerReportAPI(BaseAPI):
         output_path = Path(path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(output_path, "wb") as f:
+        with output_path.open("wb") as f:
             f.write(report.content)
 
         return True
@@ -175,7 +173,7 @@ class ServerReportAPI(BaseAPI):
         output_path = Path(path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(output_path, "wb") as f:
+        with output_path.open("wb") as f:
             f.write(report.content)
 
         return True
@@ -189,9 +187,7 @@ class ServerReportAPI(BaseAPI):
         Returns:
             Suggested filename for the report.
         """
-        if format == ServerReportFormat.ZIP_WITH_IMAGE:
-            return "serverreport.zip"
-        elif format == ServerReportFormat.ZIP:
+        if format == ServerReportFormat.ZIP_WITH_IMAGE or format == ServerReportFormat.ZIP:
             return "serverreport.zip"
         elif format == ServerReportFormat.TEXT:
             return "serverreport.txt"

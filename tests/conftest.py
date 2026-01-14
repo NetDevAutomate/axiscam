@@ -1,11 +1,12 @@
 """Pytest fixtures for axis_cam tests."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+import os
+import tempfile
 from datetime import datetime
 from pathlib import Path
-import tempfile
-import os
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from axis_cam.client import VapixClient
 from axis_cam.models import (
@@ -195,10 +196,13 @@ devices:
 @pytest.fixture
 def sample_server_report():
     """Sample server report content."""
-    return """2024-01-15T12:00:00+00:00 axis-device [ INFO ] httpd[1234]: Connection from 192.168.1.1
-2024-01-15T12:00:01+00:00 axis-device [ WARNING ] watchdog[100]: Process restarted
-2024-01-15T12:00:02+00:00 axis-device [ ERR ] kernel: Out of memory
-"""
+    return (
+        "2024-01-15T12:00:00+00:00 axis-device [ INFO ] httpd[1234]: "
+        "Connection from 192.168.1.1\n"
+        "2024-01-15T12:00:01+00:00 axis-device [ WARNING ] watchdog[100]: "
+        "Process restarted\n"
+        "2024-01-15T12:00:02+00:00 axis-device [ ERR ] kernel: Out of memory\n"
+    )
 
 
 @pytest.fixture
@@ -209,21 +213,17 @@ def sample_api_response():
             "v2": {
                 "rest_api": "/config/rest/basic-device-info/v2beta",
                 "state": "beta",
-                "version": "2.0.0-beta.2"
+                "version": "2.0.0-beta.2",
             }
         },
         "param": {
             "v2": {
                 "rest_api": "/config/rest/param/v2beta",
                 "state": "beta",
-                "version": "2.0.0-beta.1"
+                "version": "2.0.0-beta.1",
             }
         },
         "time": {
-            "v2": {
-                "rest_api": "/config/rest/time/v2",
-                "state": "released",
-                "version": "2.0.1"
-            }
-        }
+            "v2": {"rest_api": "/config/rest/time/v2", "state": "released", "version": "2.0.1"}
+        },
     }

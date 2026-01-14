@@ -124,9 +124,7 @@ class RecordingAPI(BaseAPI):
             profile_id=data.get("profileId", ""),
         )
 
-    def _parse_profile(
-        self, profile_id: str, data: dict[str, Any]
-    ) -> RecordingProfile:
+    def _parse_profile(self, profile_id: str, data: dict[str, Any]) -> RecordingProfile:
         """Parse recording profile data.
 
         Args:

@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from axis_cam.client import VapixClient
 
 
-class BaseAPI(ABC):
+class BaseAPI(ABC):  # noqa: B024
     """Abstract base class for VAPIX API modules.
 
     Each API module represents a specific domain of the VAPIX API
@@ -70,9 +70,7 @@ class BaseAPI(ABC):
         """
         return await self._client.post_json(path, data=data, json_data=json_data)
 
-    async def _get_raw(
-        self, path: str, params: dict[str, Any] | None = None
-    ) -> bytes:
+    async def _get_raw(self, path: str, params: dict[str, Any] | None = None) -> bytes:
         """Perform a GET request and return raw bytes.
 
         Args:

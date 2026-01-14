@@ -203,6 +203,9 @@ class NetworkInterface(BaseModel):
         gateway: Default gateway.
         dhcp_enabled: Whether DHCP is enabled.
         ipv6_address: IPv6 address if configured.
+        mtu: Maximum transmission unit.
+        link_speed: Link speed (e.g., "1000Mbps").
+        link_status: Link status (e.g., "up", "down", "unknown").
     """
 
     model_config = ConfigDict(frozen=True)
@@ -214,6 +217,9 @@ class NetworkInterface(BaseModel):
     gateway: str = ""
     dhcp_enabled: bool = True
     ipv6_address: str = ""
+    mtu: int = 1500
+    link_speed: str = ""
+    link_status: str = "unknown"
 
 
 class DnsSettings(BaseModel):
@@ -596,16 +602,16 @@ class ProxySettings(BaseModel):
 
     Attributes:
         enabled: Whether proxy is enabled.
-        server: Proxy server address.
+        host: Proxy server address (alias: server).
         port: Proxy server port.
         username: Proxy authentication username.
         exceptions: List of addresses that bypass proxy.
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(frozen=True, populate_by_name=True)
 
     enabled: bool = False
-    server: str = ""
+    host: str = Field(default="", alias="server")
     port: int = 8080
     username: str = ""
     exceptions: list[str] = Field(default_factory=list)
@@ -704,6 +710,11 @@ class FirewallConfig(BaseModel):
     default_policy: FirewallAction = FirewallAction.ALLOW
     icmp_allowed: bool = True
 
+    @property
+    def rules(self) -> list[FirewallRule]:
+        """Get all firewall rules (IPv4 + IPv6 combined)."""
+        return self.ipv4_rules + self.ipv6_rules
+
 
 # =============================================================================
 # SSH Models
@@ -727,6 +738,11 @@ class SshKey(BaseModel):
     comment: str = ""
     fingerprint: str = ""
 
+    @property
+    def name(self) -> str:
+        """Get the key name (alias for comment)."""
+        return self.comment
+
 
 class SshConfig(BaseModel):
     """SSH configuration.
@@ -746,6 +762,11 @@ class SshConfig(BaseModel):
     root_login_allowed: bool = False
     password_auth_enabled: bool = True
     authorized_keys: list[SshKey] = Field(default_factory=list)
+
+    @property
+    def root_login_enabled(self) -> bool:
+        """Get root login status (alias for root_login_allowed)."""
+        return self.root_login_allowed
 
 
 # =============================================================================
@@ -876,6 +897,13 @@ class CertConfig(BaseModel):
     active_certificate: Certificate | None = None
     https_enabled: bool = True
     https_only: bool = False
+
+    @property
+    def https_cert_id(self) -> str:
+        """Get the HTTPS certificate ID."""
+        if self.active_certificate:
+            return self.active_certificate.cert_id
+        return ""
 
 
 # =============================================================================
@@ -1746,9 +1774,7 @@ class VirtualHost(BaseModel):
     certificate_id: str = ""
     redirect_http_to_https: bool = True
     default_host: bool = False
-    allowed_methods: list[str] = Field(
-        default_factory=lambda: ["GET", "POST", "PUT", "DELETE"]
-    )
+    allowed_methods: list[str] = Field(default_factory=lambda: ["GET", "POST", "PUT", "DELETE"])
 
 
 class VirtualHostConfig(BaseModel):

@@ -135,9 +135,7 @@ class VapixClient:
             RuntimeError: If client is not connected.
         """
         if not self._client:
-            raise RuntimeError(
-                "Client not connected. Use 'async with VapixClient(...) as client:'"
-            )
+            raise RuntimeError("Client not connected. Use 'async with VapixClient(...) as client:'")
         return self._client
 
     async def get(
@@ -339,8 +337,7 @@ class VapixClient:
             )
         if response.status_code >= 400:
             raise AxisDeviceError(
-                f"Device error {response.status_code} from {self.host}: "
-                f"{response.text[:200]}"
+                f"Device error {response.status_code} from {self.host}: {response.text[:200]}"
             )
 
     async def discover_apis(self) -> dict[str, Any]:

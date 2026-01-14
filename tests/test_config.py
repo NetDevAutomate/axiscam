@@ -1,10 +1,10 @@
 """Tests for configuration management."""
 
 import os
-import pytest
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from pydantic import SecretStr
 
 from axis_cam.config import (
@@ -83,15 +83,16 @@ class TestDeviceConfig:
         )
         assert config.host == "192.168.1.10"
 
-    def test_device_type_validation(self):
-        """Test device type validation."""
-        with pytest.raises(ValueError, match="Device type must be one of"):
-            DeviceConfig(
-                host="192.168.1.10",
-                username="admin",
-                password=SecretStr("password"),
-                device_type="invalid",
-            )
+    def test_device_type_defaults_unknown_to_camera(self):
+        """Test that unknown device_type defaults to camera."""
+        config = DeviceConfig(
+            host="192.168.1.10",
+            username="admin",
+            password=SecretStr("password"),
+            device_type="unknown_type",
+        )
+        # Unknown device types default to "camera" for compatibility
+        assert config.device_type == "camera"
 
     def test_device_type_normalization(self):
         """Test that device type is normalized to lowercase."""
@@ -347,11 +348,13 @@ class TestLoadConfig:
         # Clear the LRU cache
         load_config.cache_clear()
 
-        with patch("axis_cam.config.get_config_file", return_value=tmp_path / "nonexistent.yaml"):
-            with patch.dict(os.environ, {}, clear=True):
-                config = load_config()
-                assert isinstance(config, AppConfig)
-                assert config.devices == {}
+        with (
+            patch("axis_cam.config.get_config_file", return_value=tmp_path / "nonexistent.yaml"),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            config = load_config()
+            assert isinstance(config, AppConfig)
+            assert config.devices == {}
 
     def test_load_config_from_file(self, tmp_path):
         """Test loading config from file."""
@@ -368,12 +371,14 @@ devices:
     password: password123
     device_type: camera
 """)
-        with patch("axis_cam.config.get_config_file", return_value=yaml_file):
-            with patch.dict(os.environ, {}, clear=True):
-                config = load_config()
-                assert config.default_device == "camera1"
-                assert config.timeout == 45.0
-                assert "camera1" in config.devices
+        with (
+            patch("axis_cam.config.get_config_file", return_value=yaml_file),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            config = load_config()
+            assert config.default_device == "camera1"
+            assert config.timeout == 45.0
+            assert "camera1" in config.devices
 
     def test_load_config_env_override(self, tmp_path):
         """Test that environment config creates default device."""
@@ -384,11 +389,13 @@ devices:
             "AXIS_USERNAME": "env_user",
             "AXIS_PASSWORD": "env_pass",
         }
-        with patch("axis_cam.config.get_config_file", return_value=tmp_path / "nonexistent.yaml"):
-            with patch.dict(os.environ, env_vars, clear=True):
-                config = load_config()
-                assert "default" in config.devices
-                assert config.devices["default"].host == "192.168.1.100"
+        with (
+            patch("axis_cam.config.get_config_file", return_value=tmp_path / "nonexistent.yaml"),
+            patch.dict(os.environ, env_vars, clear=True),
+        ):
+            config = load_config()
+            assert "default" in config.devices
+            assert config.devices["default"].host == "192.168.1.100"
 
 
 class TestGetDeviceConfig:
@@ -407,20 +414,24 @@ devices:
     password: password123
     device_type: camera
 """)
-        with patch("axis_cam.config.get_config_file", return_value=yaml_file):
-            with patch.dict(os.environ, {}, clear=True):
-                device_config = get_device_config("camera1")
-                assert device_config is not None
-                assert device_config.host == "192.168.1.10"
+        with (
+            patch("axis_cam.config.get_config_file", return_value=yaml_file),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            device_config = get_device_config("camera1")
+            assert device_config is not None
+            assert device_config.host == "192.168.1.10"
 
     def test_get_nonexistent_device(self, tmp_path):
         """Test getting config for a nonexistent device."""
         load_config.cache_clear()
 
-        with patch("axis_cam.config.get_config_file", return_value=tmp_path / "nonexistent.yaml"):
-            with patch.dict(os.environ, {}, clear=True):
-                device_config = get_device_config("nonexistent")
-                assert device_config is None
+        with (
+            patch("axis_cam.config.get_config_file", return_value=tmp_path / "nonexistent.yaml"),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            device_config = get_device_config("nonexistent")
+            assert device_config is None
 
     def test_get_default_device(self, tmp_path):
         """Test getting config using default device."""
@@ -435,11 +446,13 @@ devices:
     username: admin
     password: password123
 """)
-        with patch("axis_cam.config.get_config_file", return_value=yaml_file):
-            with patch.dict(os.environ, {}, clear=True):
-                device_config = get_device_config(None)
-                assert device_config is not None
-                assert device_config.host == "192.168.1.10"
+        with (
+            patch("axis_cam.config.get_config_file", return_value=yaml_file),
+            patch.dict(os.environ, {}, clear=True),
+        ):
+            device_config = get_device_config(None)
+            assert device_config is not None
+            assert device_config.host == "192.168.1.10"
 
 
 class TestConfigPaths:

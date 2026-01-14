@@ -114,7 +114,7 @@ def parse_log_line(line: str) -> LogEntry | None:
     )
 
 
-def parse_log_content(content: str, log_type: LogType = LogType.SYSTEM) -> list[LogEntry]:
+def parse_log_content(content: str, _log_type: LogType = LogType.SYSTEM) -> list[LogEntry]:
     """Parse log content into a list of LogEntry objects.
 
     Args:
@@ -205,9 +205,7 @@ class LogsAPI(BaseAPI):
                         file_obj = tar.extractfile(member)
                         if file_obj:
                             try:
-                                file_content = file_obj.read().decode(
-                                    "utf-8", errors="replace"
-                                )
+                                file_content = file_obj.read().decode("utf-8", errors="replace")
                                 log_files[member.name] = file_content
                             except Exception:
                                 pass
@@ -375,8 +373,7 @@ class LogsAPI(BaseAPI):
         matching = [
             entry
             for entry in logs.entries
-            if pattern_lower in entry.message.lower()
-            or pattern_lower in entry.raw.lower()
+            if pattern_lower in entry.message.lower() or pattern_lower in entry.raw.lower()
         ]
 
         if max_entries:

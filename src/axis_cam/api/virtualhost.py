@@ -108,9 +108,7 @@ class VirtualHostAPI(BaseAPI):
                     hostname=host_data.get("hostname", ""),
                     enabled=host_data.get("enabled", True),
                     certificate_id=host_data.get("certificateId", ""),
-                    redirect_http_to_https=host_data.get(
-                        "redirectHttpToHttps", True
-                    ),
+                    redirect_http_to_https=host_data.get("redirectHttpToHttps", True),
                     default_host=host_data.get("defaultHost", False),
                     allowed_methods=host_data.get(
                         "allowedMethods", ["GET", "POST", "PUT", "DELETE"]

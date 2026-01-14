@@ -1,8 +1,9 @@
 """Tests for Logs API module."""
 
-import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from axis_cam.api.logs import (
     LOG_FILE_PATTERNS,
@@ -24,7 +25,10 @@ class TestParseLogLine:
 
     def test_parse_axis_syslog_format(self):
         """Test parsing AXIS syslog format."""
-        line = "2024-01-15T12:00:00+00:00 axis-device [ INFO ] httpd[1234]: Connection from 192.168.1.1"
+        line = (
+            "2024-01-15T12:00:00+00:00 axis-device [ INFO ] "
+            "httpd[1234]: Connection from 192.168.1.1"
+        )
         entry = parse_log_line(line)
 
         assert entry is not None

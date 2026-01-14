@@ -1,7 +1,8 @@
 """Tests for BasicDeviceInfo API module."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from axis_cam.api.device_info import BasicDeviceInfoAPI
 from axis_cam.models import BasicDeviceInfo, DeviceProperties
@@ -56,7 +57,7 @@ class TestBasicDeviceInfoAPI:
                     "ProdNbr": "M3216-LVE",
                     "Version": "11.5.64",
                 }
-            }
+            },
         }
 
         async def mock_get(path, params=None):
@@ -88,7 +89,7 @@ class TestBasicDeviceInfoAPI:
                 "propertyList": {
                     "serialNumber": "TEST123",
                 }
-            }
+            },
         }
         device_info_api._post = AsyncMock(return_value=response)
 
@@ -105,7 +106,7 @@ class TestBasicDeviceInfoAPI:
                     "SerialNumber": "ACCC12345678",
                     "ProdNbr": "M3216-LVE",
                 }
-            }
+            },
         }
 
         result = device_info_api._normalize_cgi_response(response)
@@ -180,9 +181,7 @@ class TestBasicDeviceInfoAPI:
     @pytest.mark.asyncio
     async def test_get_property_nonexistent(self, device_info_api):
         """Test get_property for nonexistent property."""
-        device_info_api.get_info = AsyncMock(
-            return_value=BasicDeviceInfo()
-        )
+        device_info_api.get_info = AsyncMock(return_value=BasicDeviceInfo())
 
         result = await device_info_api.get_property("nonexistent")
 
@@ -247,9 +246,7 @@ class TestBasicDeviceInfoAPI:
     @pytest.mark.asyncio
     async def test_is_axis_device_true(self, device_info_api):
         """Test is_axis_device returns True for AXIS device."""
-        device_info_api.get_info = AsyncMock(
-            return_value=BasicDeviceInfo(brand="AXIS")
-        )
+        device_info_api.get_info = AsyncMock(return_value=BasicDeviceInfo(brand="AXIS"))
 
         result = await device_info_api.is_axis_device()
 
@@ -258,9 +255,7 @@ class TestBasicDeviceInfoAPI:
     @pytest.mark.asyncio
     async def test_is_axis_device_false(self, device_info_api):
         """Test is_axis_device returns False for non-AXIS device."""
-        device_info_api.get_info = AsyncMock(
-            return_value=BasicDeviceInfo(brand="Other")
-        )
+        device_info_api.get_info = AsyncMock(return_value=BasicDeviceInfo(brand="Other"))
 
         result = await device_info_api.is_axis_device()
 

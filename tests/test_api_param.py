@@ -1,7 +1,8 @@
 """Tests for Param API module."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from axis_cam.api.param import ParamAPI
 from axis_cam.models import DeviceParameter, ParameterGroup
@@ -29,13 +30,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_single_param(self, param_api):
         """Test get single parameter."""
-        response = {
-            "root": {
-                "Properties": {
-                    "FriendlyName": "Test Camera"
-                }
-            }
-        }
+        response = {"root": {"Properties": {"FriendlyName": "Test Camera"}}}
         param_api._get = AsyncMock(return_value=response)
 
         result = await param_api.get("root.Properties.FriendlyName")
@@ -67,10 +62,7 @@ class TestParamAPI:
         response = {
             "root": {
                 "Network": {
-                    "eth0": {
-                        "IPAddress": "192.168.1.10",
-                        "MACAddress": "AA:BB:CC:DD:EE:FF"
-                    }
+                    "eth0": {"IPAddress": "192.168.1.10", "MACAddress": "AA:BB:CC:DD:EE:FF"}
                 }
             }
         }
@@ -84,15 +76,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_group_with_root_prefix(self, param_api):
         """Test get group already has root prefix."""
-        response = {
-            "root": {
-                "Network": {
-                    "eth0": {
-                        "IPAddress": "192.168.1.10"
-                    }
-                }
-            }
-        }
+        response = {"root": {"Network": {"eth0": {"IPAddress": "192.168.1.10"}}}}
         param_api._get = AsyncMock(return_value=response)
 
         result = await param_api.get_group("root.Network")
@@ -115,15 +99,8 @@ class TestParamAPI:
         """Test get all parameters."""
         # Response doesn't have root wrapper - _parse_all_params adds "root" prefix
         response = {
-            "Properties": {
-                "FriendlyName": "Test",
-                "Location": "Lab"
-            },
-            "Network": {
-                "eth0": {
-                    "IPAddress": "192.168.1.10"
-                }
-            }
+            "Properties": {"FriendlyName": "Test", "Location": "Lab"},
+            "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
         }
         param_api._get = AsyncMock(return_value=response)
 
@@ -166,10 +143,12 @@ class TestParamAPI:
 
         param_api._get = mock_get
 
-        result = await param_api.get_many([
-            "root.Properties.FriendlyName",
-            "root.Properties.Location",
-        ])
+        result = await param_api.get_many(
+            [
+                "root.Properties.FriendlyName",
+                "root.Properties.Location",
+            ]
+        )
 
         assert isinstance(result, dict)
         assert len(result) == 2
@@ -179,14 +158,8 @@ class TestParamAPI:
         """Test search parameters."""
         response = {
             "root": {
-                "Network": {
-                    "eth0": {
-                        "IPAddress": "192.168.1.10"
-                    }
-                },
-                "Properties": {
-                    "FriendlyName": "Test"
-                }
+                "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
+                "Properties": {"FriendlyName": "Test"},
             }
         }
         param_api._get = AsyncMock(return_value=response)
@@ -204,7 +177,7 @@ class TestParamAPI:
         response = {
             "data": {
                 "Properties": {"FriendlyName": "Test"},
-                "Network": {"eth0": {"IPAddress": "192.168.1.10"}}
+                "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
             }
         }
         param_api._get = AsyncMock(return_value=response)
@@ -217,15 +190,10 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_export_fallback(self, param_api):
         """Test export falls back to get_all on exception."""
-        all_response = {
-            "root": {
-                "Properties": {
-                    "FriendlyName": "Test"
-                }
-            }
-        }
+        all_response = {"root": {"Properties": {"FriendlyName": "Test"}}}
 
         call_count = 0
+
         async def mock_get(path, params=None):
             nonlocal call_count
             call_count += 1
@@ -241,17 +209,9 @@ class TestParamAPI:
 
     def test_extract_param_value(self, param_api):
         """Test _extract_param_value method."""
-        response = {
-            "root": {
-                "Properties": {
-                    "FriendlyName": "Test Camera"
-                }
-            }
-        }
+        response = {"root": {"Properties": {"FriendlyName": "Test Camera"}}}
 
-        result = param_api._extract_param_value(
-            response, "root.Properties.FriendlyName"
-        )
+        result = param_api._extract_param_value(response, "root.Properties.FriendlyName")
 
         assert result == "Test Camera"
 
@@ -259,36 +219,21 @@ class TestParamAPI:
         """Test _extract_param_value returns None when not found."""
         response = {"root": {}}
 
-        result = param_api._extract_param_value(
-            response, "root.Properties.FriendlyName"
-        )
+        result = param_api._extract_param_value(response, "root.Properties.FriendlyName")
 
         assert result is None
 
     def test_extract_param_value_non_string(self, param_api):
         """Test _extract_param_value returns None for non-string values."""
-        response = {
-            "root": {
-                "Properties": {
-                    "Count": 42
-                }
-            }
-        }
+        response = {"root": {"Properties": {"Count": 42}}}
 
-        result = param_api._extract_param_value(
-            response, "root.Properties.Count"
-        )
+        result = param_api._extract_param_value(response, "root.Properties.Count")
 
         assert result is None
 
     def test_parse_group_response(self, param_api):
         """Test _parse_group_response method."""
-        response = {
-            "eth0": {
-                "IPAddress": "192.168.1.10",
-                "MACAddress": "AA:BB:CC:DD:EE:FF"
-            }
-        }
+        response = {"eth0": {"IPAddress": "192.168.1.10", "MACAddress": "AA:BB:CC:DD:EE:FF"}}
 
         result = param_api._parse_group_response("root.Network", response)
 
@@ -299,14 +244,8 @@ class TestParamAPI:
         """Test _parse_all_params method."""
         response = {
             "root": {
-                "Properties": {
-                    "FriendlyName": "Test"
-                },
-                "Network": {
-                    "eth0": {
-                        "IPAddress": "192.168.1.10"
-                    }
-                }
+                "Properties": {"FriendlyName": "Test"},
+                "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
             }
         }
 
@@ -319,13 +258,7 @@ class TestParamAPI:
 
     def test_extract_params_recursive(self, param_api):
         """Test _extract_params_recursive method."""
-        data = {
-            "Network": {
-                "eth0": {
-                    "IPAddress": "192.168.1.10"
-                }
-            }
-        }
+        data = {"Network": {"eth0": {"IPAddress": "192.168.1.10"}}}
         results = []
 
         param_api._extract_params_recursive(data, "root", results)
@@ -346,13 +279,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_friendly_name(self, param_api):
         """Test get_friendly_name convenience method."""
-        response = {
-            "root": {
-                "Properties": {
-                    "FriendlyName": "Front Door Camera"
-                }
-            }
-        }
+        response = {"root": {"Properties": {"FriendlyName": "Front Door Camera"}}}
         param_api._get = AsyncMock(return_value=response)
 
         result = await param_api.get_friendly_name()
@@ -371,13 +298,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_location(self, param_api):
         """Test get_location convenience method."""
-        response = {
-            "root": {
-                "Properties": {
-                    "Location": "Main Entrance"
-                }
-            }
-        }
+        response = {"root": {"Properties": {"Location": "Main Entrance"}}}
         param_api._get = AsyncMock(return_value=response)
 
         result = await param_api.get_location()
@@ -387,15 +308,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_ip_address(self, param_api):
         """Test get_ip_address convenience method."""
-        response = {
-            "root": {
-                "Network": {
-                    "eth0": {
-                        "IPAddress": "192.168.1.10"
-                    }
-                }
-            }
-        }
+        response = {"root": {"Network": {"eth0": {"IPAddress": "192.168.1.10"}}}}
         param_api._get = AsyncMock(return_value=response)
 
         result = await param_api.get_ip_address()
@@ -406,25 +319,18 @@ class TestParamAPI:
     async def test_get_ip_address_alternative(self, param_api):
         """Test get_ip_address tries alternative parameter names."""
         call_count = 0
+
         async def mock_get(path, params=None):
             nonlocal call_count
             call_count += 1
             group = params.get("group", "")
             if "VolatileHostName" in group:
-                return {
-                    "root": {
-                        "Network": {
-                            "VolatileHostName": {
-                                "IPv4Address": "10.0.0.50"
-                            }
-                        }
-                    }
-                }
+                return {"root": {"Network": {"VolatileHostName": {"IPv4Address": "10.0.0.50"}}}}
             return {}
 
         param_api._get = mock_get
 
-        result = await param_api.get_ip_address()
+        await param_api.get_ip_address()
 
         # Should try alternatives and return if found
         assert call_count >= 1
@@ -432,15 +338,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_mac_address(self, param_api):
         """Test get_mac_address convenience method."""
-        response = {
-            "root": {
-                "Network": {
-                    "eth0": {
-                        "MACAddress": "AA:BB:CC:DD:EE:FF"
-                    }
-                }
-            }
-        }
+        response = {"root": {"Network": {"eth0": {"MACAddress": "AA:BB:CC:DD:EE:FF"}}}}
         param_api._get = AsyncMock(return_value=response)
 
         result = await param_api.get_mac_address()

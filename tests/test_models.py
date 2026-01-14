@@ -1,7 +1,8 @@
 """Tests for Pydantic models."""
 
-import pytest
 from datetime import datetime
+
+import pytest
 
 from axis_cam.models import (
     ActionConfig,
@@ -139,20 +140,24 @@ class TestBasicDeviceInfo:
 
     def test_create_with_aliases(self):
         """Test creating BasicDeviceInfo using field aliases."""
-        info = BasicDeviceInfo.model_validate({
-            "SerialNumber": "ACCC12345678",
-            "ProdNbr": "M3216-LVE",
-            "Version": "11.5.64",
-            "Brand": "AXIS",
-        })
+        info = BasicDeviceInfo.model_validate(
+            {
+                "SerialNumber": "ACCC12345678",
+                "ProdNbr": "M3216-LVE",
+                "Version": "11.5.64",
+                "Brand": "AXIS",
+            }
+        )
         assert info.serial_number == "ACCC12345678"
         assert info.product_number == "M3216-LVE"
         assert info.firmware_version == "11.5.64"
 
     def test_model_is_frozen(self):
         """Test that BasicDeviceInfo is immutable."""
+        from pydantic import ValidationError
+
         info = BasicDeviceInfo(serial_number="ABC123")
-        with pytest.raises(Exception):
+        with pytest.raises(ValidationError):
             info.serial_number = "XYZ789"
 
 

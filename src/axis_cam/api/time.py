@@ -93,7 +93,7 @@ class TimeAPI(BaseAPI):
 
     def _parse_rest_response(
         self,
-        data: dict[str, Any],
+        _data: dict[str, Any],
         time_data: dict[str, Any],
         tz_data: dict[str, Any],
     ) -> TimeInfo:

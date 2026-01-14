@@ -11,9 +11,9 @@ from typing import Any
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.models import (
+    AnalyticsMqttBroker,
     AnalyticsMqttConfig,
     AnalyticsMqttSubscription,
-    AnalyticsMqttBroker,
 )
 
 
@@ -66,9 +66,7 @@ class AnalyticsMqttAPI(BaseAPI):
         config = await self.get_config()
         return config.broker
 
-    async def get_subscription(
-        self, subscription_id: str
-    ) -> AnalyticsMqttSubscription | None:
+    async def get_subscription(self, subscription_id: str) -> AnalyticsMqttSubscription | None:
         """Get a specific subscription by ID.
 
         Args:
@@ -114,9 +112,7 @@ class AnalyticsMqttAPI(BaseAPI):
             include_coordinates=data.get("includeCoordinates", True),
         )
 
-    def _parse_subscription(
-        self, sub_id: str, data: dict[str, Any]
-    ) -> AnalyticsMqttSubscription:
+    def _parse_subscription(self, sub_id: str, data: dict[str, Any]) -> AnalyticsMqttSubscription:
         """Parse analytics MQTT subscription data.
 
         Args:

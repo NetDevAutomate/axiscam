@@ -145,7 +145,7 @@ def load_env_file() -> None:
         return
 
     try:
-        with open(env_file) as f:
+        with env_file.open() as f:
             for line in f:
                 line = line.strip()
                 # Skip empty lines and comments
@@ -157,8 +157,9 @@ def load_env_file() -> None:
                     key = key.strip()
                     value = value.strip()
                     # Remove surrounding quotes if present
-                    if (value.startswith('"') and value.endswith('"')) or \
-                       (value.startswith("'") and value.endswith("'")):
+                    if (value.startswith('"') and value.endswith('"')) or (
+                        value.startswith("'") and value.endswith("'")
+                    ):
                         value = value[1:-1]
                     # Only set if not already in environment
                     if key not in os.environ:
@@ -260,12 +261,8 @@ class AppConfig(BaseModel):
 
     model_config = {"frozen": True}
 
-    default_device: str | None = Field(
-        default=None, description="Default device name"
-    )
-    timeout: float = Field(
-        default=30.0, ge=1.0, le=300.0, description="Request timeout"
-    )
+    default_device: str | None = Field(default=None, description="Default device name")
+    timeout: float = Field(default=30.0, ge=1.0, le=300.0, description="Request timeout")
     devices: dict[str, DeviceConfig] = Field(
         default_factory=dict, description="Device configurations"
     )
@@ -350,7 +347,7 @@ def load_yaml_config(config_path: Path) -> dict[str, Any]:
     if not config_path.exists():
         return {}
 
-    with open(config_path) as f:
+    with config_path.open() as f:
         raw_config = yaml.safe_load(f) or {}
 
     # First interpolate env vars

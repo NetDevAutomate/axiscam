@@ -1,8 +1,9 @@
 """Tests for Time API module."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from axis_cam.api.time import TimeAPI
 from axis_cam.models import NtpStatus, TimeInfo, TimeZoneSource
@@ -35,7 +36,7 @@ class TestTimeAPI:
             "data": {
                 "dateTime": "2024-01-15T12:00:00Z",
                 "localDateTime": "2024-01-15T13:00:00+01:00",
-                "maxSupportedYear": 2037
+                "maxSupportedYear": 2037,
             }
         }
         tz_response = {
@@ -43,11 +44,12 @@ class TestTimeAPI:
                 "activeTimeZone": "Europe/Stockholm",
                 "iana": {"timeZone": "Europe/Stockholm"},
                 "posix": {"timeZone": "CET-1CEST", "dstEnabled": True},
-                "dhcp": {"enabled": False}
+                "dhcp": {"enabled": False},
             }
         }
 
         call_count = 0
+
         async def mock_get(path, params=None):
             nonlocal call_count
             call_count += 1
@@ -72,10 +74,11 @@ class TestTimeAPI:
             "localDateTime": "2024-01-15T13:00:00",
             "timeZone": "Europe/Stockholm",
             "posixTimeZone": "CET-1CEST",
-            "dstEnabled": "yes"
+            "dstEnabled": "yes",
         }
 
         call_count = 0
+
         async def mock_get(path, params=None):
             nonlocal call_count
             call_count += 1
@@ -98,14 +101,7 @@ class TestTimeAPI:
                 "dateTime": "2024-01-15T12:00:00Z",
             }
         }
-        tz_response = {
-            "data": {
-                "activeTimeZone": "UTC",
-                "iana": {},
-                "posix": {},
-                "dhcp": {}
-            }
-        }
+        tz_response = {"data": {"activeTimeZone": "UTC", "iana": {}, "posix": {}, "dhcp": {}}}
 
         async def mock_get(path, params=None):
             if "timeZone" in path:
@@ -127,7 +123,7 @@ class TestTimeAPI:
             "utcDateTime": "2024-01-15T12:00:00Z",
             "localDateTime": "2024-01-15T13:00:00",
             "timeZone": "Europe/Stockholm",
-            "dstEnabled": "yes"
+            "dstEnabled": "yes",
         }
         time_api._get = AsyncMock(return_value=response)
 
@@ -143,13 +139,13 @@ class TestTimeAPI:
         time_data = {
             "dateTime": "2024-01-15T12:00:00Z",
             "localDateTime": "2024-01-15T13:00:00",
-            "maxSupportedYear": 2037
+            "maxSupportedYear": 2037,
         }
         tz_data = {
             "activeTimeZone": "Europe/Stockholm",
             "iana": {"timeZone": "Europe/Stockholm"},
             "posix": {"timeZone": "CET-1CEST", "dstEnabled": True},
-            "dhcp": {"enabled": False}
+            "dhcp": {"enabled": False},
         }
 
         result = time_api._parse_rest_response(data, time_data, tz_data)
@@ -168,7 +164,7 @@ class TestTimeAPI:
             "activeTimeZone": "America/New_York",
             "iana": {},
             "posix": {},
-            "dhcp": {"enabled": True}
+            "dhcp": {"enabled": True},
         }
 
         result = time_api._parse_rest_response(data, time_data, tz_data)
@@ -183,7 +179,7 @@ class TestTimeAPI:
             "activeTimeZone": "",
             "iana": {},
             "posix": {"timeZone": "EST5EDT"},
-            "dhcp": {"enabled": False}
+            "dhcp": {"enabled": False},
         }
 
         result = time_api._parse_rest_response(data, time_data, tz_data)
@@ -197,7 +193,7 @@ class TestTimeAPI:
             "localDateTime": "2024-01-15T13:00:00",
             "timeZone": "Europe/Stockholm",
             "posixTimeZone": "CET-1CEST",
-            "dstEnabled": "yes"
+            "dstEnabled": "yes",
         }
 
         result = time_api._parse_cgi_response(response)
@@ -209,11 +205,7 @@ class TestTimeAPI:
 
     def test_parse_cgi_response_dst_disabled(self, time_api):
         """Test _parse_cgi_response with DST disabled."""
-        response = {
-            "utcDateTime": "2024-01-15T12:00:00Z",
-            "timeZone": "UTC",
-            "dstEnabled": "no"
-        }
+        response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC", "dstEnabled": "no"}
 
         result = time_api._parse_cgi_response(response)
 
@@ -255,10 +247,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_utc_time(self, time_api):
         """Test get_utc_time convenience method."""
-        cgi_response = {
-            "utcDateTime": "2024-01-15T12:00:00Z",
-            "timeZone": "UTC"
-        }
+        cgi_response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC"}
 
         async def mock_get(path, params=None):
             if "rest" in path:
@@ -277,7 +266,7 @@ class TestTimeAPI:
         cgi_response = {
             "utcDateTime": "2024-01-15T12:00:00Z",
             "localDateTime": "2024-01-15T13:00:00",
-            "timeZone": "Europe/Stockholm"
+            "timeZone": "Europe/Stockholm",
         }
 
         async def mock_get(path, params=None):
@@ -294,10 +283,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_local_time_none(self, time_api):
         """Test get_local_time returns None when not available."""
-        cgi_response = {
-            "utcDateTime": "2024-01-15T12:00:00Z",
-            "timeZone": "UTC"
-        }
+        cgi_response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC"}
 
         async def mock_get(path, params=None):
             if "rest" in path:
@@ -313,10 +299,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_timezone(self, time_api):
         """Test get_timezone convenience method."""
-        cgi_response = {
-            "utcDateTime": "2024-01-15T12:00:00Z",
-            "timeZone": "America/New_York"
-        }
+        cgi_response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "America/New_York"}
 
         async def mock_get(path, params=None):
             if "rest" in path:
@@ -332,13 +315,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_ntp_status_rest_api(self, time_api):
         """Test get_ntp_status using REST API."""
-        response = {
-            "data": {
-                "enabled": True,
-                "server": "pool.ntp.org",
-                "synchronized": True
-            }
-        }
+        response = {"data": {"enabled": True, "server": "pool.ntp.org", "synchronized": True}}
         time_api._get = AsyncMock(return_value=response)
 
         result = await time_api.get_ntp_status()
@@ -351,16 +328,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_ntp_status_fallback_to_params(self, time_api):
         """Test get_ntp_status falls back to param.cgi."""
-        param_response = {
-            "root": {
-                "Time": {
-                    "NTP": {
-                        "Enabled": "yes",
-                        "Server": "time.nist.gov"
-                    }
-                }
-            }
-        }
+        param_response = {"root": {"Time": {"NTP": {"Enabled": "yes", "Server": "time.nist.gov"}}}}
 
         async def mock_get(path, params=None):
             if "network-time-sync" in path:
@@ -379,16 +347,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_ntp_from_params(self, time_api):
         """Test _get_ntp_from_params method."""
-        response = {
-            "root": {
-                "Time": {
-                    "NTP": {
-                        "Enabled": "yes",
-                        "Server": "ntp.example.com"
-                    }
-                }
-            }
-        }
+        response = {"root": {"Time": {"NTP": {"Enabled": "yes", "Server": "ntp.example.com"}}}}
         time_api._get = AsyncMock(return_value=response)
 
         result = await time_api._get_ntp_from_params()
@@ -399,16 +358,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_ntp_from_params_disabled(self, time_api):
         """Test _get_ntp_from_params with NTP disabled."""
-        response = {
-            "root": {
-                "Time": {
-                    "NTP": {
-                        "Enabled": "no",
-                        "Server": ""
-                    }
-                }
-            }
-        }
+        response = {"root": {"Time": {"NTP": {"Enabled": "no", "Server": ""}}}}
         time_api._get = AsyncMock(return_value=response)
 
         result = await time_api._get_ntp_from_params()
@@ -429,14 +379,7 @@ class TestTimeAPI:
     async def test_get_available_timezones(self, time_api):
         """Test get_available_timezones method."""
         response = {
-            "data": {
-                "timeZones": [
-                    "UTC",
-                    "America/New_York",
-                    "Europe/Stockholm",
-                    "Asia/Tokyo"
-                ]
-            }
+            "data": {"timeZones": ["UTC", "America/New_York", "Europe/Stockholm", "Asia/Tokyo"]}
         }
         time_api._post = AsyncMock(return_value=response)
 

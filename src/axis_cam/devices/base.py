@@ -551,9 +551,7 @@ class AxisDevice(ABC):
         """
         return await self.networkpairing.get_config()
 
-    async def get_stream_diagnostics(
-        self, device_name: str | None = None
-    ) -> StreamDiagnostics:
+    async def get_stream_diagnostics(self, device_name: str | None = None) -> StreamDiagnostics:
         """Get stream diagnostics including RTSP, RTP, and profile settings.
 
         This method retrieves comprehensive streaming configuration useful

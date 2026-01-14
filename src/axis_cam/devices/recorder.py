@@ -87,9 +87,7 @@ class AxisRecorder(AxisDevice):
             Recording group configuration or None.
         """
         try:
-            response = await self._client.get_json(
-                f"{self.RECORDING_GROUP_PATH}/{group_id}"
-            )
+            response = await self._client.get_json(f"{self.RECORDING_GROUP_PATH}/{group_id}")
             return response.get("data")
         except Exception:
             return None
@@ -116,9 +114,7 @@ class AxisRecorder(AxisDevice):
             List of disk status information.
         """
         try:
-            response = await self._client.get_json(
-                "/axis-cgi/disks/list.cgi"
-            )
+            response = await self._client.get_json("/axis-cgi/disks/list.cgi")
             return response.get("disks", [])
         except Exception:
             return []

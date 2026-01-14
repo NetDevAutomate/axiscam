@@ -21,7 +21,6 @@ from pydantic import BaseModel, Field
 
 from axis_cam.api.base import BaseAPI
 
-
 # =============================================================================
 # Stream Diagnostics Models
 # =============================================================================

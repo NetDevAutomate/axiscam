@@ -87,9 +87,7 @@ class RemoteStorageAPI(BaseAPI):
             destinations=destinations,
         )
 
-    def _parse_destination(
-        self, dest_id: str, data: dict[str, Any]
-    ) -> StorageDestination:
+    def _parse_destination(self, dest_id: str, data: dict[str, Any]) -> StorageDestination:
         """Parse storage destination data.
 
         Args:

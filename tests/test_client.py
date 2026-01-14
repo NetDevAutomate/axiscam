@@ -1,9 +1,9 @@
 """Tests for VapixClient."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
+import pytest
 
 from axis_cam.client import VapixClient
 from axis_cam.exceptions import (
@@ -60,9 +60,7 @@ class TestVapixClientBaseUrl:
 
     def test_https_base_url(self):
         """Test HTTPS base URL."""
-        client = VapixClient(
-            "192.168.1.10", "admin", "password", port=443, use_https=True
-        )
+        client = VapixClient("192.168.1.10", "admin", "password", port=443, use_https=True)
         assert client.base_url == "https://192.168.1.10:443"
 
 

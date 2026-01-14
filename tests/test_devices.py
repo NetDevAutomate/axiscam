@@ -1,25 +1,23 @@
 """Tests for device classes."""
 
-import pytest
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from axis_cam.devices import (
     AxisCamera,
-    AxisDevice,
     AxisIntercom,
     AxisRecorder,
     AxisSpeaker,
 )
 from axis_cam.models import (
     BasicDeviceInfo,
-    DeviceCapabilities,
     DeviceStatus,
     DeviceType,
     LogReport,
     LogType,
     TimeInfo,
-    TimeZoneSource,
 )
 
 
@@ -107,6 +105,7 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_status(self, mock_client):
         """Test get_status method."""
+
         # Setup responses for device info and time API calls
         def mock_get_json(path, params=None):
             if "basic-device-info" in path:
@@ -117,7 +116,7 @@ class TestAxisDevice:
                         "ProdNbr": "AXIS M3216-LVE",
                         "SerialNumber": "ACCC12345678",
                         "Version": "11.8.64",
-                    }
+                    },
                 }
             elif "time/v2/time" in path:
                 return {"data": {"dateTime": "2024-01-15T10:30:00Z"}}
@@ -138,6 +137,7 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_time_info(self, mock_client):
         """Test get_time_info method."""
+
         def mock_get_json(path, params=None):
             if "time/v2/time" in path:
                 return {"data": {"dateTime": "2024-01-15T10:30:00Z"}}
@@ -164,13 +164,9 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_friendly_name(self, mock_client):
         """Test get_friendly_name method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {
-                "Properties": {
-                    "FriendlyName": "Front Door Camera"
-                }
-            }
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"root": {"Properties": {"FriendlyName": "Front Door Camera"}}}
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             name = await camera.get_friendly_name()
             assert name == "Front Door Camera"
@@ -178,13 +174,9 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_location(self, mock_client):
         """Test get_location method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {
-                "Properties": {
-                    "Location": "Building A, Entrance"
-                }
-            }
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"root": {"Properties": {"Location": "Building A, Entrance"}}}
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             location = await camera.get_location()
             assert location == "Building A, Entrance"
@@ -202,10 +194,12 @@ class TestAxisCamera:
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
             client.check_connectivity = AsyncMock(return_value=True)
-            client.discover_apis = AsyncMock(return_value={
-                "basic-device-info": {"v2": {"state": "beta"}},
-                "ptz": {"v1": {"state": "released"}},
-            })
+            client.discover_apis = AsyncMock(
+                return_value={
+                    "basic-device-info": {"v2": {"state": "beta"}},
+                    "ptz": {"v1": {"state": "released"}},
+                }
+            )
             client.get_raw = AsyncMock(return_value=b"fake image data")
             client.get_json = AsyncMock(return_value={})
             mock.return_value = client
@@ -298,9 +292,11 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_has_audio(self, mock_client):
         """Test has_audio method."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "audio-device-ctrl": {"v1": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "audio-device-ctrl": {"v1": {}},
+            }
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.has_audio()
             assert result is True
@@ -308,9 +304,11 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_has_analytics(self, mock_client):
         """Test has_analytics method."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "analytics-metadata": {"v1": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "analytics-metadata": {"v1": {}},
+            }
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.has_analytics()
             assert result is True
@@ -318,9 +316,11 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_get_video_sources(self, mock_client):
         """Test get_video_sources method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "videoSources": [{"id": "1", "name": "Camera 1"}],
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "videoSources": [{"id": "1", "name": "Camera 1"}],
+            }
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.get_video_sources()
             assert len(result) == 1
@@ -336,9 +336,11 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_get_stream_profiles(self, mock_client):
         """Test get_stream_profiles method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "streamProfile": [{"name": "Quality", "description": "High quality"}],
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "streamProfile": [{"name": "Quality", "description": "High quality"}],
+            }
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.get_stream_profiles()
             assert len(result) == 1
@@ -382,12 +384,12 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_device_specific_info(self, mock_client):
         """Test get_device_specific_info method."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "recording-group": {"v2": {}},
-        })
-        mock_client.get_json = AsyncMock(return_value={
-            "total": "1000GB", "free": "500GB"
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "recording-group": {"v2": {}},
+            }
+        )
+        mock_client.get_json = AsyncMock(return_value={"total": "1000GB", "free": "500GB"})
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             recorder.device_info.get_info = AsyncMock(
@@ -406,14 +408,16 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_recording_groups(self, mock_client):
         """Test get_recording_groups method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "data": {
-                "recordingGroups": [
-                    {"id": "1", "name": "Group1"},
-                    {"id": "2", "name": "Group2"},
-                ]
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "data": {
+                    "recordingGroups": [
+                        {"id": "1", "name": "Group1"},
+                        {"id": "2", "name": "Group2"},
+                    ]
+                }
             }
-        })
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_groups()
@@ -434,9 +438,9 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_recording_group(self, mock_client):
         """Test get_recording_group method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "data": {"id": "1", "name": "Group1", "cameras": []}
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"data": {"id": "1", "name": "Group1", "cameras": []}}
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_group("1")
@@ -457,11 +461,13 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_storage_info(self, mock_client):
         """Test get_storage_info method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "total": "1000GB",
-            "free": "500GB",
-            "used": "500GB",
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "total": "1000GB",
+                "free": "500GB",
+                "used": "500GB",
+            }
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_storage_info()
@@ -482,12 +488,14 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_disk_status(self, mock_client):
         """Test get_disk_status method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "disks": [
-                {"id": "disk1", "status": "healthy", "size": "500GB"},
-                {"id": "disk2", "status": "healthy", "size": "500GB"},
-            ]
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "disks": [
+                    {"id": "disk1", "status": "healthy", "size": "500GB"},
+                    {"id": "disk2", "status": "healthy", "size": "500GB"},
+                ]
+            }
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_disk_status()
@@ -508,9 +516,9 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_remote_storage_config(self, mock_client):
         """Test get_remote_storage_config method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "data": {"enabled": True, "endpoint": "s3://bucket"}
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"data": {"enabled": True, "endpoint": "s3://bucket"}}
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_remote_storage_config()
@@ -531,16 +539,18 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_connected_cameras(self, mock_client):
         """Test get_connected_cameras method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {
-                "Network": {
-                    "AxisDevices": [
-                        {"ip": "192.168.1.10", "model": "M3216-LVE"},
-                        {"ip": "192.168.1.11", "model": "P1448-LE"},
-                    ]
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "root": {
+                    "Network": {
+                        "AxisDevices": [
+                            {"ip": "192.168.1.10", "model": "M3216-LVE"},
+                            {"ip": "192.168.1.11", "model": "P1448-LE"},
+                        ]
+                    }
                 }
             }
-        })
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_connected_cameras()
@@ -560,9 +570,11 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_has_remote_storage_true(self, mock_client):
         """Test has_remote_storage returns True when supported."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "remote-object-storage": {"v1": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "remote-object-storage": {"v1": {}},
+            }
+        )
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.has_remote_storage()
@@ -611,10 +623,12 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_device_specific_info(self, mock_client):
         """Test get_device_specific_info method."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "video-analytics": {"v1": {}},
-            "audio-device-ctrl": {"v1": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "video-analytics": {"v1": {}},
+                "audio-device-ctrl": {"v1": {}},
+            }
+        )
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             intercom.device_info.get_info = AsyncMock(
@@ -634,10 +648,12 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_status(self, mock_client):
         """Test get_audio_status method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "status": "active",
-            "channels": 2,
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "status": "active",
+                "channels": 2,
+            }
+        )
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_status()
@@ -658,9 +674,11 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_device_info(self, mock_client):
         """Test get_audio_device_info method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "devices": [{"id": "1", "type": "speaker"}],
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "devices": [{"id": "1", "type": "speaker"}],
+            }
+        )
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_device_info()
@@ -680,9 +698,9 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_multicast_config(self, mock_client):
         """Test get_audio_multicast_config method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "data": {"enabled": True, "address": "224.0.0.1"}
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"data": {"enabled": True, "address": "224.0.0.1"}}
+        )
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_multicast_config()
@@ -703,14 +721,16 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_sip_config(self, mock_client):
         """Test get_sip_config method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {
-                "SIP": {
-                    "Enabled": "yes",
-                    "Server": "sip.example.com",
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "root": {
+                    "SIP": {
+                        "Enabled": "yes",
+                        "Server": "sip.example.com",
+                    }
                 }
             }
-        })
+        )
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_sip_config()
@@ -731,9 +751,11 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_has_video_true(self, mock_client):
         """Test has_video returns True when video supported."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "video-analytics": {"v1": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "video-analytics": {"v1": {}},
+            }
+        )
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.has_video()
@@ -753,9 +775,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_has_sip_true(self, mock_client):
         """Test has_sip returns True when SIP configured."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {"SIP": {"Enabled": "yes"}}
-        })
+        mock_client.get_json = AsyncMock(return_value={"root": {"SIP": {"Enabled": "yes"}}})
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.has_sip()
@@ -837,9 +857,11 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_device_specific_info(self, mock_client):
         """Test get_device_specific_info method."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "audio-multicast-ctrl": {"v1beta": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "audio-multicast-ctrl": {"v1beta": {}},
+            }
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             speaker.device_info.get_info = AsyncMock(
@@ -858,14 +880,16 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_config(self, mock_client):
         """Test get_audio_config method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {
-                "Audio": {
-                    "OutputGain": "75",
-                    "InputGain": "50",
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "root": {
+                    "Audio": {
+                        "OutputGain": "75",
+                        "InputGain": "50",
+                    }
                 }
             }
-        })
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_config()
@@ -886,9 +910,9 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_multicast_config(self, mock_client):
         """Test get_audio_multicast_config method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "data": {"enabled": True, "multicastAddress": "224.0.0.2"}
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"data": {"enabled": True, "multicastAddress": "224.0.0.2"}}
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_multicast_config()
@@ -909,10 +933,12 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_status(self, mock_client):
         """Test get_audio_status method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "status": "playing",
-            "volume": 80,
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "status": "playing",
+                "volume": 80,
+            }
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_status()
@@ -933,9 +959,11 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_device_info(self, mock_client):
         """Test get_audio_device_info method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "audioDevices": [{"type": "speaker", "channels": 1}],
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "audioDevices": [{"type": "speaker", "channels": 1}],
+            }
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_device_info()
@@ -955,9 +983,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_volume(self, mock_client):
         """Test get_volume method returns volume level."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {"Audio": {"OutputGain": "75"}}
-        })
+        mock_client.get_json = AsyncMock(return_value={"root": {"Audio": {"OutputGain": "75"}}})
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_volume()
@@ -967,9 +993,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_volume_not_available(self, mock_client):
         """Test get_volume returns None when not available."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {"Audio": {}}
-        })
+        mock_client.get_json = AsyncMock(return_value={"root": {"Audio": {}}})
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_volume()
@@ -979,9 +1003,9 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_volume_invalid_value(self, mock_client):
         """Test get_volume handles invalid value."""
-        mock_client.get_json = AsyncMock(return_value={
-            "root": {"Audio": {"OutputGain": "invalid"}}
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={"root": {"Audio": {"OutputGain": "invalid"}}}
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_volume()
@@ -991,9 +1015,11 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_has_multicast_true(self, mock_client):
         """Test has_multicast returns True when supported."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "audio-multicast-ctrl": {"v1beta": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "audio-multicast-ctrl": {"v1beta": {}},
+            }
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.has_multicast()
@@ -1013,12 +1039,14 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_clips(self, mock_client):
         """Test get_audio_clips method."""
-        mock_client.get_json = AsyncMock(return_value={
-            "clips": [
-                {"id": "1", "name": "doorbell.wav"},
-                {"id": "2", "name": "alarm.wav"},
-            ]
-        })
+        mock_client.get_json = AsyncMock(
+            return_value={
+                "clips": [
+                    {"id": "1", "name": "doorbell.wav"},
+                    {"id": "2", "name": "alarm.wav"},
+                ]
+            }
+        )
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_clips()
@@ -1085,10 +1113,12 @@ class TestDeviceCapabilities:
     @pytest.mark.asyncio
     async def test_get_capabilities_discovers_apis(self, mock_client):
         """Test that get_capabilities calls discover_apis."""
-        mock_client.discover_apis = AsyncMock(return_value={
-            "ptz": {"v1": {}},
-            "audio-device-ctrl": {"v1": {}},
-        })
+        mock_client.discover_apis = AsyncMock(
+            return_value={
+                "ptz": {"v1": {}},
+                "audio-device-ctrl": {"v1": {}},
+            }
+        )
 
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             caps = await camera.get_capabilities()

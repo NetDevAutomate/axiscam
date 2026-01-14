@@ -172,14 +172,9 @@ class ParamAPI(BaseAPI):
         except Exception:
             # Fall back to getting all params
             params = await self.get_all()
-            return {
-                group.name: {p.name: p.value for p in group.parameters}
-                for group in params
-            }
+            return {group.name: {p.name: p.value for p in group.parameters} for group in params}
 
-    def _extract_param_value(
-        self, response: dict[str, Any], param_name: str
-    ) -> str | None:
+    def _extract_param_value(self, response: dict[str, Any], param_name: str) -> str | None:
         """Extract a single parameter value from response.
 
         Args:
@@ -206,9 +201,7 @@ class ParamAPI(BaseAPI):
 
         return None
 
-    def _parse_group_response(
-        self, group_name: str, response: dict[str, Any]
-    ) -> ParameterGroup:
+    def _parse_group_response(self, group_name: str, response: dict[str, Any]) -> ParameterGroup:
         """Parse group response into ParameterGroup model.
 
         Args:
@@ -242,18 +235,14 @@ class ParamAPI(BaseAPI):
         # Organize parameters by top-level group
         for param in parameters:
             parts = param.name.split(".")
-            if len(parts) >= 2:
-                group_name = parts[1]  # First part after "root"
-            else:
-                group_name = "Other"
+            group_name = parts[1] if len(parts) >= 2 else "Other"
 
             if group_name not in groups:
                 groups[group_name] = []
             groups[group_name].append(param)
 
         return [
-            ParameterGroup(name=name, parameters=params)
-            for name, params in sorted(groups.items())
+            ParameterGroup(name=name, parameters=params) for name, params in sorted(groups.items())
         ]
 
     def _extract_params_recursive(

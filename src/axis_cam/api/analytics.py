@@ -131,9 +131,7 @@ class VideoAnalyticsAPI(BaseAPI):
             overlay_enabled=data.get("overlayEnabled", False),
         )
 
-    def _parse_profile(
-        self, profile_id: str, data: dict[str, Any]
-    ) -> AnalyticsProfile:
+    def _parse_profile(self, profile_id: str, data: dict[str, Any]) -> AnalyticsProfile:
         """Parse analytics profile data.
 
         Args:
@@ -154,9 +152,7 @@ class VideoAnalyticsAPI(BaseAPI):
             max_object_size=data.get("maxObjectSize", 100),
         )
 
-    def _parse_scenario(
-        self, scenario_id: str, data: dict[str, Any]
-    ) -> AnalyticsScenario:
+    def _parse_scenario(self, scenario_id: str, data: dict[str, Any]) -> AnalyticsScenario:
         """Parse analytics scenario data.
 
         Args:
@@ -179,9 +175,7 @@ class VideoAnalyticsAPI(BaseAPI):
             region=data.get("region", {}),
         )
 
-    def _parse_object_class(
-        self, class_id: str, data: dict[str, Any]
-    ) -> ObjectClass:
+    def _parse_object_class(self, class_id: str, data: dict[str, Any]) -> ObjectClass:
         """Parse object class data.
 
         Args:

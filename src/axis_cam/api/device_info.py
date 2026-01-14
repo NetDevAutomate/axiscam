@@ -80,8 +80,14 @@ class BasicDeviceInfoAPI(BaseAPI):
         """
         # Check for any of the expected device info fields
         expected_fields = {
-            "SerialNumber", "ProdNbr", "Version", "Brand",
-            "serialNumber", "prodNbr", "version", "brand",
+            "SerialNumber",
+            "ProdNbr",
+            "Version",
+            "Brand",
+            "serialNumber",
+            "prodNbr",
+            "version",
+            "brand",
         }
         return bool(expected_fields & set(data.keys()))
 
@@ -196,9 +202,7 @@ class BasicDeviceInfoAPI(BaseAPI):
         except Exception:
             return DeviceProperties()
 
-    def _parse_properties_response(
-        self, response: dict[str, Any]
-    ) -> DeviceProperties:
+    def _parse_properties_response(self, response: dict[str, Any]) -> DeviceProperties:
         """Parse properties response.
 
         Args:

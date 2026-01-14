@@ -141,9 +141,7 @@ class BestSnapshotAPI(BaseAPI):
             max_snapshots_per_event=data.get("maxSnapshotsPerEvent", 1),
         )
 
-    def _parse_profile(
-        self, profile_id: str, data: dict[str, Any]
-    ) -> SnapshotProfile:
+    def _parse_profile(self, profile_id: str, data: dict[str, Any]) -> SnapshotProfile:
         """Parse snapshot profile data.
 
         Args:
@@ -165,9 +163,7 @@ class BestSnapshotAPI(BaseAPI):
             timestamp_enabled=data.get("timestampEnabled", True),
         )
 
-    def _parse_trigger(
-        self, trigger_id: str, data: dict[str, Any]
-    ) -> SnapshotTrigger:
+    def _parse_trigger(self, trigger_id: str, data: dict[str, Any]) -> SnapshotTrigger:
         """Parse snapshot trigger data.
 
         Args:

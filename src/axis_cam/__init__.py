@@ -15,10 +15,10 @@ from axis_cam.devices import AxisCamera, AxisDevice, AxisIntercom, AxisRecorder,
 
 __version__ = "0.1.0"
 __all__ = [
-    "VapixClient",
-    "AxisDevice",
     "AxisCamera",
-    "AxisRecorder",
+    "AxisDevice",
     "AxisIntercom",
+    "AxisRecorder",
     "AxisSpeaker",
+    "VapixClient",
 ]
