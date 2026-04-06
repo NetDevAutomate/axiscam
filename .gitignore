@@ -38,6 +38,12 @@ specs/
 docs/brainstorms/
 docs/plans/
 
+# Secrets
+.env
+
+# Playwright MCP
+.playwright-mcp/
+
 # Agentic Agent Files
 .claude/
 CLAUDE.md
