@@ -34,25 +34,9 @@ build/
 # Project Spcficic
 specs/
 
-# Agentic Agent Files
-.claude/
-CLAUDE.md
-.kiro/
-.crush/
-.opencode/
-.cursor/
-.windsurf/
-.continue/
-.aider/
-.copilot/
-.speckit/
-.openspec/
-
-# IDE Files
-.vscode/
-.idea/
-*.code-workspace
-.zed/
+# Documentation - Working Files
+docs/brainstorms/
+docs/plans/
 
 # Agentic Agent Files
 .claude/

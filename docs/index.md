@@ -4,13 +4,30 @@ Welcome to the documentation for `axis_cam`, a comprehensive CLI tool and Python
 
 ## Quick Navigation
 
+### Architecture & Design
+
 | Document | Description |
 |----------|-------------|
-| [Architecture](./architecture.md) | System architecture, design patterns, data flows |
-| [API Modules](./api-modules.md) | VAPIX API module reference (29 modules) |
+| [Architecture](./architecture.md) | System architecture, design patterns, data flows, deep dives, ADRs |
+| [C4 Architecture](./c4-architecture.md) | C4 model: System Context, Container, Component, and Code diagrams |
+| [Codemap](./codemap.md) | Module breakdown, interfaces, dependency graphs, data flows |
+| [Class Diagrams](./class-diagrams.md) | PlantUML-style class hierarchies, interaction and package diagrams |
+
+### Reference
+
+| Document | Description |
+|----------|-------------|
+| [API Modules](./api-modules.md) | VAPIX API module reference (27 modules) |
 | [Device Classes](./device-classes.md) | Device type implementations |
 | [CLI Reference](./cli-reference.md) | Command-line interface documentation |
 | [Configuration](./configuration.md) | Configuration system guide |
+
+### Guides & Operations
+
+| Document | Description |
+|----------|-------------|
+| [Use Cases & How-To](./use-cases.md) | 12 use cases with CLI/Python examples, user journeys, app flows |
+| [Troubleshooting & Runbook](./troubleshooting-runbook.md) | Diagnostic decision trees, operational runbooks, error reference |
 
 ---
 
