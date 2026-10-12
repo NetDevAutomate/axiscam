@@ -36,6 +36,7 @@ from axis_cam.api.stream import StreamAPI, StreamDiagnostics
 from axis_cam.api.time import TimeAPI
 from axis_cam.api.virtualhost import VirtualHostAPI
 from axis_cam.client import VapixClient
+from axis_cam.exceptions import AxisConfigError
 from axis_cam.models import (
     ActionConfig,
     AnalyticsConfig,
@@ -129,27 +130,46 @@ class AxisDevice(ABC):
         ssl_verify: bool = False,
         timeout: float = 30.0,
         use_digest_auth: bool = False,
+        *,
+        https: bool = True,
+        allow_insecure_basic: bool = False,
     ) -> None:
         """Initialize the AXIS device.
+
+        The transport scheme is never inferred from the port: HTTPS is used
+        unless ``https=False`` is passed explicitly. Basic authentication over
+        plain HTTP sends credentials in cleartext and is refused unless
+        ``allow_insecure_basic=True`` is passed as well.
 
         Args:
             host: Device IP address or hostname.
             username: Authentication username.
             password: Authentication password.
-            port: HTTPS port number.
+            port: TCP port (default 443).
             ssl_verify: Whether to verify SSL certificates.
             timeout: Request timeout in seconds.
             use_digest_auth: Use Digest auth instead of Basic.
+            https: Use HTTPS (default True). Set False only for plain-HTTP devices.
+            allow_insecure_basic: Permit Basic auth over plain HTTP.
+
+        Raises:
+            AxisConfigError: If Basic auth over plain HTTP is requested without
+                ``allow_insecure_basic``.
         """
+        if not https and not use_digest_auth and not allow_insecure_basic:
+            raise AxisConfigError(
+                f"Refusing Basic authentication over plain HTTP to {host}:{port}: "
+                "credentials would be sent in cleartext. Use https=True, "
+                "use_digest_auth=True, or pass allow_insecure_basic=True explicitly."
+            )
+
         self._host = host
-        # Auto-detect HTTPS based on port (443 = HTTPS, otherwise HTTP)
-        use_https = port == 443
         self._client = VapixClient(
             host=host,
             username=username,
             password=password,
             port=port,
-            use_https=use_https,
+            use_https=https,
             verify_ssl=ssl_verify,
             timeout=timeout,
             use_digest_auth=use_digest_auth,

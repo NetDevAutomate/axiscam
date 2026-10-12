@@ -1129,3 +1129,47 @@ class TestDeviceCapabilities:
 
             # Should only be called once due to caching
             assert mock_client.discover_apis.call_count == 1
+
+
+class TestAxisDeviceTransport:
+    """The scheme is explicit and never inferred from the port.
+
+    Regression tests for the review finding where ``use_https = port == 443``
+    sent credentials over plain HTTP to any device on a non-443 port.
+    """
+
+    def test_https_is_default_on_non_443_port(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", port=8443)
+        assert camera.client.base_url == "https://192.168.1.10:8443"
+
+    def test_https_is_default_on_port_80(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", port=80)
+        assert camera.client.base_url == "https://192.168.1.10:80"
+
+    def test_plain_http_is_an_explicit_opt_in(self):
+        camera = AxisCamera(
+            "192.168.1.10", "admin", "password", port=80, use_digest_auth=True, https=False
+        )
+        assert camera.client.base_url == "http://192.168.1.10:80"
+
+    def test_basic_auth_over_plain_http_is_refused(self):
+        from axis_cam.exceptions import AxisConfigError
+
+        with pytest.raises(AxisConfigError, match="cleartext"):
+            AxisCamera("192.168.1.10", "admin", "password", https=False)
+
+    def test_basic_auth_over_plain_http_needs_explicit_allow(self):
+        camera = AxisCamera(
+            "192.168.1.10", "admin", "password", https=False, allow_insecure_basic=True
+        )
+        assert camera.client.base_url.startswith("http://")
+        assert camera.client.use_digest_auth is False
+
+    def test_digest_over_plain_http_is_allowed(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", https=False, use_digest_auth=True)
+        assert camera.client.base_url.startswith("http://")
+
+    def test_ssl_verify_and_timeout_reach_the_client(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", ssl_verify=True, timeout=7.5)
+        assert camera.client.verify_ssl is True
+        assert camera.client.timeout == 7.5

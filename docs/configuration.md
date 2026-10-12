@@ -210,7 +210,8 @@ devices:
 | `vendor` | `str` | `"axis"` | Device vendor |
 | `model` | `str` | `None` | Device model number |
 | `type` | `str` | `"camera"` | Device type |
-| `port` | `int` | `443` | HTTPS port |
+| `port` | `int` | `443` | TCP port |
+| `https` | `bool` | `True` | Use HTTPS. Never inferred from the port; set `false` only for plain-HTTP devices |
 | `ssl_verify` | `bool` | `False` | Verify SSL certificates |
 
 ### Device Types
@@ -294,6 +295,7 @@ export AXIS_ROOT_USER_PASSWORD=secure_password
 | `AXIS_USERNAME` | `username` |
 | `AXIS_PASSWORD` | `password` |
 | `AXIS_PORT` | `port` |
+| `AXIS_HTTPS` | `https` |
 | `AXIS_SSL_VERIFY` | `ssl_verify` |
 | `AXIS_ADMIN_USERNAME` | `username` (alternative) |
 | `AXIS_ADMIN_PASSWORD` | `password` (alternative) |

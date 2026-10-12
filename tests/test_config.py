@@ -500,3 +500,59 @@ class TestCreateDefaultConfig:
         result = create_default_config()
         assert "${AXIS_ROOT_USER_NAME}" in result
         assert "${AXIS_ROOT_USER_PASSWORD}" in result
+
+
+class TestDeviceConfigTransport:
+    """The https field defaults on and is independent of the port."""
+
+    def test_https_defaults_true(self):
+        config = DeviceConfig(host="192.168.1.10", username="admin", password="pass", port=8443)
+        assert config.https is True
+
+    def test_https_can_be_disabled_explicitly(self):
+        config = DeviceConfig(
+            host="192.168.1.10", username="admin", password="pass", port=80, https=False
+        )
+        assert config.https is False
+
+    def test_yaml_https_key_is_loaded(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(
+            "devices:\n"
+            "  legacy:\n"
+            "    address: 192.168.1.20\n"
+            "    username: admin\n"
+            "    password: pass\n"
+            "    port: 80\n"
+            "    https: false\n"
+        )
+        result = load_yaml_config(config_file)
+        assert result["devices"]["legacy"]["https"] is False
+
+
+class TestLoadEnvConfigTransport:
+    """AXIS_HTTPS is parsed as a boolean like AXIS_SSL_VERIFY."""
+
+    def test_load_https_true_values(self):
+        for value in ("true", "1", "yes", "True"):
+            with patch.dict(os.environ, {"AXIS_HTTPS": value}, clear=True):
+                assert load_env_config()["https"] is True
+
+    def test_load_https_false_values(self):
+        for value in ("false", "0", "no"):
+            with patch.dict(os.environ, {"AXIS_HTTPS": value}, clear=True):
+                assert load_env_config()["https"] is False
+
+    def test_env_device_defaults_to_https(self):
+        env = {"AXIS_HOST": "192.168.1.30", "AXIS_USERNAME": "admin", "AXIS_PASSWORD": "pass"}
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch("axis_cam.config.get_config_file", return_value=Path("/nonexistent/config.yaml")),
+            patch("axis_cam.config.load_env_file"),
+        ):
+            load_config.cache_clear()
+            try:
+                config = load_config()
+                assert config.devices["default"].https is True
+            finally:
+                load_config.cache_clear()

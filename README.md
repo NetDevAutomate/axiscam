@@ -84,6 +84,7 @@ devices:
     type: camera
     address: 192.168.1.10
     port: 443
+    https: true          # default; never inferred from the port. Set false only for plain-HTTP devices
     username: ${AXIS_ROOT_USER_NAME}
     password: ${AXIS_ROOT_USER_PASSWORD}
     ssl_verify: false

@@ -144,6 +144,9 @@ def __init__(
     ssl_verify: bool = False,
     timeout: float = 30.0,
     use_digest_auth: bool = False,
+    *,
+    https: bool = True,
+    allow_insecure_basic: bool = False,
 ) -> None
 ```
 
@@ -152,10 +155,12 @@ def __init__(
 | `host` | `str` | Required | Device IP address or hostname |
 | `username` | `str` | Required | Authentication username |
 | `password` | `str` | Required | Authentication password |
-| `port` | `int` | `443` | HTTPS port (443 = HTTPS, other = HTTP) |
+| `port` | `int` | `443` | TCP port |
 | `ssl_verify` | `bool` | `False` | Verify SSL certificates |
 | `timeout` | `float` | `30.0` | Request timeout in seconds |
 | `use_digest_auth` | `bool` | `False` | Use Digest auth instead of Basic |
+| `https` | `bool` | `True` | Use HTTPS. Never inferred from the port |
+| `allow_insecure_basic` | `bool` | `False` | Permit Basic auth over plain HTTP. Without it, `https=False` with Basic auth raises `AxisConfigError` |
 
 ### Composed API Modules
 
