@@ -12,6 +12,7 @@ Usage:
 """
 
 import asyncio
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
 
@@ -23,11 +24,10 @@ from rich.tree import Tree
 
 from axis_cam import AxisCamera, AxisIntercom, AxisRecorder, AxisSpeaker
 from axis_cam.config import (
+    DeviceConfig,
     create_default_config,
     get_config_dir,
     get_config_file,
-    get_device_config,
-    get_device_config_by_host,
     load_config,
 )
 from axis_cam.devices.base import AxisDevice
@@ -122,11 +122,11 @@ PasswordOption = Annotated[
 ]
 
 PortOption = Annotated[
-    int,
+    int | None,
     typer.Option(
         "--port",
         "-P",
-        help="HTTPS port number.",
+        help="TCP port. Defaults to the device's configured port, else 443.",
     ),
 ]
 
@@ -175,31 +175,90 @@ def get_device_class(device_type: str) -> type[AxisDevice]:
     return type_map.get(device_type.lower(), AxisCamera)
 
 
+@dataclass(frozen=True)
+class ResolvedDevice:
+    """Connection parameters for one device, resolved from options and config.
+
+    This is the single path by which config values reach the device class, so
+    ``https``, ``ssl_verify`` and ``timeout`` cannot be dropped on the way.
+    Seed of the Phase 1 ``DeviceContext``.
+    """
+
+    host: str
+    username: str
+    password: str
+    port: int
+    device_type: str
+    https: bool = True
+    ssl_verify: bool = False
+    timeout: float = 30.0
+
+    def open(self, *, use_digest_auth: bool) -> AxisDevice:
+        """Instantiate the device class for ``device_type`` with these parameters."""
+        return get_device_class(self.device_type)(
+            self.host,
+            self.username,
+            self.password,
+            self.port,
+            ssl_verify=self.ssl_verify,
+            timeout=self.timeout,
+            use_digest_auth=use_digest_auth,
+            https=self.https,
+        )
+
+
+def _resolved_from_config(
+    config: DeviceConfig,
+    *,
+    username: str | None,
+    password: str | None,
+    port: int | None,
+    timeout: float,
+) -> ResolvedDevice:
+    """Build a ResolvedDevice from a config entry plus CLI overrides."""
+    return ResolvedDevice(
+        host=config.host,
+        username=username or config.username,
+        password=password or config.password.get_secret_value(),
+        port=port if port is not None else config.port,
+        device_type=config.device_type,
+        https=config.https,
+        ssl_verify=config.ssl_verify,
+        timeout=timeout,
+    )
+
+
 def resolve_device_config(
     device: str | None,
     host: str | None,
     username: str | None,
     password: str | None,
-    port: int = 443,
-) -> tuple[str, str, str, int, str]:
+    port: int | None = None,
+) -> ResolvedDevice:
     """Resolve device connection parameters from options or config.
 
+    Precedence: ``--host`` (ad hoc; credentials required) > named device in
+    config (or the default device) > ``--device`` that looks like an address
+    (config lookup by host, else ad hoc). An explicit ``--port`` always wins
+    over the configured port. Ad hoc devices use HTTPS.
+
     Args:
-        device: Device name from config.
-        host: Direct host address.
+        device: Device name from config, or a host address.
+        host: Direct host address (overrides --device).
         username: Username override.
         password: Password override.
-        port: Port override.
+        port: Port override; ``None`` means the configured port, else 443.
 
     Returns:
-        Tuple of (host, username, password, port, device_type).
+        ResolvedDevice carrying everything the device class needs, including
+        https, ssl_verify and timeout from config.
 
     Raises:
         typer.Exit: If required parameters are missing.
     """
-    device_type = "camera"
+    app_config = load_config()
 
-    # If host is provided directly, use it
+    # Ad hoc host: credentials required, secure defaults.
     if host:
         if not username or not password:
             console.print(
@@ -207,39 +266,51 @@ def resolve_device_config(
                 style="bold",
             )
             raise typer.Exit(1)
-        return host, username, password, port, device_type
-
-    # Try to load from config by name
-    config = get_device_config(device)
-    if config:
-        return (
-            config.host,
-            username or config.username,
-            password or config.password.get_secret_value(),
-            port if port != 443 else config.port,
-            config.device_type,
+        return ResolvedDevice(
+            host=host,
+            username=username,
+            password=password,
+            port=port if port is not None else 443,
+            device_type="camera",
+            timeout=app_config.timeout,
         )
 
-    # Check if device looks like a host/IP and try to find it in config
+    # Named device, or the configured default device.
+    name = device or app_config.default_device
+    if name and name in app_config.devices:
+        return _resolved_from_config(
+            app_config.devices[name],
+            username=username,
+            password=password,
+            port=port,
+            timeout=app_config.timeout,
+        )
+
+    # --device that looks like a host/IP: config lookup by host, else ad hoc.
     if device and ("." in device or device.replace(".", "").isdigit()):
-        # Try to find device by IP address in config
-        config = get_device_config_by_host(device)
-        if config:
-            return (
-                config.host,
-                username or config.username,
-                password or config.password.get_secret_value(),
-                port if port != 443 else config.port,
-                config.device_type,
-            )
-        # Not found in config - require explicit credentials
+        for config in app_config.devices.values():
+            if config.host == device:
+                return _resolved_from_config(
+                    config,
+                    username=username,
+                    password=password,
+                    port=port,
+                    timeout=app_config.timeout,
+                )
         if not username or not password:
             console.print(
                 "[red]Error:[/red] Username and password required",
                 style="bold",
             )
             raise typer.Exit(1)
-        return device, username, password, port, device_type
+        return ResolvedDevice(
+            host=device,
+            username=username,
+            password=password,
+            port=port if port is not None else 443,
+            device_type="camera",
+            timeout=app_config.timeout,
+        )
 
     console.print(
         "[red]Error:[/red] No device specified. Use --device or --host",
@@ -266,7 +337,7 @@ def device_info(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
 ):
     """Get device information.
@@ -274,14 +345,10 @@ def device_info(
     Displays basic device info including model, serial number,
     firmware version, and available capabilities.
     """
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _get_info():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             info = await dev.get_info()
             capabilities = await dev.get_capabilities()
 
@@ -292,7 +359,7 @@ def device_info(
                 time_info = None
 
             # Create info table
-            table = Table(title=f"Device Info: {host_addr}", show_header=False)
+            table = Table(title=f"Device Info: {target.host}", show_header=False)
             table.add_column("Property", style="cyan")
             table.add_column("Value", style="white")
 
@@ -304,7 +371,7 @@ def device_info(
             table.add_row("Firmware", info.firmware_version)
             table.add_row("Architecture", info.architecture or "-")
             table.add_row("SoC", info.soc or "-")
-            table.add_row("Device Type", device_type.capitalize())
+            table.add_row("Device Type", target.device_type.capitalize())
             table.add_row("UTC Time", str(time_info.utc_time) if time_info else "-")
             table.add_row("Timezone", time_info.timezone if time_info else "-")
 
@@ -347,23 +414,19 @@ def device_status(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
 ):
     """Check device status and connectivity."""
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _check_status():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             status = await dev.get_status()
 
             panel = Panel(
                 "[green]Reachable[/green]" if status.reachable else "[red]Unreachable[/red]",
-                title=f"Status: {host_addr}",
+                title=f"Status: {target.host}",
                 subtitle=f"{status.model or 'Unknown Model'} ({status.device_type.value})",
             )
             console.print(panel)
@@ -389,21 +452,17 @@ def list_apis(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
 ):
     """List available APIs on the device."""
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _list_apis():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             capabilities = await dev.get_capabilities()
 
-            tree = Tree(f"[bold]APIs on {host_addr}[/bold]")
+            tree = Tree(f"[bold]APIs on {target.host}[/bold]")
 
             for api_name, api_info in sorted(capabilities.available_apis.items()):
                 if isinstance(api_info, dict):
@@ -433,7 +492,7 @@ def show_lldp(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
@@ -444,14 +503,10 @@ def show_lldp(
     """
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_lldp():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             lldp_info = await dev.get_lldp_info()
 
             if json_output:
@@ -478,7 +533,7 @@ def show_lldp(
 
             # Status panel
             status = "[green]Enabled[/green]" if lldp_info.activated else "[red]Disabled[/red]"
-            console.print(Panel(f"LLDP Status: {status}", title=f"LLDP Info: {host_addr}"))
+            console.print(Panel(f"LLDP Status: {status}", title=f"LLDP Info: {target.host}"))
 
             if not lldp_info.neighbors:
                 console.print("[yellow]No LLDP neighbors discovered[/yellow]")
@@ -516,7 +571,7 @@ def list_params(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     group: Annotated[
         str | None, typer.Option("--group", "-g", help="Parameter group to list")
@@ -526,14 +581,10 @@ def list_params(
     output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
 ):
     """List device parameters."""
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _list_params():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             if export:
                 # Export all parameters as JSON
                 import json
@@ -603,7 +654,7 @@ def logs_system(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     lines: LinesOption = 20,
 ):
@@ -617,7 +668,7 @@ def logs_access(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     lines: LinesOption = 20,
 ):
@@ -631,7 +682,7 @@ def logs_audit(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     lines: LinesOption = 20,
 ):
@@ -645,7 +696,7 @@ def logs_all(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     lines: LinesOption = 50,
 ):
@@ -660,19 +711,15 @@ def logs_search(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     lines: LinesOption = 50,
 ):
     """Search logs for a pattern."""
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _search_logs():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             report = await dev.logs.search_logs(pattern, max_entries=lines)
 
             console.print(
@@ -695,25 +742,21 @@ def _get_logs(
     host: str | None,
     username: str | None,
     password: str | None,
-    port: int,
+    port: int | None,
     log_type: LogType,
     lines: int | None,
     digest: bool = False,
 ):
     """Internal function to retrieve and display logs."""
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _fetch_logs():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             report = await dev.logs.get_logs(log_type, max_entries=lines)
 
             console.print(
                 f"[bold]{log_type.value.title()} Logs[/bold]",
-                f" from {host_addr} ({len(report.entries)} entries)",
+                f" from {target.host} ({len(report.entries)} entries)",
             )
 
             if not report.entries:
@@ -836,20 +879,17 @@ def network_show(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show network configuration."""
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_network():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_network_config()
 
             if json_output:
@@ -882,7 +922,7 @@ def network_show(
             console.print(
                 Panel(
                     f"Hostname: [cyan]{config.hostname}[/cyan]",
-                    title=f"Network Config: {host_addr}",
+                    title=f"Network Config: {target.host}",
                 )
             )
 
@@ -942,20 +982,17 @@ def network_dns(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
 ):
     """Show DNS configuration."""
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_dns():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             dns = await dev.network.get_dns()
 
-            table = Table(title=f"DNS Configuration: {host_addr}", show_header=False)
+            table = Table(title=f"DNS Configuration: {target.host}", show_header=False)
             table.add_column("Setting", style="cyan")
             table.add_column("Value", style="white")
             table.add_row("Primary DNS", dns.primary or "[dim](not set)[/dim]")
@@ -975,20 +1012,17 @@ def security_firewall(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show firewall configuration."""
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_firewall():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_firewall_config()
 
             if json_output:
@@ -1018,7 +1052,7 @@ def security_firewall(
             panel_content = (
                 f"Status: {status}\nDefault Policy: [{policy_color}]{policy_val}[/{policy_color}]"
             )
-            console.print(Panel(panel_content, title=f"Firewall: {host_addr}"))
+            console.print(Panel(panel_content, title=f"Firewall: {target.host}"))
 
             # Rules table
             if config.rules:
@@ -1056,20 +1090,17 @@ def security_ssh(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show SSH configuration."""
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_ssh():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_ssh_config()
 
             if json_output:
@@ -1096,7 +1127,7 @@ def security_ssh(
             console.print(
                 Panel(
                     f"Status: {status}\nPort: {config.port}",
-                    title=f"SSH Configuration: {host_addr}",
+                    title=f"SSH Configuration: {target.host}",
                 )
             )
 
@@ -1140,20 +1171,17 @@ def security_certs(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show certificate configuration."""
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_certs():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_cert_config()
 
             if json_output:
@@ -1184,7 +1212,7 @@ def security_certs(
             panel_content = (
                 f"HTTPS Certificate ID: [cyan]{cert_id}[/cyan]\nClient Cert Auth: {client_auth}"
             )
-            console.print(Panel(panel_content, title=f"Certificate Configuration: {host_addr}"))
+            console.print(Panel(panel_content, title=f"Certificate Configuration: {target.host}"))
 
             # Certificates table
             if config.certificates:
@@ -1225,20 +1253,17 @@ def services_snmp(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show SNMP configuration."""
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_snmp():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_snmp_config()
 
             if json_output:
@@ -1267,7 +1292,7 @@ def services_snmp(
             console.print(
                 Panel(
                     f"Status: {status}\nVersion: {config.version.value}",
-                    title=f"SNMP Configuration: {host_addr}",
+                    title=f"SNMP Configuration: {target.host}",
                 )
             )
 
@@ -1310,20 +1335,17 @@ def services_ntp(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show NTP configuration."""
     import json
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_ntp():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_ntp_config()
 
             if json_output:
@@ -1356,7 +1378,7 @@ def services_ntp(
             console.print(
                 Panel(
                     f"Status: {status}\nUse DHCP Servers: {dhcp}",
-                    title=f"NTP Configuration: {host_addr}",
+                    title=f"NTP Configuration: {target.host}",
                 )
             )
 
@@ -1426,13 +1448,10 @@ def show_actions(
     """Show action rules configuration."""
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_actions():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_action_config()
 
             if json_output:
@@ -1502,13 +1521,10 @@ def show_mqtt(
     """Show MQTT event bridge configuration."""
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_mqtt():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_mqtt_config()
 
             if json_output:
@@ -1547,7 +1563,7 @@ def show_mqtt(
             console.print(
                 Panel(
                     f"Status: {status}\nConnection: {conn}",
-                    title=f"MQTT Bridge: {host_addr}",
+                    title=f"MQTT Bridge: {target.host}",
                 )
             )
 
@@ -1613,13 +1629,10 @@ def show_recording(
     """Show recording configuration."""
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_recording():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_recording_config()
 
             if json_output:
@@ -1711,13 +1724,10 @@ def show_storage(
     """Show remote storage configuration."""
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_storage():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_storage_config()
 
             if json_output:
@@ -1783,13 +1793,10 @@ def show_location(
     """Show device geolocation configuration."""
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_location():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             config = await dev.get_geolocation_config()
 
             if json_output:
@@ -1813,7 +1820,7 @@ def show_location(
                 return
 
             # Location table
-            table = Table(title=f"Geolocation: {host_addr}", show_header=False)
+            table = Table(title=f"Geolocation: {target.host}", show_header=False)
             table.add_column("Property", style="cyan")
             table.add_column("Value", style="white")
 
@@ -1857,7 +1864,7 @@ def stream_show(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
@@ -1868,15 +1875,11 @@ def stream_show(
     """
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _show_stream():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
-            diag = await dev.get_stream_diagnostics(device or host_addr)
+        async with target.open(use_digest_auth=digest) as dev:
+            diag = await dev.get_stream_diagnostics(device or target.host)
 
             if json_output:
                 data = {
@@ -1913,7 +1916,7 @@ def stream_show(
             console.print(
                 Panel(
                     "[green]Enabled[/green]" if diag.rtsp.enabled else "[red]Disabled[/red]",
-                    title=f"Stream Diagnostics: {host_addr}",
+                    title=f"Stream Diagnostics: {target.host}",
                 )
             )
 
@@ -1980,7 +1983,7 @@ def device_report(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     digest: DigestOption = True,
     output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
     format_opt: Annotated[
@@ -2000,16 +2003,12 @@ def device_report(
     """
     import json as json_mod
 
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
-
-    device_class = get_device_class(device_type)
+    target = resolve_device_config(device, host, username, password, port)
 
     async def _generate_report():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             # Collect all information
-            report: dict = {"device": device or host_addr, "errors": []}
+            report: dict = {"device": device or target.host, "errors": []}
 
             # Device info
             try:
@@ -2069,7 +2068,7 @@ def device_report(
                 report["errors"].append(f"LLDP info: {e}")
 
             # Stream diagnostics (cameras only)
-            if device_type == "camera":
+            if target.device_type == "camera":
                 try:
                     stream = await dev.get_stream_diagnostics()
                     report["stream"] = {
@@ -2224,7 +2223,7 @@ def device_report(
                     report["errors"].append(f"Geolocation config: {e}")
 
                 # Analytics (cameras)
-                if device_type == "camera":
+                if target.device_type == "camera":
                     try:
                         analytics = await dev.get_analytics_config()
                         report["analytics"] = {
@@ -2399,7 +2398,7 @@ def download_server_report(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     output: Annotated[
         Path | None,
         typer.Option(
@@ -2437,9 +2436,7 @@ def download_server_report(
         axiscam download report -H 192.168.1.10 -u admin -p secret
     """
     # Resolve device configuration
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
+    target = resolve_device_config(device, host, username, password, port)
 
     # Map format string to enum
     format_map = {
@@ -2455,16 +2452,14 @@ def download_server_report(
 
     # Determine output filename
     if not output:
-        device_name = device or host_addr.replace(".", "_")
+        device_name = device or target.host.replace(".", "_")
         ext = ".txt" if report_format == ServerReportFormat.TEXT else ".zip"
         output = Path(f"server_report_{device_name}{ext}")
 
-    device_class = get_device_class(device_type)
-
     async def _download():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             with console.status(
-                f"[bold blue]Downloading server report from {host_addr}...[/bold blue]"
+                f"[bold blue]Downloading server report from {target.host}...[/bold blue]"
             ):
                 report = await dev.download_server_report(
                     format=report_format,
@@ -2490,7 +2485,7 @@ def download_debug_archive(
     host: HostOption = None,
     username: UsernameOption = None,
     password: PasswordOption = None,
-    port: PortOption = 443,
+    port: PortOption = None,
     output: Annotated[
         Path | None,
         typer.Option(
@@ -2525,21 +2520,17 @@ def download_debug_archive(
         axiscam download debug -H 192.168.1.10 -u admin -p secret
     """
     # Resolve device configuration
-    host_addr, user, passwd, port_num, device_type = resolve_device_config(
-        device, host, username, password, port
-    )
+    target = resolve_device_config(device, host, username, password, port)
 
     # Determine output filename
     if not output:
-        device_name = device or host_addr.replace(".", "_")
+        device_name = device or target.host.replace(".", "_")
         output = Path(f"debug_{device_name}.tgz")
 
-    device_class = get_device_class(device_type)
-
     async def _download():
-        async with device_class(host_addr, user, passwd, port_num, use_digest_auth=digest) as dev:
+        async with target.open(use_digest_auth=digest) as dev:
             with console.status(
-                f"[bold blue]Downloading debug archive from {host_addr}...[/bold blue]"
+                f"[bold blue]Downloading debug archive from {target.host}...[/bold blue]"
             ):
                 report = await dev.download_debug_archive(timeout=timeout)
 

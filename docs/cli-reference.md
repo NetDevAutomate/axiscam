@@ -89,7 +89,7 @@ Options available for most commands that interact with devices.
 | `--host` | `-H` | `str` | - | Direct IP/hostname (overrides --device) |
 | `--username` | `-u` | `str` | Config value | Authentication username |
 | `--password` | `-p` | `str` | Config value | Authentication password |
-| `--port` | `-P` | `int` | `443` | HTTPS port number |
+| `--port` | `-P` | `int` | config port, else `443` | TCP port. An explicit value always overrides the device's configured port |
 | `--digest/--no-digest` | - | `bool` | `True` | Use Digest auth (default) or Basic |
 | `--json` | `-j` | `bool` | `False` | Output as JSON |
 
