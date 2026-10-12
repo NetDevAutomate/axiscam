@@ -15,7 +15,7 @@ import io
 import re
 import tarfile
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
@@ -55,11 +55,27 @@ SIMPLE_LOG_PATTERN = re.compile(
 )
 
 
-def parse_log_line(line: str) -> LogEntry | None:
+def _as_utc(timestamp: datetime) -> datetime:
+    """Return a timezone-aware timestamp.
+
+    AXIS devices emit ISO-8601 timestamps with an offset (``+00:00``), which
+    parse as aware datetimes. Lines in older or simpler formats carry no
+    offset; those are assumed to be UTC so that every entry is comparable.
+    Mixing aware and naive datetimes makes ``sort`` raise ``TypeError``.
+    """
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=UTC)
+    return timestamp
+
+
+def parse_log_line(line: str, fallback_timestamp: datetime | None = None) -> LogEntry | None:
     """Parse a single log line into a LogEntry.
 
     Args:
         line: Raw log line string.
+        fallback_timestamp: Timestamp to use when the line carries none, for
+            example a continuation line of a multi-line message. Defaults to
+            the current time (UTC).
 
     Returns:
         LogEntry if parsing successful, None otherwise.
@@ -73,9 +89,9 @@ def parse_log_line(line: str) -> LogEntry | None:
     if match:
         groups = match.groupdict()
         try:
-            timestamp = datetime.fromisoformat(groups["timestamp"])
+            timestamp = _as_utc(datetime.fromisoformat(groups["timestamp"]))
         except ValueError:
-            timestamp = datetime.now()
+            timestamp = fallback_timestamp or datetime.now(UTC)
 
         return LogEntry(
             timestamp=timestamp,
@@ -92,9 +108,9 @@ def parse_log_line(line: str) -> LogEntry | None:
     if match:
         groups = match.groupdict()
         try:
-            timestamp = datetime.strptime(groups["timestamp"], "%Y-%m-%d %H:%M:%S")
+            timestamp = _as_utc(datetime.strptime(groups["timestamp"], "%Y-%m-%d %H:%M:%S"))
         except ValueError:
-            timestamp = datetime.now()
+            timestamp = fallback_timestamp or datetime.now(UTC)
 
         return LogEntry(
             timestamp=timestamp,
@@ -104,9 +120,10 @@ def parse_log_line(line: str) -> LogEntry | None:
             raw=line,
         )
 
-    # Return as unparsed entry
+    # Return as unparsed entry, anchored to the previous entry when known so
+    # that continuation lines sort next to the message they belong to.
     return LogEntry(
-        timestamp=datetime.now(),
+        timestamp=fallback_timestamp or datetime.now(UTC),
         hostname="unknown",
         level=LogLevel.INFO,
         message=line,
@@ -125,10 +142,12 @@ def parse_log_content(content: str, _log_type: LogType = LogType.SYSTEM) -> list
         List of parsed LogEntry objects.
     """
     entries: list[LogEntry] = []
+    last_timestamp: datetime | None = None
     for line in content.splitlines():
-        entry = parse_log_line(line)
+        entry = parse_log_line(line, fallback_timestamp=last_timestamp)
         if entry:
             entries.append(entry)
+            last_timestamp = entry.timestamp
     return entries
 
 
@@ -334,9 +353,11 @@ class LogsAPI(BaseAPI):
         log_files = await self.get_log_files()
         content = self._find_log_content(log_files, log_type)
 
+        last_timestamp: datetime | None = None
         for line in content.splitlines():
-            entry = parse_log_line(line)
+            entry = parse_log_line(line, fallback_timestamp=last_timestamp)
             if entry:
+                last_timestamp = entry.timestamp
                 yield entry
 
     async def get_persistent_logging_enabled(self) -> bool:

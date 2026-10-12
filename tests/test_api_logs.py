@@ -429,3 +429,73 @@ class TestLogsAPI:
         result = await logs_api.get_persistent_logging_enabled()
 
         assert result is False
+
+
+class TestTimestampNormalisation:
+    """Every entry gets a timezone-aware timestamp so sorting cannot raise.
+
+    AXIS emits offsets (``+00:00``), which parse aware; unparseable lines used
+    to get naive ``datetime.now()``. Mixing the two made ``get_logs`` raise
+    ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+    """
+
+    AWARE = "2025-07-22T15:38:25.307+00:00 axis-abc [ INFO    ] fwmgr[4518]: Upgrade completed"
+    SIMPLE = "2025-07-22 15:40:00 Simple message"
+    CONTINUATION = "    at some.stack.Frame(Frame.java:42)"
+
+    def test_syslog_timestamp_is_aware(self):
+        entry = parse_log_line(self.AWARE)
+        assert entry is not None
+        assert entry.timestamp.tzinfo is not None
+        assert entry.timestamp.utcoffset().total_seconds() == 0
+
+    def test_simple_timestamp_is_made_aware_as_utc(self):
+        entry = parse_log_line(self.SIMPLE)
+        assert entry is not None
+        assert entry.timestamp.tzinfo is not None
+
+    def test_unparseable_line_timestamp_is_aware(self):
+        entry = parse_log_line("random text without timestamp")
+        assert entry is not None
+        assert entry.timestamp.tzinfo is not None
+
+    def test_unparseable_line_inherits_fallback_timestamp(self):
+        parent = parse_log_line(self.AWARE)
+        assert parent is not None
+        child = parse_log_line(self.CONTINUATION, fallback_timestamp=parent.timestamp)
+        assert child is not None
+        assert child.timestamp == parent.timestamp
+
+    def test_parse_log_content_anchors_continuation_lines(self):
+        entries = parse_log_content("\n".join([self.AWARE, self.CONTINUATION, self.SIMPLE]))
+        assert entries[0].timestamp == entries[1].timestamp
+        assert all(e.timestamp.tzinfo is not None for e in entries)
+
+    @pytest.mark.asyncio
+    async def test_get_logs_sorts_mixed_formats_without_error(self):
+        """Regression: the mix that used to raise TypeError in get_logs."""
+        import io
+        import tarfile
+
+        content = "\n".join([self.SIMPLE, self.AWARE, self.CONTINUATION]).encode()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w") as tar:
+            info = tarfile.TarInfo(name="var/log/syslog")
+            info.size = len(content)
+            tar.addfile(info, io.BytesIO(content))
+
+        client = MagicMock()
+        client.host = "192.168.1.10"
+        api = LogsAPI(client, device_name="test-device")
+        api._get_raw = AsyncMock(return_value=buf.getvalue())
+
+        report = await api.get_logs(LogType.SYSTEM)
+
+        assert len(report.entries) == 3
+        timestamps = [e.timestamp for e in report.entries]
+        assert timestamps == sorted(timestamps, reverse=True)
+        # Newest first: the simple-format line (15:40) precedes the syslog line (15:38),
+        # and the continuation line stays directly after its parent.
+        assert report.entries[0].raw == self.SIMPLE
+        assert report.entries[1].raw == self.AWARE
+        assert report.entries[2].raw == self.CONTINUATION.strip()
