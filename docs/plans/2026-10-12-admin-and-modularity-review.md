@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phase 0 in progress (see [Phase status](#phase-status))
+- **Status:** Phase 0 complete; Phase 1 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -134,17 +134,21 @@ Rationale for the order: the two transport bugs are the only findings that hurt 
 
 ## Phase status
 
-### Phase 0
+### Phase 0 — complete on branch `phase-0-security-fixes` (2026-10-12)
 
 | Item | Commit | Status |
 |---|---|---|
-| Plan document | | ✅ |
-| 🟡7 `.gitignore`: `.env`, dedupe | | ⏳ |
-| 🔴3 real coverage gate (hook measures coverage; single threshold at baseline) | | ⏳ |
-| 🔴2 explicit `https`; refuse Basic over plain HTTP | | ⏳ |
-| 🔴1 `ResolvedDevice` plumbs `ssl_verify`/`timeout`/`https` through the CLI | | ⏳ |
-| 🔴4 tz-aware log timestamps; continuation lines inherit the previous timestamp | | ⏳ |
-| 🔴5 narrow exception handling; CLI top-level `AxisError` handler; 🟡12 hide locals | | ⏳ |
+| Plan document | `95bf4de` | ✅ |
+| 🟡7 `.gitignore`: `.env`, dedupe | `9b7ed3e` | ✅ |
+| 🔴3 real coverage gate (hook measures coverage; single threshold at baseline) | `b5a0903` | ✅ |
+| 🔴2 explicit `https`; refuse Basic over plain HTTP | `3a887f8` | ✅ |
+| 🔴1 `ResolvedDevice` plumbs `ssl_verify`/`timeout`/`https` through the CLI; 🟡9 `--port` is a real override | `93fb91c` | ✅ |
+| 🔴4 tz-aware log timestamps; continuation lines inherit the previous timestamp | `2e2b2ac` | ✅ |
+| 🔴5 narrow exception handling (62 sites); CLI `run_async`/`main` error path; 🟡12 hide locals | `ae540bf` | ✅ |
+
+After Phase 0: 485 tests pass · 54.6% coverage · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged). Each fix carries a regression test that was shown to fail against the previous source.
+
+Behaviour changes a library user will notice: a non-443 port no longer implies HTTP (`https=False` is explicit); Basic auth over plain HTTP raises `AxisConfigError` unless `allow_insecure_basic=True`; `get_config()`-style methods raise `AxisAuthenticationError`/`AxisConnectionError` instead of returning defaults.
 
 ## Decisions and open questions
 
