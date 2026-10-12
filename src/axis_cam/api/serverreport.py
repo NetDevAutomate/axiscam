@@ -15,6 +15,7 @@ Report Modes:
 from pathlib import Path
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import ServerReport, ServerReportFormat
 
 
@@ -72,7 +73,7 @@ class ServerReportAPI(BaseAPI):
                 size_bytes=len(content),
                 filename=self._get_filename(format),
             )
-        except Exception as e:
+        except (AxisDeviceError, AxisApiNotSupportedError) as e:
             # Return empty report with error
             return ServerReport(
                 content=b"",
@@ -142,7 +143,7 @@ class ServerReportAPI(BaseAPI):
                 size_bytes=len(content),
                 filename="debug.tgz",
             )
-        except Exception as e:
+        except (AxisDeviceError, AxisApiNotSupportedError) as e:
             return ServerReport(
                 content=b"",
                 format=ServerReportFormat.DEBUG_TGZ,

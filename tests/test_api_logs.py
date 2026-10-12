@@ -12,6 +12,7 @@ from axis_cam.api.logs import (
     parse_log_content,
     parse_log_line,
 )
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import LogEntry, LogLevel, LogType
 
 
@@ -424,7 +425,7 @@ class TestLogsAPI:
     @pytest.mark.asyncio
     async def test_get_persistent_logging_enabled_error(self, logs_api):
         """Test persistent logging check on error."""
-        logs_api._get = AsyncMock(side_effect=Exception("API error"))
+        logs_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await logs_api.get_persistent_logging_enabled()
 

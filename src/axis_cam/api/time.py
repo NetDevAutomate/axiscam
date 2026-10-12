@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import NtpStatus, TimeInfo, TimeZoneSource
 
 
@@ -52,7 +53,7 @@ class TimeAPI(BaseAPI):
         try:
             # Try REST API first
             return await self._get_rest_time_info()
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             # Fall back to legacy CGI
             return await self._get_cgi_time_info()
 
@@ -238,7 +239,7 @@ class TimeAPI(BaseAPI):
                 server=data.get("server", ""),
                 synchronized=data.get("synchronized", False),
             )
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             # Fall back to param.cgi
             return await self._get_ntp_from_params()
 
@@ -259,7 +260,7 @@ class TimeAPI(BaseAPI):
                 server=ntp_data.get("Server", ""),
                 synchronized=False,  # Not available via param.cgi
             )
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return NtpStatus()
 
     async def get_available_timezones(self) -> list[str]:
@@ -274,5 +275,5 @@ class TimeAPI(BaseAPI):
                 json_data={},
             )
             return response.get("data", {}).get("timeZones", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []

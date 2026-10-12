@@ -31,6 +31,7 @@ from axis_cam.config import (
     load_config,
 )
 from axis_cam.devices.base import AxisDevice
+from axis_cam.exceptions import AxisError
 from axis_cam.models import LogType, ServerReportFormat
 
 # Console for rich output
@@ -41,6 +42,8 @@ app = typer.Typer(
     name="axiscam",
     help="CLI tool for managing AXIS cameras and devices via VAPIX API.",
     no_args_is_help=True,
+    # Local variables in a traceback would include the device password.
+    pretty_exceptions_show_locals=False,
 )
 
 # Logs subcommand group
@@ -320,15 +323,26 @@ def resolve_device_config(
 
 
 def run_async(coro):
-    """Run an async coroutine synchronously.
+    """Run an async coroutine synchronously, reporting AXIS errors cleanly.
+
+    API modules let authentication and connection errors propagate rather
+    than masking them as empty or default-valued results. This is the single
+    place they become a one-line message and exit status 1 for every command.
 
     Args:
         coro: Coroutine to run.
 
     Returns:
         Result of the coroutine.
+
+    Raises:
+        typer.Exit: With status 1 when the device raised an AxisError.
     """
-    return asyncio.run(coro)
+    try:
+        return asyncio.run(coro)
+    except AxisError as e:
+        console.print(f"[red]Error:[/red] {e}", style="bold")
+        raise typer.Exit(1) from None
 
 
 @app.command("info")
@@ -2550,7 +2564,12 @@ def download_debug_archive(
 
 def main():
     """Main entry point for the CLI."""
-    app()
+    try:
+        app()
+    except AxisError as e:
+        # Backstop for errors raised outside run_async (e.g. config loading).
+        console.print(f"[red]Error:[/red] {e}", style="bold")
+        raise SystemExit(1) from None
 
 
 if __name__ == "__main__":

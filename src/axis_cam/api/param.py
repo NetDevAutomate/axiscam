@@ -14,6 +14,7 @@ would require explicit confirmation due to potential device impact.
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
 
 
@@ -64,7 +65,7 @@ class ParamAPI(BaseAPI):
         try:
             response = await self._get(self.CGI_PATH, params)
             return self._extract_param_value(response, param_name)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return None
 
     async def get_group(self, group_name: str) -> ParameterGroup:
@@ -90,7 +91,7 @@ class ParamAPI(BaseAPI):
         try:
             response = await self._get(self.CGI_PATH, params)
             return self._parse_group_response(group_name, response)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return ParameterGroup(name=group_name.replace("root.", ""))
 
     async def get_all(self) -> list[ParameterGroup]:
@@ -107,7 +108,7 @@ class ParamAPI(BaseAPI):
         try:
             response = await self._get(self.CGI_PATH, params)
             return self._parse_all_params(response)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []
 
     async def get_many(self, param_names: list[str]) -> dict[str, str | None]:
@@ -169,7 +170,7 @@ class ParamAPI(BaseAPI):
         try:
             response = await self._get(f"{self.REST_PATH}/$export")
             return response.get("data", {})
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             # Fall back to getting all params
             params = await self.get_all()
             return {group.name: {p.name: p.value for p in group.parameters} for group in params}

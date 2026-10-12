@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     FirewallAction,
     FirewallConfig,
@@ -47,7 +48,7 @@ class FirewallAPI(BaseAPI):
             response = await self._get(self.REST_PATH, params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return FirewallConfig()
 
     async def is_enabled(self) -> bool:
@@ -156,5 +157,5 @@ class FirewallAPI(BaseAPI):
                 description=data.get("description", ""),
                 enabled=data.get("enabled", True),
             )
-        except Exception:
+        except ValueError:
             return None

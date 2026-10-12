@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from axis_cam.api.time import TimeAPI
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import NtpStatus, TimeInfo, TimeZoneSource
 
 
@@ -83,7 +84,7 @@ class TestTimeAPI:
             nonlocal call_count
             call_count += 1
             if "rest" in path:
-                raise Exception("REST API not available")
+                raise AxisDeviceError("REST API not available")
             return cgi_response
 
         time_api._get = mock_get
@@ -251,7 +252,7 @@ class TestTimeAPI:
 
         async def mock_get(path, params=None):
             if "rest" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return cgi_response
 
         time_api._get = mock_get
@@ -271,7 +272,7 @@ class TestTimeAPI:
 
         async def mock_get(path, params=None):
             if "rest" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return cgi_response
 
         time_api._get = mock_get
@@ -287,7 +288,7 @@ class TestTimeAPI:
 
         async def mock_get(path, params=None):
             if "rest" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return cgi_response
 
         time_api._get = mock_get
@@ -303,7 +304,7 @@ class TestTimeAPI:
 
         async def mock_get(path, params=None):
             if "rest" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return cgi_response
 
         time_api._get = mock_get
@@ -332,7 +333,7 @@ class TestTimeAPI:
 
         async def mock_get(path, params=None):
             if "network-time-sync" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return param_response
 
         time_api._get = mock_get
@@ -368,7 +369,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_ntp_from_params_exception(self, time_api):
         """Test _get_ntp_from_params returns default on exception."""
-        time_api._get = AsyncMock(side_effect=Exception("API error"))
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await time_api._get_ntp_from_params()
 
@@ -392,7 +393,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_available_timezones_exception(self, time_api):
         """Test get_available_timezones returns empty list on exception."""
-        time_api._post = AsyncMock(side_effect=Exception("API error"))
+        time_api._post = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await time_api.get_available_timezones()
 

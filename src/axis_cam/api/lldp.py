@@ -13,7 +13,10 @@ network documentation and troubleshooting.
 
 from typing import Any
 
+from pydantic import ValidationError
+
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import LldpInfo, LldpNeighbor
 
 
@@ -46,7 +49,7 @@ class LldpAPI(BaseAPI):
             response = await self._get(self.REST_PATH, params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_response(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return LldpInfo()
 
     async def get_neighbors(self) -> list[LldpNeighbor]:
@@ -84,7 +87,7 @@ class LldpAPI(BaseAPI):
             try:
                 neighbor = LldpNeighbor.model_validate(neighbor_data)
                 neighbors.append(neighbor)
-            except Exception:
+            except ValidationError:
                 # Skip malformed neighbor entries
                 continue
 

@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import CertConfig, Certificate, CertificateType
 
 
@@ -41,7 +42,7 @@ class CertAPI(BaseAPI):
             response = await self._get(self.REST_PATH, params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return CertConfig()
 
     async def get_certificates(self) -> list[Certificate]:
@@ -142,5 +143,5 @@ class CertAPI(BaseAPI):
                 key_type=data.get("keyType", ""),
                 self_signed=data.get("selfSigned", False),
             )
-        except Exception:
+        except ValueError:
             return None

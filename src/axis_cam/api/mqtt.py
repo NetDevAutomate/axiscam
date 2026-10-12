@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import MqttBridgeConfig, MqttClient, MqttEventFilter
 
 
@@ -41,7 +42,7 @@ class MqttBridgeAPI(BaseAPI):
             response = await self._get(self.REST_PATH, params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return MqttBridgeConfig()
 
     async def get_clients(self) -> list[MqttClient]:

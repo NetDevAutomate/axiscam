@@ -11,6 +11,7 @@ from axis_cam.devices import (
     AxisRecorder,
     AxisSpeaker,
 )
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import (
     BasicDeviceInfo,
     DeviceStatus,
@@ -328,7 +329,7 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_get_video_sources_error(self, mock_client):
         """Test get_video_sources handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.get_video_sources()
             assert result == []
@@ -348,7 +349,7 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_get_stream_profiles_error(self, mock_client):
         """Test get_stream_profiles handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.get_stream_profiles()
             assert result == []
@@ -428,7 +429,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_recording_groups_error(self, mock_client):
         """Test get_recording_groups handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_groups()
@@ -452,7 +453,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_recording_group_not_found(self, mock_client):
         """Test get_recording_group returns None on error."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("Not found"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("Not found"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_group("invalid")
@@ -479,7 +480,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_storage_info_error(self, mock_client):
         """Test get_storage_info handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_storage_info()
@@ -507,7 +508,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_disk_status_error(self, mock_client):
         """Test get_disk_status handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_disk_status()
@@ -531,7 +532,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_remote_storage_config_not_available(self, mock_client):
         """Test get_remote_storage_config returns None on error."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("Not available"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("Not available"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_remote_storage_config()
@@ -562,7 +563,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_connected_cameras_error(self, mock_client):
         """Test get_connected_cameras handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_connected_cameras()
@@ -666,7 +667,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_status_error(self, mock_client):
         """Test get_audio_status handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_status()
@@ -690,7 +691,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_device_info_error(self, mock_client):
         """Test get_audio_device_info handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_device_info()
@@ -731,7 +732,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_sip_config_error(self, mock_client):
         """Test get_sip_config handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_sip_config()
@@ -775,7 +776,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_has_sip_false(self, mock_client):
         """Test has_sip returns False when SIP not configured."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("Not available"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("Not available"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.has_sip()
@@ -890,7 +891,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_config_error(self, mock_client):
         """Test get_audio_config handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_config()
@@ -913,7 +914,7 @@ class TestAxisSpeaker:
         """Test get_audio_multicast_config returns default on error."""
         from axis_cam.models import AudioMulticastConfig
 
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_multicast_config()
@@ -940,7 +941,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_status_error(self, mock_client):
         """Test get_audio_status handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_status()
@@ -964,7 +965,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_device_info_error(self, mock_client):
         """Test get_audio_device_info handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_device_info()
@@ -1048,7 +1049,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_clips_error(self, mock_client):
         """Test get_audio_clips handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_clips()

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from axis_cam.api.param import ParamAPI
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
 
 
@@ -50,7 +51,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_param_exception(self, param_api):
         """Test get parameter returns None on exception."""
-        param_api._get = AsyncMock(side_effect=Exception("API error"))
+        param_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await param_api.get("root.Properties.FriendlyName")
 
@@ -86,7 +87,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_group_exception(self, param_api):
         """Test get group returns empty group on exception."""
-        param_api._get = AsyncMock(side_effect=Exception("API error"))
+        param_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await param_api.get_group("Network")
 
@@ -114,7 +115,7 @@ class TestParamAPI:
     @pytest.mark.asyncio
     async def test_get_all_exception(self, param_api):
         """Test get all returns empty list on exception."""
-        param_api._get = AsyncMock(side_effect=Exception("API error"))
+        param_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await param_api.get_all()
 
@@ -198,7 +199,7 @@ class TestParamAPI:
             nonlocal call_count
             call_count += 1
             if "$export" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return all_response
 
         param_api._get = mock_get

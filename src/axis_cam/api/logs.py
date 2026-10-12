@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import LogEntry, LogLevel, LogReport, LogType
 
 
@@ -226,7 +227,7 @@ class LogsAPI(BaseAPI):
                             try:
                                 file_content = file_obj.read().decode("utf-8", errors="replace")
                                 log_files[member.name] = file_content
-                            except Exception:
+                            except (OSError, tarfile.TarError):
                                 pass
         except tarfile.TarError:
             # If not a valid tar, try to parse as plain text
@@ -369,7 +370,7 @@ class LogsAPI(BaseAPI):
         try:
             response = await self._get(f"{self.REST_PATH}/persistent/enabled")
             return response.get("data", {}).get("enabled", False)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return False
 
     async def search_logs(

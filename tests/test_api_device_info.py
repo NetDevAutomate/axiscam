@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from axis_cam.api.device_info import BasicDeviceInfoAPI
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import BasicDeviceInfo, DeviceProperties
 
 
@@ -61,7 +62,7 @@ class TestBasicDeviceInfoAPI:
         }
 
         async def mock_get(path, params=None):
-            raise Exception("REST API not available")
+            raise AxisDeviceError("REST API not available")
 
         device_info_api._get = mock_get
         device_info_api._post = AsyncMock(return_value=cgi_response)
@@ -209,7 +210,7 @@ class TestBasicDeviceInfoAPI:
     @pytest.mark.asyncio
     async def test_get_properties_error(self, device_info_api):
         """Test get_properties handles errors."""
-        device_info_api._get = AsyncMock(side_effect=Exception("API error"))
+        device_info_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await device_info_api.get_properties()
 
@@ -264,7 +265,7 @@ class TestBasicDeviceInfoAPI:
     @pytest.mark.asyncio
     async def test_is_axis_device_error(self, device_info_api):
         """Test is_axis_device handles errors."""
-        device_info_api.get_info = AsyncMock(side_effect=Exception("Error"))
+        device_info_api.get_info = AsyncMock(side_effect=AxisDeviceError("Error"))
 
         result = await device_info_api.is_axis_device()
 

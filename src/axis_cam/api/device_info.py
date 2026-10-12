@@ -14,6 +14,7 @@ is not available on older firmware versions.
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import BasicDeviceInfo, DeviceProperties
 
 
@@ -62,7 +63,7 @@ class BasicDeviceInfoAPI(BaseAPI):
             # Verify REST response contains actual device info
             if data and self._has_device_info_fields(data):
                 return self._parse_rest_response(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             pass
 
         # Fall back to legacy CGI
@@ -199,7 +200,7 @@ class BasicDeviceInfoAPI(BaseAPI):
         try:
             response = await self._get("/axis-cgi/param.cgi", params)
             return self._parse_properties_response(response)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return DeviceProperties()
 
     def _parse_properties_response(self, response: dict[str, Any]) -> DeviceProperties:
@@ -230,7 +231,7 @@ class BasicDeviceInfoAPI(BaseAPI):
         try:
             info = await self.get_info()
             return info.brand.upper() == "AXIS"
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return False
 
     async def get_firmware_version(self) -> str:

@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import GeolocationConfig
 
 
@@ -40,7 +41,7 @@ class GeolocationAPI(BaseAPI):
             response = await self._get(self.REST_PATH)
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return GeolocationConfig()
 
     async def get_coordinates(self) -> tuple[float | None, float | None]:

@@ -7,6 +7,7 @@ AXIS network intercoms (I-series devices).
 from typing import Any
 
 from axis_cam.devices.base import AxisDevice
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import AudioMulticastConfig, DeviceType
 
 
@@ -64,7 +65,7 @@ class AxisIntercom(AxisDevice):
         try:
             response = await self._client.get_json("/axis-cgi/audio/audiostatus.cgi")
             return response
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_audio_device_info(self) -> dict[str, Any]:
@@ -76,7 +77,7 @@ class AxisIntercom(AxisDevice):
         try:
             response = await self._client.get_json("/axis-cgi/audio/getaudiodevices.cgi")
             return response
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_audio_multicast_config(self) -> AudioMulticastConfig:
@@ -100,7 +101,7 @@ class AxisIntercom(AxisDevice):
                 {"action": "list", "group": "root.SIP"},
             )
             return response.get("root", {}).get("SIP", {})
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def has_video(self) -> bool:
