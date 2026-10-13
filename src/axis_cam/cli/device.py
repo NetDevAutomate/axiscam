@@ -15,7 +15,17 @@ from axis_cam.cli.app import (
     emit_json,
     run_async,
 )
-from axis_cam.cli.context import resolve_device_config
+from axis_cam.cli.context import resolve_device_config, select_targets
+from axis_cam.cli.fleet import (
+    AllOption,
+    ConcurrencyOption,
+    GroupOption,
+    finish_fleet,
+    fleet_json,
+    is_fleet,
+    print_fleet_errors,
+    run_fleet_sync,
+)
 from axis_cam.cli.options import (
     AuthOption,
     DeviceOption,
@@ -38,12 +48,56 @@ def device_info(
     password: PasswordOption = None,
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
+    all_devices: AllOption = False,
+    group: GroupOption = None,
+    concurrency: ConcurrencyOption = 4,
+    json_output: Annotated[
+        bool, typer.Option("--json", "-j", help="Output as JSON (fleet runs).")
+    ] = False,
 ):
-    """Get device information.
+    """Get device information — one device, or an inventory of the fleet (--all / --group).
 
     Displays basic device info including model, serial number,
     firmware version, and available capabilities.
     """
+    if is_fleet(all_devices, group):
+        targets = select_targets(
+            all_devices=all_devices,
+            group=group,
+            username=username,
+            password=password,
+            port=port,
+            auth_mode=auth,
+        )
+        results = run_fleet_sync(
+            targets, lambda dev: dev.get_info(), concurrency=concurrency, label="Reading"
+        )
+        if json_output:
+            emit_json(fleet_json(results, lambda info: info.model_dump(mode="json")))
+        else:
+            table = Table(title="Fleet inventory")
+            for column in ("Device", "Host", "Product", "Serial", "AXIS OS", "SoC"):
+                table.add_column(
+                    column, style="cyan" if column == "Device" else "white", overflow="fold"
+                )
+            for r in results:
+                if r.ok and r.value is not None:
+                    info = r.value
+                    table.add_row(
+                        r.name,
+                        r.host,
+                        info.product_full_name or info.product_number,
+                        info.serial_number,
+                        info.firmware_version,
+                        info.soc or "-",
+                    )
+                else:
+                    table.add_row(r.name, r.host, "[red]error[/red]", "-", "-", "-")
+            console.print(table)
+            print_fleet_errors(results)
+        finish_fleet(results)
+        return
+
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _get_info():

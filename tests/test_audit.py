@@ -371,6 +371,6 @@ class TestCli:
         assert {f["status"] for f in data["findings"]} >= {"pass", "fail"}
 
     def test_all_shows_passing(self):
-        result = self._run(["--all", "--no-fail"], _device())
+        result = self._run(["--show-all", "--no-fail"], _device())
         text = " ".join(result.output.replace("│", " ").split())
         assert " pass " in text and "No anonymous" in text and "BoaProtView" in text

@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–6 complete; Phase 7 audit complete and run on all five devices, fleet fan-out pending (see [Phase status](#phase-status))
+- **Status:** Phases 0–7 complete — the programme is done (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -335,7 +335,7 @@ What the five devices hold: cameras/intercom one `onvif` user (Administrator on 
 
 Definition of done — met: all five devices list; every write's dry run shows the plan and writes nothing; the A/B/A cycle passes with each step verified by re-read **and** by the credentials working (or not) at the ONVIF endpoint.
 
-### Phase 7 — security audit (2026-10-13), fleet fan-out pending
+### Phase 7 — complete (2026-10-13)
 
 **Contract first.** The AXIS OS Hardening Guide (July 2026 edition) fetched on the day; its "Basic hardening via VAPIX API" table gives 16 purpose → VAPIX call rows, of which 13 are `param.cgi?action=update&<param>=<value>` (the other three are PoE/port, and two `applications/config.cgi` ACAP settings — `AllowUnsigned` reads back `false` on the M3216, `AllowRoot` is "valid name required" on 12.11, so neither is checked yet). The other readers the audit composes were checked against the devices' own OpenAPI (`/config/discover/apis/<api>/<ver>/openapi.json`) and live bodies.
 
@@ -347,7 +347,8 @@ Definition of done — met: all five devices list; every write's dry run shows t
 | 7.2 | `axis_cam/audit.py`: 20 parameter checks from the guide's table + HTTPS-only, HTTP auth policy, cipher list, remote syslog + reader checks (accounts, ONVIF users, SNMP ×2, firewall, crypto policy, NTP, certificates ×2, firmware) = 34 findings per device; `unknown` is never pass/fail; `n/a` when the product lacks the setting | ✅ 27 tests, module at 96 % |
 | 7.3 | `axiscam security audit [--all] [--json] [--no-fail]`, exit 1 on any failure | ✅ |
 | 7.4 | Live, read-only, all five devices: cameras 12–14 failing (discovery protocols on, SSH on, HTTP+HTTPS `both`, no remote syslog, firewall ACCEPT, crypto DEFAULT); C1410 adds SNMP v1/v2c on and two non-recommended DHE ciphers; S3008 25 unknown (no `param.cgi`) and the one check it can fail, it fails (firewall ACCEPT) | ✅ |
-| 7.5 | Fleet fan-out (`--all` / `--group`) | ⏸ not started — separate slice with its own DoD |
+| 7.5 | Fleet fan-out: `DeviceConfig.groups` (+ type-as-group), `select_targets()`, `cli/fleet.py` (`run_fleet` with a semaphore, per-device `FleetResult`, `fleet_json`, exit-1-if-any-failed); wired into `info`, `security audit` (summary + checks × devices matrix), `accounts list`, `onvif list`, `backup create` (one directory per device). Writes deliberately not fanned out | ✅ 18 fleet tests + 3 config tests; `cli/fleet.py` at 100 % |
+| 7.6 | Live, read-only: `info --all` (5 devices), `security audit --all` (9 s; matrix matches the per-device runs), `accounts list --group camera`, `onvif list --all --json`, `backup create --all` (36 s, 5 directories, each `backup verify` intact) | ✅ |
 
 Definition of done for the audit — met: every finding names its evidence, the guide's remedy and the guide section; a device with no `param.cgi` yields `unknown`, not a clean bill; the five devices' results are consistent with their `params`/REST output read independently.
 

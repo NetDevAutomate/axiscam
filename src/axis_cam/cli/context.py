@@ -128,6 +128,62 @@ def _ad_hoc(
     )
 
 
+def select_targets(
+    *,
+    all_devices: bool,
+    group: str | None,
+    username: str | None = None,
+    password: str | None = None,
+    port: int | None = None,
+    auth_mode: AuthMode = AuthMode.AUTO,
+) -> list[tuple[str, DeviceContext]]:
+    """Resolve the devices a fleet command runs against, in config order.
+
+    ``--all`` is every configured device; ``--group NAME`` is every device whose
+    ``groups`` contain NAME or whose type is NAME. Overrides (``--username``,
+    ``--password``, ``--port``) apply to every selected device.
+
+    Raises:
+        typer.Exit: Nothing configured, or the group matches no device.
+    """
+    app_config = load_config()
+    if not app_config.devices:
+        console.print(
+            "[red]Error:[/red] no devices in the config file; fleet commands need "
+            "configured devices",
+            style="bold",
+        )
+        raise typer.Exit(1)
+    selected = [
+        (name, config)
+        for name, config in app_config.devices.items()
+        if all_devices or (group is not None and config.in_group(group))
+    ]
+    if not selected:
+        known = sorted({config.device_type for config in app_config.devices.values()})
+        tags = sorted({g for config in app_config.devices.values() for g in config.groups})
+        console.print(
+            f"[red]Error:[/red] no device is in group '{group}'. Types: {', '.join(known)}"
+            + (f"; tags: {', '.join(tags)}" if tags else "; no tags configured"),
+            style="bold",
+        )
+        raise typer.Exit(1)
+    return [
+        (
+            name,
+            _from_config(
+                config,
+                username=username,
+                password=password,
+                port=port,
+                timeout=app_config.timeout,
+                auth_mode=auth_mode,
+            ),
+        )
+        for name, config in selected
+    ]
+
+
 def resolve_device_config(
     device: str | None,
     host: str | None,

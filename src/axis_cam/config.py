@@ -184,6 +184,8 @@ class DeviceConfig(BaseModel):
         name: Optional friendly name for the device.
         vendor: Device vendor (e.g., "axis").
         model: Device model number.
+        groups: Free-form tags for fleet commands (``--group front``). A
+            device's type is always a group too (``--group camera``).
     """
 
     model_config = {"frozen": True, "populate_by_name": True}
@@ -206,6 +208,12 @@ class DeviceConfig(BaseModel):
     name: str | None = Field(default=None, description="Friendly name")
     vendor: str = Field(default="axis", description="Device vendor")
     model: str | None = Field(default=None, description="Device model")
+    groups: list[str] = Field(default_factory=list, description="Fleet group tags")
+
+    def in_group(self, group: str) -> bool:
+        """True when ``group`` is one of the device's tags or its type (case-insensitive)."""
+        wanted = group.strip().lower()
+        return wanted == self.device_type.lower() or wanted in {g.lower() for g in self.groups}
 
     @field_validator("host")
     @classmethod

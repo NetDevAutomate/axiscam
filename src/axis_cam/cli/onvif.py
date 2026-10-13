@@ -17,7 +17,17 @@ from axis_cam.api.onvif_users import validate_onvif_password, validate_onvif_use
 from axis_cam.auth import AuthMode
 from axis_cam.cli.app import console, emit_json, onvif_app, run_async
 from axis_cam.cli.confirm import WritePlan, confirm_write, read_secret
-from axis_cam.cli.context import resolve_device_config
+from axis_cam.cli.context import resolve_device_config, select_targets
+from axis_cam.cli.fleet import (
+    AllOption,
+    ConcurrencyOption,
+    GroupOption,
+    finish_fleet,
+    fleet_json,
+    is_fleet,
+    print_fleet_errors,
+    run_fleet_sync,
+)
 from axis_cam.cli.options import (
     AuthOption,
     DeviceOption,
@@ -127,8 +137,55 @@ def onvif_list(
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
+    all_devices: AllOption = False,
+    group: GroupOption = None,
+    concurrency: ConcurrencyOption = 4,
 ):
-    """List ONVIF users with their levels (passwords are never returned by the device)."""
+    """List ONVIF users with their levels — one device, or the fleet (--all / --group)."""
+    if is_fleet(all_devices, group):
+        targets = select_targets(
+            all_devices=all_devices,
+            group=group,
+            username=username,
+            password=password,
+            port=port,
+            auth_mode=auth,
+        )
+        results = run_fleet_sync(
+            targets, lambda dev: dev.onvif_users.list(), concurrency=concurrency, label="Reading"
+        )
+        if json_output:
+            emit_json(fleet_json(results, lambda users: users.model_dump(mode="json")))
+        else:
+            table = Table(title="Fleet ONVIF users")
+            for column in ("Device", "Administrators", "Operators", "Users"):
+                table.add_column(
+                    column, style="cyan" if column == "Device" else "white", overflow="fold"
+                )
+            for r in results:
+                if r.ok and r.value is not None:
+                    by_level = {
+                        level: ", ".join(u.username for u in r.value.accounts if u.level is level)
+                        or "-"
+                        for level in (
+                            OnvifUserLevel.ADMINISTRATOR,
+                            OnvifUserLevel.OPERATOR,
+                            OnvifUserLevel.USER,
+                        )
+                    }
+                    table.add_row(
+                        r.name,
+                        f"[bold red]{by_level[OnvifUserLevel.ADMINISTRATOR]}[/bold red]",
+                        by_level[OnvifUserLevel.OPERATOR],
+                        by_level[OnvifUserLevel.USER],
+                    )
+                else:
+                    table.add_row(r.name, "[red]error[/red]", "-", "-")
+            console.print(table)
+            print_fleet_errors(results)
+        finish_fleet(results)
+        return
+
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _list() -> OnvifAccounts:
