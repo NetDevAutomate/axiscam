@@ -1,14 +1,21 @@
 """Logs API module.
 
-This module provides access to device logs via the VAPIX log API
-and the server report CGI endpoint.
+Each log type has a dedicated CGI that returns just that log as text:
 
-API Endpoints:
-    - /config/rest/log/v1beta (REST API)
-    - /axis-cgi/serverreport.cgi (Legacy CGI for full reports)
+    - /axis-cgi/systemlog.cgi   system log (AXIS OS 5.00+)
+    - /axis-cgi/accesslog.cgi   client access log
+    - /axis-cgi/auditlog.cgi    audit log (AXIS OS 12.7+), ``?tail=N`` for the
+                                most recent N entries
 
-The module supports retrieving system logs, parsing log entries,
-and streaming log content.
+These are tried first. When a device does not have the CGI (older firmware,
+or audit log before 12.7) the module falls back to the full server report
+tarball (``/axis-cgi/serverreport.cgi?mode=tar_all``) and picks the matching
+files out of it; ``LogReport.source`` says which path answered. ``LogType.ALL``
+always uses the tarball. Authentication and connection errors propagate from
+either path.
+
+Also:
+    - /config/rest/log/v1beta   persistent-logging setting (REST)
 """
 
 import io
@@ -17,7 +24,7 @@ import tarfile
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
@@ -163,9 +170,10 @@ class LogsAPI(BaseAPI):
     This module provides methods to retrieve various log types:
     - System logs (syslog)
     - Access logs (HTTP access)
-    - Audit logs (security events)
+    - Audit logs (security events, AXIS OS 12.7+)
 
-    The module uses the server report CGI for comprehensive log retrieval.
+    Each type is read from its dedicated CGI; the server report tarball is
+    the fallback (and the only source for ``LogType.ALL``).
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
@@ -182,8 +190,19 @@ class LogsAPI(BaseAPI):
     name = "logs"
     api_id = None
 
-    # Server report CGI endpoint
+    # Server report CGI endpoint (fallback and LogType.ALL)
     CGI_PATH = "/axis-cgi/serverreport.cgi"
+
+    # Dedicated per-type CGIs, tried first
+    SYSTEMLOG_PATH = "/axis-cgi/systemlog.cgi"
+    ACCESSLOG_PATH = "/axis-cgi/accesslog.cgi"
+    AUDITLOG_PATH = "/axis-cgi/auditlog.cgi"
+    DEDICATED_PATHS: ClassVar[dict[LogType, str]] = {
+        LogType.SYSTEM: SYSTEMLOG_PATH,
+        LogType.ACCESS: ACCESSLOG_PATH,
+        LogType.AUDIT: AUDITLOG_PATH,
+    }
+    TARBALL_SOURCE = "serverreport.cgi?mode=tar_all"
 
     # REST API endpoint (AXIS OS 11.x+)
     REST_PATH = "/config/rest/log/v1beta"
@@ -274,6 +293,43 @@ class LogsAPI(BaseAPI):
 
         return "\n".join(matching_content)
 
+    async def _fetch_dedicated(
+        self, log_type: LogType, max_entries: int | None
+    ) -> tuple[str, str] | None:
+        """Read one log type from its dedicated CGI.
+
+        Returns:
+            ``(content, source)``, or ``None`` when the device has no such CGI
+            (a device-level error such as 404). Authentication and connection
+            errors propagate.
+        """
+        path = self.DEDICATED_PATHS.get(log_type)
+        if path is None:
+            return None
+        params: dict[str, str] | None = None
+        if log_type is LogType.AUDIT and max_entries:
+            params = {"tail": str(max_entries)}
+        try:
+            content = await self._get_text(path, params)
+        except (AxisDeviceError, AxisApiNotSupportedError):
+            return None
+        return content, path.rsplit("/", 1)[-1]
+
+    async def _fetch_content(
+        self, log_type: LogType, max_entries: int | None = None
+    ) -> tuple[str, str]:
+        """Return ``(raw log text, source)`` for a log type.
+
+        Dedicated CGI first; the server-report tarball for ``LogType.ALL`` and
+        as the fallback when the CGI is unavailable.
+        """
+        if log_type is not LogType.ALL:
+            dedicated = await self._fetch_dedicated(log_type, max_entries)
+            if dedicated is not None:
+                return dedicated
+        log_files = await self.get_log_files()
+        return self._find_log_content(log_files, log_type), self.TARBALL_SOURCE
+
     async def get_logs(
         self,
         log_type: LogType = LogType.SYSTEM,
@@ -283,13 +339,15 @@ class LogsAPI(BaseAPI):
 
         Args:
             log_type: Type of logs to retrieve.
-            max_entries: Maximum number of entries to return.
+            max_entries: Maximum number of entries to return (newest first).
+                For the audit log this is also passed to the device as
+                ``tail=N`` so only that many entries are transferred.
 
         Returns:
-            LogReport containing parsed log entries.
+            LogReport containing parsed log entries; ``source`` names the
+            endpoint that supplied them.
         """
-        log_files = await self.get_log_files()
-        content = self._find_log_content(log_files, log_type)
+        content, source = await self._fetch_content(log_type, max_entries)
         entries = parse_log_content(content, log_type)
 
         # Sort by timestamp, newest first
@@ -303,6 +361,7 @@ class LogsAPI(BaseAPI):
             device_address=self._client.host,
             log_type=log_type,
             entries=entries,
+            source=source,
         )
 
     async def get_system_logs(self, max_entries: int | None = None) -> LogReport:
@@ -361,8 +420,7 @@ class LogsAPI(BaseAPI):
         Yields:
             LogEntry objects as they are parsed.
         """
-        log_files = await self.get_log_files()
-        content = self._find_log_content(log_files, log_type)
+        content, _source = await self._fetch_content(log_type)
 
         last_timestamp: datetime | None = None
         for line in content.splitlines():
@@ -416,6 +474,7 @@ class LogsAPI(BaseAPI):
             device_address=logs.device_address,
             log_type=log_type,
             entries=matching,
+            source=logs.source,
         )
 
     async def get_log_summary(

@@ -130,7 +130,7 @@ def _get_logs(
 
             console.print(
                 f"[bold]{log_type.value.title()} Logs[/bold]",
-                f" from {target.host} ({len(report.entries)} entries)",
+                f" from {target.host} ({len(report.entries)} entries, via {report.source})",
             )
 
             if not report.entries:

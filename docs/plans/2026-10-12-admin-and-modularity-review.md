@@ -207,6 +207,16 @@ Contract verified against the VAPIX System settings page on 2026-10-13 (fetched,
 
 Write-safety pattern (restore reuses it in Phase 5): read current state → compute a human-readable plan → `--dry-run` prints it and exits 0 → otherwise confirm (`--yes` skips) → apply → re-read and verify → print the verified result. Secrets never appear in argv.
 
+### Phase 3 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+
+Contracts verified from the VAPIX pages on 2026-10-13: `GET /axis-cgi/systemlog.cgi[?text=<alnum>]` (filter from AXIS OS 11.11.45), `GET /axis-cgi/accesslog.cgi`, `GET /axis-cgi/auditlog.cgi[?tail=<n>]` (discovery id `audit-log`, AXIS OS 12.7+, admin, `text/plain`; 400/401/500 on error). The web-interface help (LTS 2026) describes *Download the crash report* as "information that is in the server report as well as detailed debug information … might contain sensitive information such as network traces … can take several minutes"; the developer troubleshooting page uses `/axis-cgi/debug/debug.tgz?cmd=pcapdump&duration=N` for the network trace, so `debug.tgz` is the debug/crash archive. Byte-for-byte equality with the web UI's download still needs one DevTools capture on a device; the naming follows the web UI regardless.
+
+| Step | Scope | Definition of done (countable) |
+|---|---|---|
+| 3.1 | `LogsAPI` reads system/access/audit from their dedicated CGIs (`auditlog.cgi?tail=N` for the requested count) and falls back to the `tar_all` server report only when the CGI is absent; `LogReport.source` says which. `stream_logs`/`search_logs`/`get_log_summary` follow | Tests: each type hits its CGI with the right params; 404 → tarball fallback with `source` saying so; auth errors propagate; `ALL` still uses the tarball |
+| 3.2 | `download crash-report` (primary) with `download debug` kept as an alias; privacy notice before download; every downloaded diagnostic written `0600` via one helper (`axis_cam.files.write_private`), also used by `save_report`/`save_debug_archive`; crash-report timeout default 300 s | Tests: file mode is `0600` on POSIX; notice printed; alias and primary share one implementation |
+| 3.3 | Docs, plan status, coverage ratchet | `fail_under` at the new measured floor |
+
 ## Decisions and open questions
 
 - **Decided:** secure by default — `https` defaults to `True`; plain HTTP is an explicit `https: false` in config. Ad-hoc `--host` use is HTTPS only; a `--http` option was *not* added in Phase 1 (it would widen every command signature for an ad-hoc-only case) — add it in Phase 2 alongside the write-safety flags if a plain-HTTP device actually needs ad-hoc access.

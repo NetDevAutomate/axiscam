@@ -11,7 +11,7 @@ Models are organized by domain:
     - Parameters: DeviceParameter, ParameterGroup
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated, Any
 
@@ -327,14 +327,17 @@ class LogReport(BaseModel):
         entries: List of log entries.
         retrieved_at: When the logs were retrieved.
         total_entries: Total number of entries.
+        source: Which device endpoint supplied the entries (for example
+            ``systemlog.cgi`` or ``serverreport.cgi?mode=tar_all``).
     """
 
     device_name: str
     device_address: str
     log_type: LogType
     entries: list[LogEntry] = Field(default_factory=list)
-    retrieved_at: datetime = Field(default_factory=datetime.now)
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     total_entries: int = 0
+    source: str = ""
 
     def model_post_init(self, __context: Any) -> None:
         """Update total_entries after initialization."""

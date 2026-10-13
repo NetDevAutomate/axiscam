@@ -12,7 +12,7 @@ from axis_cam.api.logs import (
     parse_log_content,
     parse_log_line,
 )
-from axis_cam.exceptions import AxisDeviceError
+from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
 from axis_cam.models import LogEntry, LogLevel, LogType
 
 
@@ -250,6 +250,7 @@ class TestLogsAPI:
         log_content = """2024-01-15T12:00:00+00:00 axis-device [ INFO ] app: Message 1
 2024-01-15T12:00:01+00:00 axis-device [ WARNING ] app: Message 2"""
 
+        logs_api._get_text = AsyncMock(side_effect=AxisDeviceError("404"))  # no systemlog.cgi
         logs_api.get_log_files = AsyncMock(return_value={"syslog": log_content})
 
         result = await logs_api.get_logs(LogType.SYSTEM)
@@ -258,6 +259,7 @@ class TestLogsAPI:
         assert result.device_address == "192.168.1.10"
         assert result.log_type == LogType.SYSTEM
         assert len(result.entries) == 2
+        assert result.source == LogsAPI.TARBALL_SOURCE
 
     @pytest.mark.asyncio
     async def test_get_logs_with_max_entries(self, logs_api, mock_client):
@@ -266,6 +268,7 @@ class TestLogsAPI:
 2024-01-15T12:00:01+00:00 axis-device [ INFO ] app: Message 2
 2024-01-15T12:00:02+00:00 axis-device [ INFO ] app: Message 3"""
 
+        logs_api._get_text = AsyncMock(side_effect=AxisDeviceError("404"))
         logs_api.get_log_files = AsyncMock(return_value={"syslog": log_content})
 
         result = await logs_api.get_logs(LogType.SYSTEM, max_entries=2)
@@ -405,6 +408,7 @@ class TestLogsAPI:
         log_content = """2024-01-15T12:00:00+00:00 axis-device [ INFO ] app: Message 1
 2024-01-15T12:00:01+00:00 axis-device [ INFO ] app: Message 2"""
 
+        logs_api._get_text = AsyncMock(side_effect=AxisDeviceError("404"))
         logs_api.get_log_files = AsyncMock(return_value={"syslog": log_content})
 
         entries = []
@@ -488,6 +492,7 @@ class TestTimestampNormalisation:
         client = MagicMock()
         client.host = "192.168.1.10"
         api = LogsAPI(client, device_name="test-device")
+        api._get_text = AsyncMock(side_effect=AxisDeviceError("404"))  # force the tarball path
         api._get_raw = AsyncMock(return_value=buf.getvalue())
 
         report = await api.get_logs(LogType.SYSTEM)
@@ -500,3 +505,109 @@ class TestTimestampNormalisation:
         assert report.entries[0].raw == self.SIMPLE
         assert report.entries[1].raw == self.AWARE
         assert report.entries[2].raw == self.CONTINUATION.strip()
+
+
+class TestDedicatedLogEndpoints:
+    """System, access and audit logs come from their own CGIs; the server
+    report tarball is the fallback and the source for LogType.ALL."""
+
+    SYSLOG = "2024-01-15T12:00:00+00:00 axis-device [ INFO ] app: Message 1"
+
+    def _api(self, *, text=None, text_error=None):
+        client = MagicMock()
+        client.host = "192.168.1.10"
+        api = LogsAPI(client, device_name="test-device")
+        if text_error is not None:
+            api._get_text = AsyncMock(side_effect=text_error)
+        else:
+            api._get_text = AsyncMock(return_value=text if text is not None else self.SYSLOG)
+        api.get_log_files = AsyncMock(
+            return_value={"var/log/syslog": "tarball line", "var/log/audit/audit.log": "audit line"}
+        )
+        return api
+
+    @pytest.mark.asyncio
+    async def test_system_logs_use_systemlog_cgi(self):
+        api = self._api()
+
+        report = await api.get_logs(LogType.SYSTEM)
+
+        api._get_text.assert_awaited_once_with("/axis-cgi/systemlog.cgi", None)
+        api.get_log_files.assert_not_awaited()
+        assert report.source == "systemlog.cgi"
+        assert [e.raw for e in report.entries] == [self.SYSLOG]
+
+    @pytest.mark.asyncio
+    async def test_access_logs_use_accesslog_cgi(self):
+        api = self._api()
+
+        report = await api.get_logs(LogType.ACCESS)
+
+        api._get_text.assert_awaited_once_with("/axis-cgi/accesslog.cgi", None)
+        assert report.source == "accesslog.cgi"
+
+    @pytest.mark.asyncio
+    async def test_audit_logs_pass_max_entries_as_tail(self):
+        api = self._api()
+
+        report = await api.get_logs(LogType.AUDIT, max_entries=50)
+
+        api._get_text.assert_awaited_once_with("/axis-cgi/auditlog.cgi", {"tail": "50"})
+        assert report.source == "auditlog.cgi"
+
+    @pytest.mark.asyncio
+    async def test_audit_logs_without_limit_fetch_everything(self):
+        api = self._api()
+
+        await api.get_logs(LogType.AUDIT)
+
+        api._get_text.assert_awaited_once_with("/axis-cgi/auditlog.cgi", None)
+
+    @pytest.mark.asyncio
+    async def test_missing_cgi_falls_back_to_the_tarball(self):
+        api = self._api(text_error=AxisDeviceError("Device error 404"))
+
+        report = await api.get_logs(LogType.AUDIT)
+
+        api.get_log_files.assert_awaited_once()
+        assert report.source == LogsAPI.TARBALL_SOURCE
+        assert [e.raw for e in report.entries] == ["audit line"]  # the audit file, not syslog
+
+    @pytest.mark.asyncio
+    async def test_auth_error_on_the_cgi_propagates_instead_of_falling_back(self):
+        api = self._api(text_error=AxisAuthenticationError("401"))
+
+        with pytest.raises(AxisAuthenticationError):
+            await api.get_logs(LogType.SYSTEM)
+        api.get_log_files.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_all_logs_use_only_the_tarball(self):
+        api = self._api()
+
+        report = await api.get_logs(LogType.ALL)
+
+        api._get_text.assert_not_awaited()
+        api.get_log_files.assert_awaited_once()
+        assert report.source == LogsAPI.TARBALL_SOURCE
+
+    @pytest.mark.asyncio
+    async def test_stream_logs_uses_the_dedicated_cgi(self):
+        api = self._api(text="\n".join([self.SYSLOG, "    continuation"]))
+
+        entries = [entry async for entry in api.stream_logs(LogType.SYSTEM)]
+
+        api._get_text.assert_awaited_once_with("/axis-cgi/systemlog.cgi", None)
+        assert len(entries) == 2
+        assert entries[1].timestamp == entries[0].timestamp  # continuation inherits
+
+    @pytest.mark.asyncio
+    async def test_search_uses_the_dedicated_cgi(self):
+        api = self._api(
+            text="\n".join([self.SYSLOG, self.SYSLOG.replace("Message 1", "auth failed")])
+        )
+
+        report = await api.search_logs("AUTH", LogType.SYSTEM)
+
+        assert len(report.entries) == 1 and "auth failed" in report.entries[0].raw
+        assert report.source == "systemlog.cgi"

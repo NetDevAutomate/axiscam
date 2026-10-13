@@ -156,8 +156,9 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_logs(self, mock_client):
         """Test get_logs method."""
-        mock_client.get_text = AsyncMock(return_value="Jan 15 10:30:00 axis syslog: Test message")
-        mock_client.get_raw = AsyncMock(return_value=b"Jan 15 10:30:00 axis syslog: Test message")
+        mock_client.get = AsyncMock(
+            return_value=MagicMock(text="Jan 15 10:30:00 axis syslog: Test message")
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             logs = await camera.logs.get_logs(LogType.SYSTEM, max_entries=10)
             assert isinstance(logs, LogReport)
