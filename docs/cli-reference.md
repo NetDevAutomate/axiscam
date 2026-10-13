@@ -346,7 +346,12 @@ Geolocation:
 
 ### logs
 
-Retrieve device logs.
+Retrieve device logs. Each type is read from its dedicated CGI
+(`systemlog.cgi`, `accesslog.cgi`, `auditlog.cgi`); the server-report tarball
+is used only when a device lacks the CGI (older firmware; audit log needs
+AXIS OS 12.7+) and for `logs all`. The header line names the source that
+answered. For the audit log, `--lines N` is passed to the device as `tail=N` so
+only that many entries are transferred.
 
 ```mermaid
 flowchart LR
@@ -546,12 +551,14 @@ Options:
 
 ### download
 
-Download diagnostic reports and debug archives.
+Download the server report and the crash report. Every file is written with
+`0600` permissions (`axis_cam.files.write_private`).
 
 ```mermaid
 flowchart LR
     DOWNLOAD[axiscam download] --> REPORT[report]
-    DOWNLOAD --> DEBUG[debug]
+    DOWNLOAD --> CRASH[crash-report]
+    CRASH -.hidden alias.-> DEBUG[debug]
 ```
 
 #### download report
@@ -576,17 +583,21 @@ Options:
 | `zip` | ZIP without image |
 | `text` | Plain text report |
 
-#### download debug
+#### download crash-report
 
-Download debug archive (debug.tgz).
+Download the crash report (`/axis-cgi/debug/debug.tgz`): what the web interface
+calls "Download the crash report" — the server report plus detailed debug data
+such as core dumps and network traces. The command prints Axis's privacy notice
+first (the archive can include user IDs, passwords, video images and network
+traffic) and writes the file `0600`. `axiscam download debug` is a hidden alias.
 
 ```bash
-axiscam download debug [OPTIONS]
+axiscam download crash-report [OPTIONS]
 
 Options:
   --device, -d    Device name
-  --output, -o    Output file path
-  --timeout, -t   Download timeout in seconds (default: 120)
+  --output, -o    Output file path (default: crash_report_<device>.tgz)
+  --timeout, -t   Download timeout in seconds (default: 300; the device builds the archive on demand)
   --digest/--no-digest    Authentication mode
 ```
 
@@ -598,8 +609,8 @@ $ axiscam download report --device front_camera --output ~/report.zip
 # Download server report as text
 $ axiscam download report --device front_camera --format text --output ~/report.txt
 
-# Download debug archive (large, takes time)
-$ axiscam download debug --device front_camera --output ~/debug.tgz --timeout 180
+# Download the crash report (large; the device takes minutes to build it)
+$ axiscam download crash-report --device front_camera --output ~/crash.tgz --timeout 600
 ```
 
 ---

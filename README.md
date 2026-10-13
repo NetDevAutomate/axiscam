@@ -8,9 +8,9 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Comprehensive Device Info**: Serial numbers, firmware, capabilities
 - **Stream Diagnostics**: RTSP/RTP configuration, stream profiles - essential for third-party integration
 - **Network Discovery**: LLDP neighbor discovery for switch port mapping
-- **Log Retrieval**: System, access, and audit logs with severity filtering
+- **Log Retrieval**: System, access and audit logs from their dedicated CGIs (audit log on AXIS OS 12.7+), with the server report as fallback
 - **Device Reports**: Generate comprehensive JSON/YAML configuration reports
-- **Diagnostic Downloads**: Server reports and debug archives for AXIS support
+- **Diagnostic Downloads**: Server report and crash report for AXIS support, written `0600`
 - **Security Configuration**: Firewall, SSH, certificates, SNMP, NTP
 - **Account Management**: list, add, rotate passwords, change roles, remove — with plan/confirm/verify and a lockout guard
 - **Authentication**: Digest (default) and Basic authentication support
@@ -230,7 +230,8 @@ axiscam report --device camera1 --full --output full_report.json
 
 ### Download Commands
 
-Download diagnostic reports and debug archives from AXIS devices.
+Download the server report and the crash report. Both describe the device in
+detail, so every file is written with `0600` permissions.
 
 ```bash
 # Download server report (ZIP with snapshot image)
@@ -242,12 +243,15 @@ axiscam download report --device camera1 --format text --output ~/report.txt
 # Download server report as ZIP without image
 axiscam download report --device camera1 --format zip --output ~/report.zip
 
-# Download debug archive (comprehensive diagnostics for AXIS support)
-axiscam download debug --device camera1 --output ~/debug.tgz
+# Download the crash report (what the web UI calls "Download the crash report";
+# the server report plus debug data - can include passwords, images, network traffic)
+axiscam download crash-report --device camera1 --output ~/crash.tgz
 
-# With extended timeout for large archives
-axiscam download debug --device camera1 --output ~/debug.tgz --timeout 300
+# The device may take minutes to build it; default timeout is 300 s
+axiscam download crash-report --device camera1 --timeout 600
 ```
+
+`axiscam download debug` still works as a hidden alias of `crash-report`.
 
 #### Server Report Options (`axiscam download report`)
 
@@ -259,16 +263,16 @@ axiscam download debug --device camera1 --output ~/debug.tgz --timeout 300
 | `--timeout` | `-t` | Download timeout in seconds (default: 60) |
 | `--digest/--no-digest` | | Authentication mode (default: digest) |
 
-#### Debug Archive Options (`axiscam download debug`)
+#### Crash Report Options (`axiscam download crash-report`)
 
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--device` | `-d` | Device name or IP address |
-| `--output` | `-o` | Output file (auto-generates if not specified) |
-| `--timeout` | `-t` | Download timeout in seconds (default: 120) |
+| `--output` | `-o` | Output file (auto-generates `crash_report_<device>.tgz`) |
+| `--timeout` | `-t` | Download timeout in seconds (default: 300) |
 | `--digest/--no-digest` | | Authentication mode (default: digest) |
 
-**Note**: Debug archives can be large (10+ MB) and take time to generate. Use extended timeouts for slower devices or large configurations.
+**Note**: The crash report is large (10+ MB) and the device builds it on demand. Axis's privacy statement says it can include user IDs, passwords, video images and network traffic — the command prints that notice and writes the file `0600`.
 
 ### Stream Diagnostics
 

@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–2 complete; Phase 3 not started (see [Phase status](#phase-status))
+- **Status:** Phases 0–3 complete; Phase 4 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -115,6 +115,7 @@ Audit → `auditlog.cgi?tail=N`; system → `systemlog.cgi`; keep `tar_all` for 
 - **`security audit`** against the [AXIS OS Hardening Guide](https://help.axis.com/en-us/axis-os-hardening-guide), mostly composition of existing readers: HTTP disabled, TLS floor and weak ciphers (`CryptoPolicyAPI`), Basic auth off, SSH off, firewall on, SNMP v1/v2c off, lone `root` admin / unknown admins (an IoC in Axis's forensics guide), ONVIF accounts and discovery state, remote syslog set, NTP synced, certificate self-signed or expiring, firmware on an LTS track.
 - **`system restart` / `factory-default [--hard]` / `firmware status|upgrade`** — confirm-gated, same write-safety pattern as users.
 - Passphrase policy get/set; persistent logging on/off/clear (half-exists); remote syslog.
+- Network trace — `GET /axis-cgi/debug/debug.tgz?cmd=pcapdump&duration=<s>` returns a `.pcap` (developer troubleshooting page); `download network-trace --duration 30` is a small addition on the crash-report path with the same `0600` writer.
 - Fleet fan-out (`--all` / `--group`) — makes the README claim true.
 
 ## Phases
@@ -207,9 +208,19 @@ Contract verified against the VAPIX System settings page on 2026-10-13 (fetched,
 
 Write-safety pattern (restore reuses it in Phase 5): read current state → compute a human-readable plan → `--dry-run` prints it and exits 0 → otherwise confirm (`--yes` skips) → apply → re-read and verify → print the verified result. Secrets never appear in argv.
 
-### Phase 3 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+### Phase 3 — complete on branch `phase-0-security-fixes` (2026-10-13)
 
 Contracts verified from the VAPIX pages on 2026-10-13: `GET /axis-cgi/systemlog.cgi[?text=<alnum>]` (filter from AXIS OS 11.11.45), `GET /axis-cgi/accesslog.cgi`, `GET /axis-cgi/auditlog.cgi[?tail=<n>]` (discovery id `audit-log`, AXIS OS 12.7+, admin, `text/plain`; 400/401/500 on error). The web-interface help (LTS 2026) describes *Download the crash report* as "information that is in the server report as well as detailed debug information … might contain sensitive information such as network traces … can take several minutes"; the developer troubleshooting page uses `/axis-cgi/debug/debug.tgz?cmd=pcapdump&duration=N` for the network trace, so `debug.tgz` is the debug/crash archive. Byte-for-byte equality with the web UI's download still needs one DevTools capture on a device; the naming follows the web UI regardless.
+
+| Step | Commit | Status |
+|---|---|---|
+| 3.1 dedicated log CGIs with tarball fallback; `LogReport.source`; aware `retrieved_at` | `5533830` | ✅ 9 endpoint tests + 5 fallback tests |
+| 3.2 `download crash-report` (+ hidden `debug` alias), privacy notice, 300 s; `files.write_private` for every diagnostic incl. `report -o`, `params --export -o`, `init` | `3317711` | ✅ 12 tests incl. `0600` on POSIX and tightening of a pre-existing `0644` file |
+| 3.3 docs, coverage ratchet 61 → 62, this table | — | ✅ |
+
+After Phase 3: 682 tests pass (from 661) · 64.6% coverage (from 63.2) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged).
+
+Original step table:
 
 | Step | Scope | Definition of done (countable) |
 |---|---|---|
@@ -224,5 +235,5 @@ Contracts verified from the VAPIX pages on 2026-10-13: `GET /axis-cgi/systemlog.
 - **Open (filed 2026-10-13):** `VapixClient` itself still defaults to `use_https=False, port=80, use_digest_auth=False`; Phase 0 made `AxisDevice` secure by default but anyone constructing the client directly gets plain HTTP + Basic. Flip the client defaults to match (`use_https=True, port=443`) and refuse Basic-over-HTTP at the client level too; `tests/test_client.py` constructs the client bare in many places and needs the same sweep.
 - **Open:** whether to flip the library default `ssl_verify=False` → `True`. It will break self-signed setups; needs an `ssl_ca_bundle` option first. Not changed in Phase 1; revisit with Phase 2's `DeviceContext` additions.
 - **Fixed (2026-10-13):** every `--json` output and `params --export` to stdout went through `console.print`, which soft-wraps at Rich's console width and interprets `[...]` as markup, corrupting piped JSON (reproduced: a 300-character value split mid-string under an 80-column console). All 14 sites now use `emit_json()` / `typer.echo`; `tests/test_cli_commands.py::test_json_output_is_not_wrapped_at_console_width` guards it.
-- **Open:** whether `download debug` is byte-for-byte the web UI's crash report. One DevTools capture settles it.
+- **Open (narrowed 2026-10-13):** `download crash-report` fetches `/axis-cgi/debug/debug.tgz`, which the developer troubleshooting page identifies as the debug archive (`?cmd=pcapdump` variant is the network trace) and the web-interface help describes as "server report plus detailed debug information". Whether the web UI's button adds query parameters is still unverified — one DevTools capture on a device settles it; the command name and notice do not depend on the answer.
 - **Open:** local `main` vs `origin/main` divergence (5/5).

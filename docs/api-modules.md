@@ -684,9 +684,14 @@ System, access, and audit log retrieval.
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/axis-cgi/systemlog.cgi` | CGI | System logs |
-| `/axis-cgi/accesslog.cgi` | CGI | Access logs |
-| `/axis-cgi/auditlog.cgi` | CGI | Audit logs |
+| `/axis-cgi/systemlog.cgi` | CGI | System log (tried first) |
+| `/axis-cgi/accesslog.cgi` | CGI | Access log (tried first) |
+| `/axis-cgi/auditlog.cgi?tail=N` | CGI | Audit log, AXIS OS 12.7+ (tried first) |
+| `/axis-cgi/serverreport.cgi?mode=tar_all` | CGI | Fallback when a CGI is absent; the source for `LogType.ALL` |
+| `/config/rest/log/v1beta` | REST | Persistent-logging setting |
+
+`LogReport.source` names the endpoint that answered. Device-level errors (404) on a
+dedicated CGI fall back to the tarball; authentication and connection errors propagate.
 
 **Methods:**
 
@@ -696,7 +701,7 @@ System, access, and audit log retrieval.
 | `get_system_logs(max_entries)` | `LogReport` | System logs |
 | `get_access_logs(max_entries)` | `LogReport` | HTTP access logs |
 | `get_audit_logs(max_entries)` | `LogReport` | Config change logs |
-| `get_all_logs(max_entries)` | `list[LogReport]` | All log types |
+| `get_all_logs(max_entries)` | `LogReport` | All log types (tarball) |
 
 **Example:**
 ```python
@@ -716,7 +721,10 @@ Server report and debug archive downloads.
 | Endpoint | Type | Description |
 |----------|------|-------------|
 | `/axis-cgi/serverreport.cgi` | CGI | Server reports |
-| `/axis-cgi/debug/debug.tgz` | CGI | Debug archive |
+| `/axis-cgi/debug/debug.tgz` | CGI | Crash report / debug archive (`?cmd=pcapdump&duration=N` is the network trace — not wrapped yet) |
+
+`save_report()` and `save_debug_archive()` write through `axis_cam.files.write_private`
+(`0600`).
 
 **Methods:**
 

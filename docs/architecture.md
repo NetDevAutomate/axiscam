@@ -87,6 +87,7 @@ axis_cam/
 │   ├── config.py        # config, init, migrate, devices, version
 │   └── <group>.py       # logs, network, security, services, automation, media, stream, download
 ├── report.py            # Registry-driven device report
+├── files.py             # write_private(): diagnostics reach disk as 0600
 ├── client.py            # VapixClient HTTP client
 ├── config.py            # Configuration management
 ├── models.py            # Pydantic models (~2000 lines)
