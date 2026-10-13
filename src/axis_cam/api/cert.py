@@ -1,35 +1,75 @@
-"""Certificate API module.
+"""Certificate store (``/config/rest/cert/v1``), with the PEMs parsed.
 
-This module provides access to SSL/TLS certificate management on AXIS devices
-via the VAPIX cert API.
+Contract (AXIS OS 12.11, ``cert/v1/openapi.json``)::
 
-API Endpoints:
-    - /config/rest/cert/v1 (REST API)
+    {"certificates": [{"alias", "certificate": PEM, "keystore"}],
+     "ca_certificates": [{"alias", "certificate": PEM}],
+     "keystores": [{"id", "security_level", "key_types", "certifications"}],
+     "settings": {"keystore"}}
+
+The device gives only alias + PEM; subject, issuer, validity, key type and
+fingerprint come from parsing the PEM with ``cryptography``. A PEM that does
+not parse yields a certificate with just its alias, never an exception — one
+odd certificate must not hide the rest of the store.
 """
 
+from datetime import UTC
 from typing import Any
+
+from cryptography import x509
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import ec, rsa
+from cryptography.x509.oid import NameOID
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
-from axis_cam.models import CertConfig, Certificate, CertificateType
+from axis_cam.models import CertConfig, Certificate, Keystore
+
+#: cryptography leaves serialNumber as a dotted OID in RFC 4514 strings; name it.
+_NAME_OVERRIDES = {NameOID.SERIAL_NUMBER: "serialNumber"}
+
+
+def _key_type(cert: x509.Certificate) -> str:
+    key = cert.public_key()
+    if isinstance(key, rsa.RSAPublicKey):
+        return f"RSA-{key.key_size}"
+    if isinstance(key, ec.EllipticCurvePublicKey):
+        return f"EC-{key.curve.name.replace('secp', 'P-').replace('r1', '')}"
+    return type(key).__name__
+
+
+def parse_certificate(entry: dict[str, Any], *, is_ca: bool = False) -> Certificate:
+    """One store entry → :class:`Certificate`; unparseable PEM keeps alias only."""
+    alias = str(entry.get("alias", ""))
+    keystore = str(entry.get("keystore", "") or "")
+    pem = entry.get("certificate") or ""
+    try:
+        cert = x509.load_pem_x509_certificate(pem.encode())
+    except (ValueError, TypeError):
+        return Certificate(alias=alias, keystore=keystore, is_ca=is_ca)
+    digest = cert.fingerprint(hashes.SHA256()).hex().upper()
+    return Certificate(
+        alias=alias,
+        keystore=keystore,
+        is_ca=is_ca,
+        subject=cert.subject.rfc4514_string(_NAME_OVERRIDES),
+        issuer=cert.issuer.rfc4514_string(_NAME_OVERRIDES),
+        not_before=cert.not_valid_before_utc.astimezone(UTC),
+        not_after=cert.not_valid_after_utc.astimezone(UTC),
+        self_signed=cert.subject == cert.issuer,
+        key_type=_key_type(cert),
+        fingerprint_sha256=":".join(digest[i : i + 2] for i in range(0, len(digest), 2)),
+    )
 
 
 @register
 class CertAPI(BaseAPI):
-    """API module for certificate management.
-
-    This module provides methods to retrieve certificate information:
-    - Installed certificates
-    - Certificate details (issuer, validity, etc.)
-    - Certificate status
-    - CA certificates
+    """Read the certificate store.
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
-        ...     config = await camera.cert.get_config()
-        ...     for cert in config.certificates:
-        ...         print(f"  {cert.subject}: expires {cert.not_after}")
+        ...     store = await camera.cert.read()
+        ...     [(c.alias, c.not_after) for c in store.certificates]
     """
 
     name = "cert"
@@ -38,119 +78,39 @@ class CertAPI(BaseAPI):
     REST_PATH = "/config/rest/cert/v1"
 
     async def read(self) -> CertConfig:
-        """Read the current configuration (``ResourceModule`` protocol)."""
-        return await self.get_config()
+        """Read the store; errors propagate."""
+        response = await self._get(await self._rest_path())
+        return self.parse(response.get("data", {}))
 
     async def get_config(self) -> CertConfig:
-        """Get certificate configuration.
-
-        Returns:
-            CertConfig model with certificate settings.
-        """
-        try:
-            response = await self._get(await self._rest_path(), params={"recursive": "true"})
-            data = response.get("data", {})
-            return self._parse_config(data)
-        except (AxisDeviceError, AxisApiNotSupportedError):
-            return CertConfig()
+        """Alias of :meth:`read`."""
+        return await self.read()
 
     async def get_certificates(self) -> list[Certificate]:
-        """Get list of installed certificates.
+        """Device certificates only."""
+        return (await self.read()).certificates
 
-        Returns:
-            List of Certificate models.
-        """
-        config = await self.get_config()
-        return config.certificates
-
-    async def get_ca_certificates(self) -> list[Certificate]:
-        """Get list of CA certificates.
-
-        Returns:
-            List of CA Certificate models.
-        """
-        config = await self.get_config()
-        return config.ca_certificates
-
-    async def get_active_certificate(self) -> Certificate | None:
-        """Get the currently active HTTPS certificate.
-
-        Returns:
-            Active Certificate or None.
-        """
-        config = await self.get_config()
-        return config.active_certificate
-
-    def _parse_config(self, data: dict[str, Any]) -> CertConfig:
-        """Parse certificate configuration response.
-
-        Args:
-            data: Raw API response data.
-
-        Returns:
-            CertConfig model instance.
-        """
-        # Parse certificates
-        certificates = []
-        for cert_data in data.get("certificates", []):
-            cert = self._parse_certificate(cert_data)
-            if cert:
-                certificates.append(cert)
-
-        # Parse CA certificates
-        ca_certificates = []
-        for cert_data in data.get("caCertificates", []):
-            cert = self._parse_certificate(cert_data, is_ca=True)
-            if cert:
-                ca_certificates.append(cert)
-
-        # Find active certificate
-        active_cert = None
-        active_id = data.get("activeCertificate", "")
-        if active_id:
-            for cert in certificates:
-                if cert.cert_id == active_id:
-                    active_cert = cert
-                    break
-
+    @staticmethod
+    def parse(data: dict[str, Any]) -> CertConfig:
+        """Build the model from the ``data`` object."""
         return CertConfig(
-            certificates=certificates,
-            ca_certificates=ca_certificates,
-            active_certificate=active_cert,
-            https_enabled=data.get("httpsEnabled", True),
-            https_only=data.get("httpsOnly", False),
+            certificates=[
+                parse_certificate(c) for c in data.get("certificates", []) if isinstance(c, dict)
+            ],
+            ca_certificates=[
+                parse_certificate(c, is_ca=True)
+                for c in data.get("ca_certificates", [])
+                if isinstance(c, dict)
+            ],
+            keystores=[
+                Keystore(
+                    id=str(k.get("id", "")),
+                    security_level=str(k.get("security_level", "")),
+                    key_types=[str(t) for t in k.get("key_types", [])],
+                    certifications=[str(t) for t in k.get("certifications", [])],
+                )
+                for k in data.get("keystores", [])
+                if isinstance(k, dict)
+            ],
+            default_keystore=str((data.get("settings") or {}).get("keystore", "")),
         )
-
-    def _parse_certificate(self, data: dict[str, Any], is_ca: bool = False) -> Certificate | None:
-        """Parse a single certificate.
-
-        Args:
-            data: Certificate data from API.
-            is_ca: Whether this is a CA certificate.
-
-        Returns:
-            Certificate model or None if invalid.
-        """
-        try:
-            cert_type_str = data.get("type", "server")
-            try:
-                cert_type = CertificateType(cert_type_str.lower())
-            except ValueError:
-                cert_type = CertificateType.CA if is_ca else CertificateType.SERVER
-
-            return Certificate(
-                cert_id=data.get("id", ""),
-                cert_type=cert_type,
-                subject=data.get("subject", ""),
-                issuer=data.get("issuer", ""),
-                not_before=data.get("notBefore", ""),
-                not_after=data.get("notAfter", ""),
-                serial_number=data.get("serialNumber", ""),
-                fingerprint_sha256=data.get("fingerprintSHA256", ""),
-                fingerprint_sha1=data.get("fingerprintSHA1", ""),
-                key_size=data.get("keySize", 0),
-                key_type=data.get("keyType", ""),
-                self_signed=data.get("selfSigned", False),
-            )
-        except ValueError:
-            return None

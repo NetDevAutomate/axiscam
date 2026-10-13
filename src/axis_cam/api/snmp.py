@@ -1,36 +1,34 @@
-"""SNMP API module.
+"""SNMP (``/config/rest/snmp/v1``), without ever keeping the community strings.
 
-This module provides access to SNMP configuration on AXIS devices
-via the VAPIX SNMP API.
+Contract (AXIS OS 12.11, ``snmp/v1/openapi.json``)::
 
-API Endpoints:
-    - /config/rest/snmp/v1 (REST API)
+    {"enabled": bool, "snmpV1": {"enabled"}, "snmpV2": {"enabled"},
+     "snmpV3": {"enabled", "userPasswdSet", "userEncryption", "supportedEncryption"},
+     "snmpV1V2Common": {"readCommunity", "writeCommunity", "address",
+                        "trap": {"enabled", "community", ...}},
+     "transportProtocol": "udp"|"tcp", "dscp", "engineBoots", "ntcip_supported"}
+
+Community strings are credentials; the model records only whether they are set
+and whether the read community is the well-known default.
 """
 
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
-from axis_cam.models import SnmpConfig, SnmpTrapReceiver, SnmpVersion
+from axis_cam.models import SnmpConfig
+
+DEFAULT_READ_COMMUNITY = "public"
 
 
 @register
 class SnmpAPI(BaseAPI):
-    """API module for SNMP configuration.
-
-    This module provides methods to retrieve and manage SNMP settings:
-    - SNMP enabled/disabled state
-    - SNMP version configuration
-    - Community strings
-    - Trap receivers
-    - System contact/location
+    """Read SNMP state.
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
-        ...     config = await camera.snmp.get_config()
-        ...     print(f"SNMP enabled: {config.enabled}")
-        ...     print(f"SNMP version: {config.version}")
+        ...     snmp = await camera.snmp.read()
+        ...     snmp.enabled, snmp.v1_enabled, snmp.read_community_is_default
     """
 
     name = "snmp"
@@ -39,87 +37,33 @@ class SnmpAPI(BaseAPI):
     REST_PATH = "/config/rest/snmp/v1"
 
     async def read(self) -> SnmpConfig:
-        """Read the current configuration (``ResourceModule`` protocol)."""
-        return await self.get_config()
+        """Read the SNMP configuration; errors propagate."""
+        response = await self._get(await self._rest_path())
+        return self.parse(response.get("data", {}))
 
     async def get_config(self) -> SnmpConfig:
-        """Get SNMP configuration.
+        """Alias of :meth:`read`."""
+        return await self.read()
 
-        Returns:
-            SnmpConfig model with SNMP settings.
-        """
-        try:
-            response = await self._get(await self._rest_path(), params={"recursive": "true"})
-            data = response.get("data", {})
-            return self._parse_config(data)
-        except (AxisDeviceError, AxisApiNotSupportedError):
-            return SnmpConfig()
-
-    async def is_enabled(self) -> bool:
-        """Check if SNMP is enabled.
-
-        Returns:
-            True if SNMP is active.
-        """
-        config = await self.get_config()
-        return config.enabled
-
-    async def get_version(self) -> SnmpVersion:
-        """Get SNMP version.
-
-        Returns:
-            SNMP version in use.
-        """
-        config = await self.get_config()
-        return config.version
-
-    async def get_trap_receivers(self) -> list[SnmpTrapReceiver]:
-        """Get list of SNMP trap receivers.
-
-        Returns:
-            List of SnmpTrapReceiver models.
-        """
-        config = await self.get_config()
-        return config.trap_receivers
-
-    def _parse_config(self, data: dict[str, Any]) -> SnmpConfig:
-        """Parse SNMP configuration response.
-
-        Args:
-            data: Raw API response data.
-
-        Returns:
-            SnmpConfig model instance.
-        """
-        # Parse version
-        version_str = data.get("version", "v2c")
-        try:
-            version = SnmpVersion(version_str.lower())
-        except ValueError:
-            version = SnmpVersion.V2C
-
-        # Parse trap receivers
-        trap_receivers = []
-        for trap_data in data.get("trapReceivers", []):
-            if isinstance(trap_data, dict):
-                receiver = SnmpTrapReceiver(
-                    address=trap_data.get("address", ""),
-                    port=trap_data.get("port", 162),
-                    community=trap_data.get("community", ""),
-                    enabled=trap_data.get("enabled", True),
-                )
-                trap_receivers.append(receiver)
-
+    @staticmethod
+    def parse(data: dict[str, Any]) -> SnmpConfig:
+        """Build the model from the ``data`` object, dropping the community strings."""
+        v1 = data.get("snmpV1") or {}
+        v2 = data.get("snmpV2") or {}
+        v3 = data.get("snmpV3") or {}
+        common = data.get("snmpV1V2Common") or {}
+        trap = common.get("trap") or {}
         return SnmpConfig(
-            enabled=data.get("enabled", False),
-            version=version,
-            read_community=data.get("readCommunity", "public"),
-            write_community=data.get("writeCommunity", ""),
-            system_contact=data.get("systemContact", ""),
-            system_location=data.get("systemLocation", ""),
-            trap_receivers=trap_receivers,
-            v3_enabled=data.get("v3", {}).get("enabled", False),
-            v3_username=data.get("v3", {}).get("username", ""),
-            v3_auth_protocol=data.get("v3", {}).get("authProtocol", ""),
-            v3_priv_protocol=data.get("v3", {}).get("privProtocol", ""),
+            enabled=bool(data.get("enabled", False)),
+            v1_enabled=bool(v1.get("enabled", False)),
+            v2c_enabled=bool(v2.get("enabled", False)),
+            v3_enabled=bool(v3.get("enabled", False)),
+            v3_password_set=bool(v3.get("userPasswdSet", False)),
+            v3_encryption=str(v3.get("userEncryption", "")),
+            read_community_is_default=str(common.get("readCommunity", ""))
+            == DEFAULT_READ_COMMUNITY,
+            write_community_set=bool(common.get("writeCommunity")),
+            trap_enabled=bool(trap.get("enabled", False)),
+            trap_address=str(common.get("address", "")),
+            transport_protocol=str(data.get("transportProtocol", "udp")),
         )

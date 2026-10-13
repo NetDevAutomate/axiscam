@@ -11,7 +11,7 @@ Models are organized by domain:
     - Parameters: DeviceParameter, ParameterGroup
 """
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Annotated, Any
 
@@ -657,394 +657,232 @@ class NetworkConfig(BaseModel):
 # =============================================================================
 
 
-class FirewallAction(str, Enum):
-    """Firewall rule actions."""
-
-    ALLOW = "allow"
-    DENY = "deny"
-    DROP = "drop"
-    REJECT = "reject"
-
-
-class FirewallProtocol(str, Enum):
-    """Network protocols for firewall rules."""
-
-    ANY = "any"
-    TCP = "tcp"
-    UDP = "udp"
-    ICMP = "icmp"
-    ICMPV6 = "icmpv6"
-
-
-class FirewallRule(BaseModel):
-    """A single firewall rule.
-
-    Attributes:
-        action: Rule action (allow, deny, drop, reject).
-        protocol: Network protocol.
-        source: Source IP address/network.
-        source_port: Source port or range.
-        destination: Destination IP address/network.
-        dest_port: Destination port or range.
-        description: Rule description.
-        enabled: Whether rule is active.
-        priority: Rule priority (lower = higher priority).
-    """
+class SshUser(BaseModel):
+    """One account allowed to log in over SSH (``ssh.v2`` ``users[]``)."""
 
     model_config = ConfigDict(frozen=True)
 
-    action: FirewallAction = FirewallAction.ALLOW
-    protocol: FirewallProtocol = FirewallProtocol.ANY
-    source: str = ""
-    source_port: str = ""
-    destination: str = ""
-    dest_port: str = ""
-    description: str = ""
-    enabled: bool = True
-    priority: int = 0
-
-    @property
-    def name(self) -> str:
-        """Get rule name (alias for description)."""
-        return self.description
-
-    @property
-    def source_address(self) -> str:
-        """Get source address (alias for source)."""
-        return self.source
-
-    @property
-    def destination_port(self) -> str:
-        """Get destination port (alias for dest_port)."""
-        return self.dest_port
-
-
-class FirewallConfig(BaseModel):
-    """Firewall configuration.
-
-    Attributes:
-        enabled: Whether firewall is enabled.
-        ipv4_rules: List of IPv4 firewall rules.
-        ipv6_rules: List of IPv6 firewall rules.
-        default_policy: Default action for unmatched traffic.
-        icmp_allowed: Whether ICMP traffic is allowed.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    enabled: bool = False
-    ipv4_rules: list[FirewallRule] = Field(default_factory=list)
-    ipv6_rules: list[FirewallRule] = Field(default_factory=list)
-    default_policy: FirewallAction = FirewallAction.ALLOW
-    icmp_allowed: bool = True
-
-    @property
-    def rules(self) -> list[FirewallRule]:
-        """Get all firewall rules (IPv4 + IPv6 combined)."""
-        return self.ipv4_rules + self.ipv6_rules
-
-
-# =============================================================================
-# SSH Models
-# =============================================================================
-
-
-class SshKey(BaseModel):
-    """SSH authorized key.
-
-    Attributes:
-        key_type: Key type (e.g., ssh-rsa, ssh-ed25519).
-        key: Public key data.
-        comment: Key comment/identifier.
-        fingerprint: Key fingerprint.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    key_type: str = ""
-    key: str = ""
+    username: str
     comment: str = ""
-    fingerprint: str = ""
-
-    @property
-    def name(self) -> str:
-        """Get the key name (alias for comment)."""
-        return self.comment
 
 
 class SshConfig(BaseModel):
-    """SSH configuration.
+    """SSH as the device reports it.
+
+    The SSH REST API (``/config/rest/ssh/v2``) lists only the SSH users; whether
+    the service is on is the parameter ``Network.SSH.Enabled``. Both are read.
 
     Attributes:
-        enabled: Whether SSH is enabled.
-        port: SSH port number.
-        root_login_allowed: Whether root login is permitted.
-        password_auth_enabled: Whether password authentication is enabled.
-        authorized_keys: List of authorized SSH keys.
+        enabled: ``Network.SSH.Enabled`` (``None`` when the parameter is not
+            present on the product).
+        users: Accounts with SSH access.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    enabled: bool = False
-    port: int = 22
-    root_login_allowed: bool = False
-    password_auth_enabled: bool = True
-    authorized_keys: list[SshKey] = Field(default_factory=list)
-
-    @property
-    def root_login_enabled(self) -> bool:
-        """Get root login status (alias for root_login_allowed)."""
-        return self.root_login_allowed
+    enabled: bool | None = None
+    users: list[SshUser] = Field(default_factory=list)
 
 
-# =============================================================================
-# SNMP Models
-# =============================================================================
+class FirewallPolicy(str, Enum):
+    """Default policy of the device firewall (``firewall.v1`` ``activeDefaultPolicy``)."""
+
+    ACCEPT = "ACCEPT"
+    DROP = "DROP"
 
 
-class SnmpVersion(str, Enum):
-    """SNMP protocol versions."""
-
-    V1 = "v1"
-    V2C = "v2c"
-    V3 = "v3"
-
-
-class SnmpTrapReceiver(BaseModel):
-    """SNMP trap receiver configuration.
+class FirewallRule(BaseModel):
+    """One firewall rule, flattened from the ``datatype.Rule`` schema.
 
     Attributes:
-        address: Trap receiver IP address or hostname.
-        port: Trap receiver port.
-        community: SNMP community string.
-        enabled: Whether this receiver is active.
+        rule_type: ``FILTER`` (allow a source) or ``LIMIT`` (rate-limit new connections).
+        ip: Single address, if the rule names one.
+        ip_range: ``start-end`` if the rule names a range.
+        port: ``TCP/22``-style if the rule names a port.
+        port_range: ``TCP/1000-2000``-style if the rule names a range.
+        mac: Source MAC, if the rule names one.
+        limit: ``3 NEWCONNECTIONS/SECOND burst 3``-style for LIMIT rules.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    address: str = ""
-    port: int = 162
-    community: str = ""
-    enabled: bool = True
-    version: str = "v2c"  # SNMP version for this trap receiver
+    rule_type: str
+    ip: str | None = None
+    ip_range: str | None = None
+    port: str | None = None
+    port_range: str | None = None
+    mac: str | None = None
+    limit: str | None = None
+
+
+class FirewallConfig(BaseModel):
+    """Firewall state (``/config/rest/firewall/v1``).
+
+    Attributes:
+        activated: Whether the firewall is on.
+        default_policy: What happens to traffic no rule matches.
+        rules: Active rules.
+        pending_rules: Rules staged but not yet activated (the API's test mode).
+        pending_default_policy: Policy staged with the pending rules.
+        test_time_left: Seconds left in test mode, 0 when not testing.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    activated: bool = False
+    default_policy: FirewallPolicy = FirewallPolicy.ACCEPT
+    rules: list[FirewallRule] = Field(default_factory=list)
+    pending_rules: list[FirewallRule] = Field(default_factory=list)
+    pending_default_policy: FirewallPolicy | None = None
+    test_time_left: int = 0
 
 
 class SnmpConfig(BaseModel):
-    """SNMP configuration.
+    """SNMP state (``/config/rest/snmp/v1``) **without** the community strings.
+
+    Community strings are credentials: the model records whether they are set
+    and whether the read community is the well-known default, never the value,
+    so reports and backups cannot leak them.
 
     Attributes:
-        enabled: Whether SNMP is enabled.
-        version: SNMP protocol version.
-        read_community: Read-only community string.
-        write_community: Read-write community string.
-        system_contact: System contact information.
-        system_location: System location information.
-        trap_receivers: List of trap receivers.
-        v3_enabled: Whether SNMPv3 is enabled.
-        v3_username: SNMPv3 username.
-        v3_auth_protocol: SNMPv3 authentication protocol.
-        v3_priv_protocol: SNMPv3 privacy protocol.
+        enabled: SNMP agent on.
+        v1_enabled / v2c_enabled / v3_enabled: Per-version switches.
+        v3_password_set: An SNMPv3 user password has been configured.
+        v3_encryption: ``AES-128`` / ``AES-256``.
+        read_community_is_default: Read community is ``public``.
+        write_community_set: A write community is configured (non-empty).
+        trap_enabled: Traps on; ``trap_address`` is the receiver.
+        transport_protocol: ``udp`` or ``tcp``.
     """
 
     model_config = ConfigDict(frozen=True)
 
     enabled: bool = False
-    version: SnmpVersion = SnmpVersion.V2C
-    read_community: str = "public"
-    write_community: str = ""
-    system_contact: str = ""
-    system_location: str = ""
-    trap_receivers: list[SnmpTrapReceiver] = Field(default_factory=list)
+    v1_enabled: bool = False
+    v2c_enabled: bool = False
     v3_enabled: bool = False
-    v3_username: str = ""
-    v3_auth_protocol: str = ""
-    v3_priv_protocol: str = ""
-
-    @property
-    def location(self) -> str:
-        """Get system location (alias for system_location)."""
-        return self.system_location
-
-    @property
-    def contact(self) -> str:
-        """Get system contact (alias for system_contact)."""
-        return self.system_contact
+    v3_password_set: bool = False
+    v3_encryption: str = ""
+    read_community_is_default: bool = False
+    write_community_set: bool = False
+    trap_enabled: bool = False
+    trap_address: str = ""
+    transport_protocol: str = "udp"
 
 
-# =============================================================================
-# Certificate Models
-# =============================================================================
+class CryptoPolicy(BaseModel):
+    """One selectable policy (``crypto-policy.v1`` ``policies[]``)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    nice_name: str = ""
+    description: str = ""
 
 
-class CertificateType(str, Enum):
-    """Types of SSL/TLS certificates."""
-
-    SERVER = "server"
-    CLIENT = "client"
-    CA = "ca"
-
-
-class Certificate(BaseModel):
-    """SSL/TLS certificate information.
+class CryptoPolicyConfig(BaseModel):
+    """System-wide cryptographic policy (``/config/rest/crypto-policy/v1``).
 
     Attributes:
-        cert_id: Certificate identifier.
-        cert_type: Type of certificate.
-        subject: Certificate subject (CN, O, etc.).
-        issuer: Certificate issuer.
-        not_before: Validity start date.
-        not_after: Validity end date.
-        serial_number: Certificate serial number.
-        fingerprint_sha256: SHA-256 fingerprint.
-        fingerprint_sha1: SHA-1 fingerprint.
-        key_size: Key size in bits.
-        key_type: Key algorithm type.
-        self_signed: Whether certificate is self-signed.
+        active_policy: ``DEFAULT``, ``MODERN`` or ``FIPS`` on AXIS OS 12.
+        policies: The policies the device offers.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    cert_id: str = ""
-    cert_type: CertificateType = CertificateType.SERVER
+    active_policy: str = ""
+    policies: list[CryptoPolicy] = Field(default_factory=list)
+
+
+class Certificate(BaseModel):
+    """An X.509 certificate from the device store, parsed from its PEM.
+
+    Attributes:
+        alias: Name in the store.
+        keystore: Keystore holding the private key (``SE0``, ``SOFTWARE0``);
+            empty for CA certificates.
+        is_ca: From ``ca_certificates`` rather than ``certificates``.
+        subject / issuer: RFC 4514 strings.
+        not_before / not_after: Validity, timezone-aware UTC.
+        self_signed: Issuer equals subject.
+        key_type: ``EC-P256``, ``RSA-2048``, … as the device names key types.
+        fingerprint_sha256: Hex, colon-separated.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    alias: str
+    keystore: str = ""
+    is_ca: bool = False
     subject: str = ""
     issuer: str = ""
-    not_before: str = ""
-    not_after: str = ""
-    serial_number: str = ""
-    fingerprint_sha256: str = ""
-    fingerprint_sha1: str = ""
-    key_size: int = 0
-    key_type: str = ""
+    not_before: datetime | None = None
+    not_after: datetime | None = None
     self_signed: bool = False
+    key_type: str = ""
+    fingerprint_sha256: str = ""
 
-    @property
-    def id(self) -> str:
-        """Get certificate ID (alias for cert_id)."""
-        return self.cert_id
+    def expires_within(self, days: int, *, now: datetime | None = None) -> bool:
+        """True when ``not_after`` is within ``days`` of ``now`` (or already past)."""
+        if self.not_after is None:
+            return False
+        reference = now or datetime.now(UTC)
+        return self.not_after <= reference + timedelta(days=days)
 
-    @property
-    def valid_from(self) -> str:
-        """Get validity start date (alias for not_before)."""
-        return self.not_before
 
-    @property
-    def valid_to(self) -> str:
-        """Get validity end date (alias for not_after)."""
-        return self.not_after
+class Keystore(BaseModel):
+    """A keystore the device offers (``cert.v1`` ``keystores[]``)."""
 
-    @property
-    def is_valid(self) -> bool:
-        """Check if certificate is currently valid (simplified check)."""
-        # This is a simplified check - real implementation would compare dates
-        return bool(self.not_before and self.not_after)
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    security_level: str = ""
+    key_types: list[str] = Field(default_factory=list)
+    certifications: list[str] = Field(default_factory=list)
 
 
 class CertConfig(BaseModel):
-    """Certificate configuration.
+    """Certificate store (``/config/rest/cert/v1``).
 
     Attributes:
-        certificates: List of installed certificates.
-        ca_certificates: List of CA certificates.
-        active_certificate: Currently active HTTPS certificate.
-        https_enabled: Whether HTTPS is enabled.
-        https_only: Whether only HTTPS is allowed.
+        certificates: Device certificates (with private keys in a keystore).
+        ca_certificates: Trusted CA certificates.
+        keystores: Available keystores; ``default_keystore`` is ``settings.keystore``.
     """
 
     model_config = ConfigDict(frozen=True)
 
     certificates: list[Certificate] = Field(default_factory=list)
     ca_certificates: list[Certificate] = Field(default_factory=list)
-    active_certificate: Certificate | None = None
-    https_enabled: bool = True
-    https_only: bool = False
-
-    @property
-    def https_cert_id(self) -> str:
-        """Get the HTTPS certificate ID."""
-        if self.active_certificate:
-            return self.active_certificate.cert_id
-        return ""
-
-    @property
-    def client_cert_enabled(self) -> bool:
-        """Check if client certificate authentication is enabled."""
-        # Returns True if there are any client certificates installed
-        return any(c.cert_type == CertificateType.CLIENT for c in self.certificates)
-
-
-# =============================================================================
-# NTP Models
-# =============================================================================
-
-
-class NtpServer(BaseModel):
-    """NTP server configuration.
-
-    Attributes:
-        address: NTP server address.
-        enabled: Whether this server is active.
-        prefer: Whether this is the preferred server.
-        source: Server source (static, dhcp).
-        iburst: Whether to use iburst mode for faster initial sync.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    address: str = ""
-    enabled: bool = True
-    prefer: bool = False
-    source: str = "static"
-    iburst: bool = False
-
-
-class NtpSyncStatus(BaseModel):
-    """NTP synchronization status.
-
-    Attributes:
-        synchronized: Whether time is synchronized.
-        current_server: Server currently being used.
-        stratum: NTP stratum level.
-        offset_ms: Time offset in milliseconds.
-        last_sync: Last synchronization timestamp.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    synchronized: bool = False
-    current_server: str = ""
-    stratum: int = 0
-    offset_ms: float = 0.0
-    last_sync: str = ""
-
-    @property
-    def delay_ms(self) -> float:
-        """Get delay in milliseconds (alias for offset_ms)."""
-        return self.offset_ms
+    keystores: list[Keystore] = Field(default_factory=list)
+    default_keystore: str = ""
 
 
 class NtpConfig(BaseModel):
-    """NTP configuration.
+    """Network time synchronisation (``/config/rest/network-time-sync/v1``).
 
     Attributes:
-        enabled: Whether NTP is enabled.
-        servers: List of NTP servers.
-        sync_status: Current synchronization status.
-        use_dhcp_servers: Whether to use DHCP-provided servers.
-        fallback_enabled: Whether fallback servers are enabled.
+        enabled: NTP client on.
+        synced: The client reports the clock as synchronised.
+        servers_source: ``STATIC`` or ``DHCP``.
+        static_servers: Configured servers.
+        advertised_servers: Servers learnt from DHCP.
+        time_offset_s: Current offset in seconds as the device reports it.
+        nts_enabled: Network Time Security on.
+        ptp_supported / ptp_port_state: PTP availability and state.
     """
 
     model_config = ConfigDict(frozen=True)
 
     enabled: bool = False
-    servers: list[NtpServer] = Field(default_factory=list)
-    sync_status: NtpSyncStatus = Field(default_factory=NtpSyncStatus)
-    use_dhcp_servers: bool = False
-    fallback_enabled: bool = False
-
-
-# =============================================================================
-# Action Rules Models
-# =============================================================================
+    synced: bool = False
+    servers_source: str = ""
+    static_servers: list[str] = Field(default_factory=list)
+    advertised_servers: list[str] = Field(default_factory=list)
+    time_offset_s: float = 0.0
+    nts_enabled: bool = False
+    ptp_supported: bool = False
+    ptp_port_state: str = ""
 
 
 class ActionRule(BaseModel):
@@ -1870,74 +1708,6 @@ class VirtualHostConfig(BaseModel):
 
 # =============================================================================
 # Cryptographic Policy Models
-# =============================================================================
-
-
-class TlsVersion(str, Enum):
-    """TLS protocol versions."""
-
-    TLS_1_0 = "1.0"
-    TLS_1_1 = "1.1"
-    TLS_1_2 = "1.2"
-    TLS_1_3 = "1.3"
-
-
-class CipherSuite(BaseModel):
-    """TLS cipher suite configuration.
-
-    Attributes:
-        name: Cipher suite name.
-        enabled: Whether this cipher is enabled.
-        strength: Cipher strength classification.
-        key_exchange: Key exchange algorithm.
-        authentication: Authentication algorithm.
-        encryption: Encryption algorithm.
-        mac: MAC algorithm.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    name: str = ""
-    enabled: bool = True
-    strength: str = ""  # "strong", "medium", "weak"
-    key_exchange: str = ""
-    authentication: str = ""
-    encryption: str = ""
-    mac: str = ""
-
-
-class CryptoPolicyConfig(BaseModel):
-    """Cryptographic policy configuration.
-
-    Attributes:
-        tls_min_version: Minimum TLS version allowed.
-        tls_max_version: Maximum TLS version allowed.
-        cipher_suites: List of cipher suite configurations.
-        weak_ciphers_enabled: Whether weak ciphers are allowed.
-        prefer_server_ciphers: Whether to prefer server cipher order.
-        session_tickets_enabled: Whether TLS session tickets are enabled.
-        ocsp_stapling_enabled: Whether OCSP stapling is enabled.
-        hsts_enabled: Whether HTTP Strict Transport Security is enabled.
-        hsts_max_age: HSTS max-age in seconds.
-        hsts_include_subdomains: Whether HSTS includes subdomains.
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    tls_min_version: TlsVersion = TlsVersion.TLS_1_2
-    tls_max_version: TlsVersion = TlsVersion.TLS_1_3
-    cipher_suites: list[CipherSuite] = Field(default_factory=list)
-    weak_ciphers_enabled: bool = False
-    prefer_server_ciphers: bool = True
-    session_tickets_enabled: bool = True
-    ocsp_stapling_enabled: bool = False
-    hsts_enabled: bool = False
-    hsts_max_age: int = Field(default=31536000, ge=0)  # 1 year default
-    hsts_include_subdomains: bool = False
-
-
-# =============================================================================
-# Network Pairing Models
 # =============================================================================
 
 

@@ -1,128 +1,58 @@
-"""SSH API module.
+"""SSH: who may log in, and whether the service is on.
 
-This module provides access to SSH configuration on AXIS devices
-via the VAPIX SSH API.
-
-API Endpoints:
-    - /config/rest/ssh/v2 (REST API)
-    - /config/rest/ssh/v1beta (fallback)
+Contract (AXIS OS 12.11, ``/config/discover/apis/ssh/v2/openapi.json``): the
+REST API ``/config/rest/ssh/v2`` exposes ``{"users": [{"username", "comment"}]}``
+and nothing else — the on/off switch is the parameter ``Network.SSH.Enabled``
+(the AXIS OS Hardening Guide's own instruction is
+``param.cgi?action=update&Network.SSH.Enabled=no``). The reader combines both.
 """
 
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.param import ParamAPI
 from axis_cam.api.registry import register
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
-from axis_cam.models import SshConfig, SshKey
+from axis_cam.models import SshConfig, SshUser
 
 
 @register
 class SshAPI(BaseAPI):
-    """API module for SSH configuration.
-
-    This module provides methods to retrieve and manage SSH settings:
-    - SSH enabled/disabled state
-    - SSH port configuration
-    - Authorized keys management
-    - Root login settings
+    """Read SSH state.
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
-        ...     config = await camera.ssh.get_config()
-        ...     print(f"SSH enabled: {config.enabled}")
-        ...     print(f"SSH port: {config.port}")
+        ...     ssh = await camera.ssh.read()
+        ...     ssh.enabled, [u.username for u in ssh.users]
     """
 
     name = "ssh"
     api_id = "ssh"
 
     REST_PATH = "/config/rest/ssh/v2"
-    REST_PATH_BETA = "/config/rest/ssh/v1beta"
+    ENABLED_PARAM = "Network.SSH.Enabled"
 
     async def read(self) -> SshConfig:
-        """Read the current configuration (``ResourceModule`` protocol)."""
-        return await self.get_config()
+        """SSH users from the REST API and the enabled flag from ``param.cgi``.
+
+        Raises:
+            AxisAuthenticationError / AxisPermissionError / AxisConnectionError /
+            AxisDeviceError: Propagate; a reader that cannot read says so.
+        """
+        response = await self._get(await self._rest_path())
+        enabled = await ParamAPI(self._client).get(self.ENABLED_PARAM)
+        return self.parse(response.get("data", {}), enabled)
 
     async def get_config(self) -> SshConfig:
-        """Get SSH configuration.
+        """Alias of :meth:`read`."""
+        return await self.read()
 
-        Returns:
-            SshConfig model with SSH settings.
-        """
-        try:
-            response = await self._get(await self._rest_path(), params={"recursive": "true"})
-            data = response.get("data", {})
-            return self._parse_config(data)
-        except (AxisDeviceError, AxisApiNotSupportedError):
-            # Try beta API
-            try:
-                response = await self._get(self.REST_PATH_BETA, params={"recursive": "true"})
-                data = response.get("data", {})
-                return self._parse_config(data)
-            except (AxisDeviceError, AxisApiNotSupportedError):
-                return SshConfig()
-
-    async def is_enabled(self) -> bool:
-        """Check if SSH is enabled.
-
-        Returns:
-            True if SSH is active.
-        """
-        config = await self.get_config()
-        return config.enabled
-
-    async def get_port(self) -> int:
-        """Get SSH port number.
-
-        Returns:
-            SSH port number.
-        """
-        config = await self.get_config()
-        return config.port
-
-    async def get_authorized_keys(self) -> list[SshKey]:
-        """Get list of authorized SSH keys.
-
-        Returns:
-            List of SshKey models.
-        """
-        config = await self.get_config()
-        return config.authorized_keys
-
-    async def root_login_allowed(self) -> bool:
-        """Check if root login is allowed.
-
-        Returns:
-            True if root login is permitted.
-        """
-        config = await self.get_config()
-        return config.root_login_allowed
-
-    def _parse_config(self, data: dict[str, Any]) -> SshConfig:
-        """Parse SSH configuration response.
-
-        Args:
-            data: Raw API response data.
-
-        Returns:
-            SshConfig model instance.
-        """
-        # Parse authorized keys
-        authorized_keys = []
-        for key_data in data.get("authorizedKeys", []):
-            if isinstance(key_data, dict):
-                key = SshKey(
-                    key_type=key_data.get("type", ""),
-                    key=key_data.get("key", ""),
-                    comment=key_data.get("comment", ""),
-                    fingerprint=key_data.get("fingerprint", ""),
-                )
-                authorized_keys.append(key)
-
-        return SshConfig(
-            enabled=data.get("enabled", False),
-            port=data.get("port", 22),
-            root_login_allowed=data.get("rootLoginAllowed", False),
-            password_auth_enabled=data.get("passwordAuthEnabled", True),
-            authorized_keys=authorized_keys,
-        )
+    @staticmethod
+    def parse(data: dict[str, Any], enabled_param: str | None) -> SshConfig:
+        """Build the model from the ``data`` object and the ``Network.SSH.Enabled`` value."""
+        users = [
+            SshUser(username=str(u.get("username", "")), comment=str(u.get("comment", "")))
+            for u in data.get("users", [])
+            if isinstance(u, dict)
+        ]
+        enabled = None if enabled_param is None else enabled_param.strip().lower() == "yes"
+        return SshConfig(enabled=enabled, users=users)

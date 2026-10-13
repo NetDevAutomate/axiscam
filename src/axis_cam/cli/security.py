@@ -1,4 +1,4 @@
-"""``axiscam security``: firewall, SSH and certificates."""
+"""``axiscam security``: firewall, SSH, certificates — and the hardening audit."""
 
 from typing import Annotated
 
@@ -6,6 +6,7 @@ import typer
 from rich.panel import Panel
 from rich.table import Table
 
+from axis_cam.audit import GUIDE_URL, AuditReport, Status, run_audit
 from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     console,
@@ -22,6 +23,15 @@ from axis_cam.cli.options import (
     PortOption,
     UsernameOption,
 )
+from axis_cam.models import Certificate, FirewallPolicy
+
+JsonFlag = Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")]
+
+
+def _on_off(value: bool | None, *, on: str = "Enabled", off: str = "Disabled") -> str:
+    if value is None:
+        return "[dim]not reported[/dim]"
+    return f"[green]{on}[/green]" if value else f"[red]{off}[/red]"
 
 
 @security_app.command("firewall")
@@ -32,69 +42,44 @@ def security_firewall(
     password: PasswordOption = None,
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
-    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
+    json_output: JsonFlag = False,
 ):
-    """Show firewall configuration."""
+    """Show firewall state: activated, default policy, active and pending rules."""
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_firewall():
         async with target.open() as dev:
-            config = await dev.firewall.get_config()
-
+            config = await dev.firewall.read()
             if json_output:
-                data = {
-                    "enabled": config.enabled,
-                    "default_policy": config.default_policy.value,
-                    "rules": [
-                        {
-                            "name": r.name,
-                            "enabled": r.enabled,
-                            "action": r.action.value,
-                            "source_address": r.source_address,
-                            "destination_port": r.destination_port,
-                            "protocol": r.protocol.value,
-                            "priority": r.priority,
-                        }
-                        for r in config.rules
-                    ],
-                }
-                emit_json(data)
+                emit_json(config.model_dump(mode="json"))
                 return
 
-            # Status panel
-            status = "[green]Enabled[/green]" if config.enabled else "[red]Disabled[/red]"
-            policy_color = "green" if config.default_policy.value == "allow" else "red"
-            policy_val = config.default_policy.value.upper()
-            panel_content = (
-                f"Status: {status}\nDefault Policy: [{policy_color}]{policy_val}[/{policy_color}]"
-            )
-            console.print(Panel(panel_content, title=f"Firewall: {target.host}"))
+            policy_colour = "green" if config.default_policy is FirewallPolicy.DROP else "yellow"
+            lines = [
+                f"Activated: {_on_off(config.activated, on='Yes', off='No')}",
+                f"Default policy: [{policy_colour}]{config.default_policy.value}[/{policy_colour}]",
+            ]
+            if config.test_time_left:
+                lines.append(f"Test mode: {config.test_time_left}s left")
+            console.print(Panel("\n".join(lines), title=f"Firewall: {target.host}"))
 
-            # Rules table
-            if config.rules:
-                table = Table(title=f"Firewall Rules ({len(config.rules)})")
-                table.add_column("Name", style="cyan")
-                table.add_column("Enabled", style="white")
-                table.add_column("Action", style="white")
-                table.add_column("Source", style="white")
-                table.add_column("Port", style="white")
-                table.add_column("Protocol", style="white")
-                table.add_column("Priority", style="dim")
-
-                for rule in config.rules:
-                    enabled = "[green]Yes[/green]" if rule.enabled else "[red]No[/red]"
-                    action_color = "green" if rule.action.value == "allow" else "red"
-                    table.add_row(
-                        rule.name,
-                        enabled,
-                        f"[{action_color}]{rule.action.value}[/{action_color}]",
-                        rule.source_address or "*",
-                        str(rule.destination_port) if rule.destination_port else "*",
-                        rule.protocol.value,
-                        str(rule.priority),
+            for title, rules in (
+                (f"Active rules ({len(config.rules)})", config.rules),
+                (f"Pending rules ({len(config.pending_rules)})", config.pending_rules),
+            ):
+                if not rules:
+                    continue
+                table = Table(title=title)
+                table.add_column("Type", style="cyan")
+                table.add_column("Match", style="white")
+                table.add_column("Limit", style="white")
+                for rule in rules:
+                    match = " ".join(
+                        filter(None, (rule.ip, rule.ip_range, rule.mac, rule.port, rule.port_range))
                     )
+                    table.add_row(rule.rule_type, match or "any", rule.limit or "-")
                 console.print(table)
-            else:
+            if not config.rules and not config.pending_rules:
                 console.print("[yellow]No firewall rules configured[/yellow]")
 
     run_async(_show_firewall())
@@ -108,75 +93,55 @@ def security_ssh(
     password: PasswordOption = None,
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
-    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
+    json_output: JsonFlag = False,
 ):
-    """Show SSH configuration."""
+    """Show SSH state: enabled (Network.SSH.Enabled) and the SSH users."""
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_ssh():
         async with target.open() as dev:
-            config = await dev.ssh.get_config()
-
+            config = await dev.ssh.read()
             if json_output:
-                data = {
-                    "enabled": config.enabled,
-                    "port": config.port,
-                    "root_login_enabled": config.root_login_enabled,
-                    "password_auth_enabled": config.password_auth_enabled,
-                    "authorized_keys": [
-                        {
-                            "name": k.name,
-                            "key_type": k.key_type,
-                            "fingerprint": k.fingerprint,
-                            "comment": k.comment,
-                        }
-                        for k in config.authorized_keys
-                    ],
-                }
-                emit_json(data)
+                emit_json(config.model_dump(mode="json"))
                 return
 
-            # Status panel
-            status = "[green]Enabled[/green]" if config.enabled else "[red]Disabled[/red]"
             console.print(
                 Panel(
-                    f"Status: {status}\nPort: {config.port}",
+                    f"Status: {_on_off(config.enabled)}\nSSH users: {len(config.users)}",
                     title=f"SSH Configuration: {target.host}",
                 )
             )
-
-            # Settings table
-            table = Table(title="SSH Settings", show_header=False)
-            table.add_column("Setting", style="cyan")
-            table.add_column("Value", style="white")
-            table.add_row(
-                "Root Login",
-                "[green]Enabled[/green]" if config.root_login_enabled else "[red]Disabled[/red]",
-            )
-            table.add_row(
-                "Password Auth",
-                "[green]Enabled[/green]" if config.password_auth_enabled else "[red]Disabled[/red]",
-            )
-            console.print(table)
-
-            # Authorized keys
-            if config.authorized_keys:
-                keys_table = Table(title=f"Authorized Keys ({len(config.authorized_keys)})")
-                keys_table.add_column("Name", style="cyan")
-                keys_table.add_column("Type", style="white")
-                keys_table.add_column("Fingerprint", style="dim")
-                keys_table.add_column("Comment", style="white")
-
-                for key in config.authorized_keys:
-                    keys_table.add_row(
-                        key.name,
-                        key.key_type,
-                        key.fingerprint[:20] + "..." if key.fingerprint else "-",
-                        key.comment or "-",
-                    )
-                console.print(keys_table)
+            if config.users:
+                table = Table(title=f"SSH users ({len(config.users)})")
+                table.add_column("Username", style="cyan")
+                table.add_column("Comment", style="white")
+                for user in config.users:
+                    table.add_row(user.username, user.comment or "-")
+                console.print(table)
 
     run_async(_show_ssh())
+
+
+def _cert_row(cert: Certificate) -> tuple[str, ...]:
+    valid_to = cert.not_after.strftime("%Y-%m-%d") if cert.not_after else "-"
+    if cert.not_after is None:
+        status = "[dim]unparsed[/dim]"
+    elif cert.expires_within(0):
+        status = "[red]expired[/red]"
+    elif cert.expires_within(90):
+        status = "[yellow]expires soon[/yellow]"
+    else:
+        status = "[green]valid[/green]"
+    subject = cert.subject if len(cert.subject) <= 40 else cert.subject[:37] + "..."
+    return (
+        cert.alias,
+        subject or "-",
+        "self-signed" if cert.self_signed else ("CA" if cert.is_ca else "issued"),
+        cert.key_type or "-",
+        cert.keystore or "-",
+        valid_to,
+        status,
+    )
 
 
 @security_app.command("certs")
@@ -187,70 +152,117 @@ def security_certs(
     password: PasswordOption = None,
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
-    json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
+    json_output: JsonFlag = False,
 ):
-    """Show certificate configuration."""
+    """Show the certificate store: device certificates, CA certificates, keystores."""
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_certs():
         async with target.open() as dev:
-            config = await dev.cert.get_config()
-
+            config = await dev.cert.read()
             if json_output:
-                data = {
-                    "https_cert_id": config.https_cert_id,
-                    "client_cert_enabled": config.client_cert_enabled,
-                    "certificates": [
-                        {
-                            "id": c.id,
-                            "subject": c.subject,
-                            "issuer": c.issuer,
-                            "cert_type": c.cert_type.value,
-                            "valid_from": c.valid_from.isoformat() if c.valid_from else None,
-                            "valid_to": c.valid_to.isoformat() if c.valid_to else None,
-                            "is_valid": c.is_valid,
-                        }
-                        for c in config.certificates
-                    ],
-                }
-                emit_json(data)
+                emit_json(config.model_dump(mode="json"))
                 return
 
-            # Status panel
-            cert_id = config.https_cert_id or "(default)"
-            client_auth = (
-                "[green]Enabled[/green]" if config.client_cert_enabled else "[red]Disabled[/red]"
+            stores = ", ".join(f"{k.id} ({k.security_level})" for k in config.keystores) or "-"
+            console.print(
+                Panel(
+                    f"Default keystore: [cyan]{config.default_keystore or '-'}[/cyan]\n"
+                    f"Keystores: {stores}\n"
+                    f"Device certificates: {len(config.certificates)}   "
+                    f"CA certificates: {len(config.ca_certificates)}",
+                    title=f"Certificates: {target.host}",
+                )
             )
-            panel_content = (
-                f"HTTPS Certificate ID: [cyan]{cert_id}[/cyan]\nClient Cert Auth: {client_auth}"
-            )
-            console.print(Panel(panel_content, title=f"Certificate Configuration: {target.host}"))
-
-            # Certificates table
             if config.certificates:
-                table = Table(title=f"Certificates ({len(config.certificates)})")
-                table.add_column("ID", style="cyan")
-                table.add_column("Subject", style="white")
-                table.add_column("Issuer", style="white")
-                table.add_column("Type", style="white")
-                table.add_column("Valid To", style="white")
-                table.add_column("Status", style="white")
-
+                table = Table(title=f"Device certificates ({len(config.certificates)})")
+                for column in ("Alias", "Subject", "Kind", "Key", "Keystore", "Valid to", "Status"):
+                    table.add_column(column, style="cyan" if column == "Alias" else "white")
                 for cert in config.certificates:
-                    valid_to = cert.valid_to.strftime("%Y-%m-%d") if cert.valid_to else "-"
-                    status = (
-                        "[green]Valid[/green]" if cert.is_valid else "[red]Invalid/Expired[/red]"
-                    )
-                    table.add_row(
-                        cert.id,
-                        cert.subject[:30] + "..." if len(cert.subject) > 30 else cert.subject,
-                        cert.issuer[:30] + "..." if len(cert.issuer) > 30 else cert.issuer,
-                        cert.cert_type.value,
-                        valid_to,
-                        status,
-                    )
+                    table.add_row(*_cert_row(cert))
                 console.print(table)
             else:
-                console.print("[yellow]No certificates found[/yellow]")
+                console.print("[yellow]No device certificates[/yellow]")
 
     run_async(_show_certs())
+
+
+_STATUS_STYLE = {
+    Status.PASS: "[green]pass[/green]",
+    Status.FAIL: "[bold red]FAIL[/bold red]",
+    Status.UNKNOWN: "[yellow]unknown[/yellow]",
+    Status.NOT_APPLICABLE: "[dim]n/a[/dim]",
+    Status.INFO: "[cyan]info[/cyan]",
+}
+
+
+def _print_audit(report: AuditReport, *, show_passing: bool) -> None:
+    counts = report.counts()
+    headline = (
+        f"[bold red]{counts['fail']} failing[/bold red]  "
+        f"[green]{counts['pass']} passing[/green]  "
+        f"[yellow]{counts['unknown']} unknown[/yellow]  "
+        f"[dim]{counts['n/a']} n/a[/dim]  [cyan]{counts['info']} info[/cyan]"
+    )
+    console.print(
+        Panel(
+            f"{report.product or '-'} · AXIS OS {report.firmware or '-'}\n{headline}\n"
+            f"[dim]Reference: AXIS OS Hardening Guide ({GUIDE_URL})[/dim]",
+            title=f"Security audit: {report.device_name}",
+        )
+    )
+    order = [Status.FAIL, Status.UNKNOWN, Status.INFO] + (
+        [Status.PASS, Status.NOT_APPLICABLE] if show_passing else []
+    )
+    table = Table(show_lines=False)
+    table.add_column("Status", style="white", no_wrap=True)
+    table.add_column("Sev", style="white", no_wrap=True)
+    table.add_column("Check", style="cyan", overflow="fold")
+    table.add_column("Evidence", style="white", overflow="fold")
+    table.add_column("Recommendation", style="white", overflow="fold")
+    for status in order:
+        for f in report.by_status(status):
+            table.add_row(
+                _STATUS_STYLE[f.status], f.severity.value, f.title, f.evidence, f.recommendation
+            )
+    console.print(table)
+    if not show_passing:
+        console.print("[dim]Passing and n/a checks hidden; --all shows them.[/dim]")
+
+
+@security_app.command("audit")
+def security_audit(
+    device: DeviceOption = None,
+    host: HostOption = None,
+    username: UsernameOption = None,
+    password: PasswordOption = None,
+    port: PortOption = None,
+    auth: AuthOption = AuthMode.AUTO,
+    json_output: JsonFlag = False,
+    show_all: Annotated[
+        bool, typer.Option("--all", "-a", help="Also list passing and n/a checks.")
+    ] = False,
+    no_fail: Annotated[
+        bool,
+        typer.Option("--no-fail", help="Exit 0 even when checks fail (for reporting pipelines)."),
+    ] = False,
+):
+    """Audit the device against the AXIS OS Hardening Guide. Read-only.
+
+    Each check reads a parameter or a REST API and says pass, FAIL, unknown
+    (could not read — never counted as either), n/a (the product does not have
+    the setting) or info. Exit status is 1 when any check fails.
+    """
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
+
+    async def _audit() -> AuditReport:
+        async with target.open() as dev:
+            return await run_audit(dev, device_name=device or target.host)
+
+    report = run_async(_audit())
+    if json_output:
+        emit_json(report.to_dict())
+    else:
+        _print_audit(report, show_passing=show_all)
+    if report.by_status(Status.FAIL) and not no_fail:
+        raise typer.Exit(1)

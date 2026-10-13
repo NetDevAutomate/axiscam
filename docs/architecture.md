@@ -91,6 +91,7 @@ axis_cam/
 ├── files.py             # write_private(): diagnostics reach disk as 0600
 ├── backup.py            # create_backup/verify_backup: snapshot directory + manifest
 ├── restore.py           # plan_param_restore/apply_param_restore: params-only restore
+├── audit.py             # run_audit: AXIS OS Hardening Guide checks composed from the readers
 │   api/onvif_users.py   # ONVIF Device Management SOAP on /vapix/services (second user database)
 ├── client.py            # VapixClient HTTP client
 ├── config.py            # Configuration management

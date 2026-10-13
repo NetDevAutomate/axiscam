@@ -334,6 +334,20 @@ axiscam security ssh --device camera1
 axiscam security cert --device camera1
 ```
 
+### Security Audit
+
+```bash
+# Audit a device against the AXIS OS Hardening Guide (read-only; exit 1 if any check fails)
+axiscam security audit --device camera1
+axiscam security audit --device camera1 --all          # include passing and n/a checks
+axiscam security audit --device camera1 --json --no-fail > audit.json
+```
+
+Every check reads a parameter or a REST API and reports `pass`, `FAIL`,
+`unknown` (could not read — never counted as pass or fail), `n/a` (the product
+does not have the setting) or `info`, with the evidence read and the guide's
+own remedy (usually a `param.cgi?action=update` call). Nothing is changed.
+
 ### Account Commands
 
 The first commands that **change** a device. Every write shows a *Planned change*
@@ -601,6 +615,7 @@ This tool covers the following AXIS VAPIX APIs:
 | network-pairing | Device pairing | Full |
 | pwdgrp.cgi (user-management) | User accounts: list, add, set password, set role, remove | Full (write) |
 | ONVIF Device Management (`/vapix/services`, SOAP) | ONVIF users: list, add, set password, set level, remove | Full (write) |
+| AXIS OS Hardening Guide (composition) | `security audit`: 34 findings over the parameter tree and the readers | Read |
 
 ## Development
 

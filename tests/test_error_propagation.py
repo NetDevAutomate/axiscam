@@ -43,11 +43,12 @@ class TestApiModulesPropagate:
             await api.get_config()
 
     @pytest.mark.asyncio
-    async def test_ssh_config_device_error_still_falls_back(self):
+    async def test_ssh_config_device_error_propagates(self):
+        # A reader that cannot read says so; "cannot read" is not "disabled".
         api = SshAPI(_client())
         api._get = AsyncMock(side_effect=AxisDeviceError("404"))
-        config = await api.get_config()
-        assert config.enabled is False
+        with pytest.raises(AxisDeviceError):
+            await api.get_config()
 
     @pytest.mark.asyncio
     async def test_param_get_connection_error_propagates(self):

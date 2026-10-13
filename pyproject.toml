@@ -27,6 +27,7 @@ dependencies = [
   "platformdirs>=4.0.0",
   "shellingham>=1.5.0",
   "defusedxml>=0.7.1",
+  "cryptography>=42.0.0",
 ]
 
 [project.optional-dependencies]
@@ -106,12 +107,12 @@ exclude_lines = [
   "raise NotImplementedError",
 ]
 # Ratchet: measured 53% on 2026-10-12; 60% after Phase 1, 63% after Phase 2,
-# 64.6% after Phase 3, 65.8% after Phase 4, 68% after Phase 5 and 69% after Phase 6
-# on 2026-10-13
+# 64.6% after Phase 3, 65.8% after Phase 4, 68% after Phase 5, 69% after Phase 6 and
+# 73% after Phase 7 on 2026-10-13
 # (see docs/plans/2026-10-12-admin-and-modularity-review.md).
 # Raise this as each phase adds tests; never lower it. Two points of headroom so
 # one platform-specific probe cannot flip the gate.
-fail_under = 67
+fail_under = 71
 
 [tool.mypy]
 python_version = "3.12"
