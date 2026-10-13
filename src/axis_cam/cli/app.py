@@ -57,7 +57,7 @@ app.add_typer(services_app, name="services")
 
 download_app = typer.Typer(
     name="download",
-    help="Download device reports and debug archives.",
+    help="Download the server report and the crash report (0600 files).",
     no_args_is_help=True,
 )
 app.add_typer(download_app, name="download")

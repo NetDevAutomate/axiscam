@@ -25,6 +25,7 @@ from axis_cam.cli.options import (
     UsernameOption,
 )
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
+from axis_cam.files import write_private
 from axis_cam.report import DeviceReport, collect_report, render_text
 
 
@@ -288,8 +289,8 @@ def list_params(
                 json_output = json.dumps(data, indent=2, sort_keys=True)
 
                 if output:
-                    output.write_text(json_output)
-                    console.print(f"[green]Exported parameters to:[/green] {output}")
+                    write_private(output, json_output.encode())
+                    console.print(f"[green]Exported parameters to:[/green] {output} (0600)")
                 else:
                     typer.echo(json_output)  # not console.print: Rich would wrap long lines
                 return
@@ -454,8 +455,8 @@ def device_report(
         output_str = json_mod.dumps(report.to_dict(), indent=2)
 
     if output:
-        output.write_text(output_str)
-        console.print(f"[green]Report saved to:[/green] {output}")
+        write_private(output, output_str.encode())
+        console.print(f"[green]Report saved to:[/green] {output} (0600)")
     else:
         # Plain echo: Rich would soft-wrap long lines and corrupt piped JSON.
         typer.echo(output_str)

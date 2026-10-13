@@ -17,6 +17,7 @@ from pathlib import Path
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
+from axis_cam.files import write_private
 from axis_cam.models import ServerReport, ServerReportFormat
 
 
@@ -109,12 +110,7 @@ class ServerReportAPI(BaseAPI):
         if report.error or not report.content:
             return False
 
-        output_path = Path(path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with output_path.open("wb") as f:
-            f.write(report.content)
-
+        write_private(path, report.content)
         return True
 
     async def get_debug_archive(
@@ -176,12 +172,7 @@ class ServerReportAPI(BaseAPI):
         if report.error or not report.content:
             return False
 
-        output_path = Path(path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-
-        with output_path.open("wb") as f:
-            f.write(report.content)
-
+        write_private(path, report.content)
         return True
 
     def _get_filename(self, format: ServerReportFormat) -> str:

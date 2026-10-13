@@ -17,6 +17,7 @@ from axis_cam.config import (
     get_config_file,
     load_config,
 )
+from axis_cam.files import write_private
 
 
 @app.command("config")
@@ -69,9 +70,9 @@ def init_config(
     # Create config directory
     config_dir.mkdir(parents=True, exist_ok=True)
 
-    # Write default config
-    config_file.write_text(create_default_config())
-    console.print(f"[green]Created config file:[/green] {config_file}")
+    # The config file is where device credentials end up: owner-only from the start.
+    write_private(config_file, create_default_config().encode())
+    console.print(f"[green]Created config file:[/green] {config_file} (0600)")
 
 
 @app.command("version")
