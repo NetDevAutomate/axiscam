@@ -92,10 +92,20 @@ app.add_typer(accounts_app, name="accounts")
 
 backup_app = typer.Typer(
     name="backup",
-    help="Configuration backups: create, show, verify.",
+    help="Configuration backups: create, show, verify, restore.",
     no_args_is_help=True,
 )
 app.add_typer(backup_app, name="backup")
+
+onvif_app = typer.Typer(
+    name="onvif",
+    help=(
+        "ONVIF user accounts (a separate database from VAPIX accounts): "
+        "list, add, set-password, set-level, remove."
+    ),
+    no_args_is_help=True,
+)
+app.add_typer(onvif_app, name="onvif")
 
 
 def run_async[T](coro: Coroutine[Any, Any, T]) -> T:

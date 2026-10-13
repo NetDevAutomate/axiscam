@@ -2086,6 +2086,57 @@ class UserAccounts(BaseModel):
         return [a for a in self.accounts if a.role is UserRole.ADMIN]
 
 
+class OnvifUserLevel(str, Enum):
+    """ONVIF ``tt:UserLevel`` (Core Specification; ``onvif.xsd``).
+
+    ``Administrator``, ``Operator`` and ``User`` are the three levels a client
+    creates. ``Anonymous`` is rejected by devices (``ter:AnonymousNotAllowed``)
+    and ``Extended`` is reserved; both are kept so a device that reports them
+    can be parsed.
+    """
+
+    ADMINISTRATOR = "Administrator"
+    OPERATOR = "Operator"
+    USER = "User"
+    ANONYMOUS = "Anonymous"
+    EXTENDED = "Extended"
+
+
+class OnvifAccount(BaseModel):
+    """One ONVIF user, as ``GetUsers`` reports it (never with a password).
+
+    Attributes:
+        username: ONVIF user name.
+        level: Access level.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    username: str
+    level: OnvifUserLevel
+
+
+class OnvifAccounts(BaseModel):
+    """The ONVIF user database — separate from the VAPIX accounts.
+
+    Attributes:
+        accounts: Users in the order the device listed them.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    accounts: list[OnvifAccount] = Field(default_factory=list)
+
+    def get(self, username: str) -> OnvifAccount | None:
+        """Return the user named ``username``, or ``None``."""
+        return next((a for a in self.accounts if a.username == username), None)
+
+    @property
+    def administrators(self) -> list[OnvifAccount]:
+        """Users with the Administrator level."""
+        return [a for a in self.accounts if a.level is OnvifUserLevel.ADMINISTRATOR]
+
+
 _SGRP_BY_ROLE: dict[UserRole | None, str] = {
     None: "",
     UserRole.VIEWER: "viewer",

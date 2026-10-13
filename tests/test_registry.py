@@ -19,7 +19,7 @@ from axis_cam.devices.base import AxisDevice
 from axis_cam.devices.camera import AxisCamera
 
 SPECS_DIR = Path(__file__).resolve().parent.parent / "src" / "specs"
-EXPECTED_MODULE_COUNT = 28
+EXPECTED_MODULE_COUNT = 29
 NON_RESOURCES = {"params", "logs", "serverreport"}
 
 

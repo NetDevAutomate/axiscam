@@ -33,6 +33,7 @@ GROUPS = [
     "stream",
     "accounts",
     "backup",
+    "onvif",
 ]
 TOP_LEVEL = {
     "info",

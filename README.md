@@ -359,6 +359,24 @@ Guard rails: removing or de-admining the account you are logged in as needs
 `--allow-lockout`; removing the only administrator is refused (a device with no
 administrator accepts an unauthenticated request to create one).
 
+### ONVIF User Commands
+
+ONVIF users are a separate database from the VAPIX accounts above: a VMS, NVR
+or Home Assistant speaking ONVIF logs in with one of these. Same write-safety
+pattern (plan → `--dry-run` / confirm → apply → verify); passwords are prompted
+for or read from stdin, never passed as arguments.
+
+```bash
+# List ONVIF users with their levels
+axiscam onvif list --device camera1
+
+# Create one for a VMS (prompts for the password), rotate it, demote it, remove it
+axiscam onvif add frigate --level operator --device camera1
+echo "$NEW_PW" | axiscam onvif set-password frigate --password-stdin --yes --device camera1
+axiscam onvif set-level frigate --level user --dry-run --device camera1   # asks for the user's password: the device requires it
+axiscam onvif remove frigate --device camera1
+```
+
 ### Service Commands
 
 ```bash
@@ -582,6 +600,7 @@ This tool covers the following AXIS VAPIX APIs:
 | crypto-policy | TLS/cipher configuration | Full |
 | network-pairing | Device pairing | Full |
 | pwdgrp.cgi (user-management) | User accounts: list, add, set password, set role, remove | Full (write) |
+| ONVIF Device Management (`/vapix/services`, SOAP) | ONVIF users: list, add, set password, set level, remove | Full (write) |
 
 ## Development
 

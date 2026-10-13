@@ -25,6 +25,19 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   that lists what a VAPIX backup cannot contain and what this version does not read.
 - `--auth auto|basic|digest`: `auto` follows the device's `WWW-Authenticate`
   challenge (Basic over HTTPS, Digest over HTTP).
+- `axiscam onvif list|add|set-password|set-level|remove` and `OnvifUsersAPI`:
+  the ONVIF user database (separate from VAPIX accounts) over the ONVIF Device
+  Management SOAP service on `/vapix/services`, which takes VAPIX administrator
+  credentials. Faults are decoded to their ONVIF codes (`AxisSoapFault`);
+  creates, level changes and deletes are verified by re-reading; the only
+  ONVIF Administrator is protected unless `--allow-lockout`. ONVIF users are
+  now part of `report --full` and `backup create` (names and levels only).
+  Live-tested on an M3216-LVE: create, rotate, level up, level down with a new
+  password, remove — each followed by an ONVIF login as the test user. A
+  `SetUser` must carry the password (Axis: `ter:InvalidArgs` without one), so
+  `set-level` asks for it.
+- `VapixClient.post_raw()` for SOAP/XML bodies (401/403 raised, other
+  statuses returned for the caller to read the fault).
 - `backup restore DIR`: restores the parameter tree from a backup through
   `param.cgi?action=update`, one parameter at a time with read-back verification,
   plan → `--dry-run` / confirm → apply; refuses a backup from another serial

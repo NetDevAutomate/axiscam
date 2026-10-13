@@ -122,6 +122,23 @@ class AxisApiNotSupportedError(AxisError):
     pass
 
 
+class AxisSoapFault(AxisDeviceError):
+    """A SOAP service answered with a ``Fault`` (HTTP 400 or 500 on Axis devices).
+
+    Attributes:
+        code: ``Code/Value`` (``env:Sender`` or ``env:Receiver``).
+        subcodes: Nested ``Subcode/Value`` entries, outermost first
+            (``["ter:InvalidArgVal", "ter:UsernameMissing"]``).
+        reason: ``Reason/Text`` as the device wrote it.
+    """
+
+    def __init__(self, message: str, *, code: str, subcodes: list[str], reason: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.subcodes = subcodes
+        self.reason = reason
+
+
 class AxisUserError(AxisDeviceError):
     """Raised when the device rejects an account operation.
 

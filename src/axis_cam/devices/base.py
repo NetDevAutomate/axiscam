@@ -25,6 +25,7 @@ from axis_cam.api.networkpairing import NetworkPairingAPI
 from axis_cam.api.ntp import NtpAPI
 from axis_cam.api.oauth import OAuthAPI
 from axis_cam.api.oidc import OidcAPI
+from axis_cam.api.onvif_users import OnvifUsersAPI
 from axis_cam.api.param import ParamAPI
 from axis_cam.api.recording import RecordingAPI
 from axis_cam.api.registry import ResourceModule, build_modules
@@ -133,6 +134,7 @@ class AxisDevice(ABC):
     networkpairing: NetworkPairingAPI
     stream: StreamAPI
     users: UsersAPI
+    onvif_users: OnvifUsersAPI
 
     def __init__(
         self,
