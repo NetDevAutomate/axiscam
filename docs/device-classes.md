@@ -249,6 +249,7 @@ The attribute name is the module's registered `name`:
 | `device.crypto_policy` | `CryptoPolicyAPI` | `get_config()` → `CryptoPolicyConfig` |
 | `device.networkpairing` | `NetworkPairingAPI` | `get_config()` → `NetworkPairingConfig` |
 | `device.stream` | `StreamAPI` | `get_diagnostics()` → `StreamDiagnostics` |
+| `device.users` | `UsersAPI` | `list()` → `UserAccounts`; **writes:** `add()`, `set_password()`, `set_role()`, `remove()` |
 
 Two views over the same modules exist for generic code:
 

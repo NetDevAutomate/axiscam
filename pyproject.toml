@@ -103,11 +103,11 @@ exclude_lines = [
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
 ]
-# Ratchet: measured 53% on 2026-10-12, 60% after Phase 1 on 2026-10-13
-# (see docs/plans/2026-10-12-admin-and-modularity-review.md).
+# Ratchet: measured 53% on 2026-10-12, 60% after Phase 1 and 63% after Phase 2
+# on 2026-10-13 (see docs/plans/2026-10-12-admin-and-modularity-review.md).
 # Raise this as each phase adds tests; never lower it. Two points of headroom so
 # one platform-specific probe cannot flip the gate.
-fail_under = 58
+fail_under = 61
 
 [tool.mypy]
 python_version = "3.12"

@@ -185,7 +185,17 @@ Decisions taken for Phase 1:
 - **Device options stay per command.** Typer's shared-callback pattern would move `--device` before the subcommand (`axiscam --device x info`), a UX break for no gain. `ResolvedDevice` becomes `DeviceContext` with Digest/Basic folded in so `open()` takes no arguments.
 - **`Exportable` / `Restorable` are not defined yet.** They get a Protocol when Phase 4/5 has a second implementer; an abstraction with one implementation is a fake nobody wants.
 
-### Phase 2 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+### Phase 2 — complete on branch `phase-0-security-fixes` (2026-10-13)
+
+| Step | Commit | Status |
+|---|---|---|
+| 2.1 `UsersAPI` on `pwdgrp.cgi`; models, exceptions, `_get_text`/`_post_form`; registry 28 | `d566f28` | ✅ 51 tests incl. respx wire test (password in body, empty query string) |
+| 2.2 `cli/confirm.py` write-safety helper; `accounts list\|add\|set-password\|set-role\|remove` | `1109fbf` | ✅ 25 CLI tests: dry-run writes nothing and never prompts; declining exits 1 with no write; `--yes` writes; refusals are one line |
+| 2.3 docs, coverage ratchet 58 → 61, this table | — | ✅ |
+
+After Phase 2: 631 tests pass (from 553) · 63.2% coverage (from 60.0) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged).
+
+Found and fixed along the way: `docs/api-modules.md` documented **66 methods that do not exist** across 22 classes (`SshAPI.enable()`, `FirewallAPI.add_rule()`, `CertAPI.install_certificate()`, …) — aspirational write APIs written as if shipped. Removed by cross-checking every documented method against `inspect.getmembers` of the real class, and the check is now `tests/test_docs.py` (also asserts every registered module has a section in `api-modules.md` and a row in `device-classes.md`).
 
 Contract verified against the VAPIX System settings page on 2026-10-13 (fetched, not recalled): `action=add|update|remove|get`; `user` 1–14 chars `[A-Za-z0-9]`; `pwd` 1–64 chars, ASCII `0x20–0x7E` under `strict_pwd=1`; `grp=users` (`root` only for the initial account); `sgrp` one of the six role strings; success bodies `Created|Modified|Removed account <user>.`; error bodies at **HTTP 200**: `Error: consult the system log file.`, `Error: action operation type.`, `Error: account user name.`, `Error: malformed action operation, <action>.`, `Error: invalid password.`; initial-admin errors are 401. The doc itself says not to put credentials in the URL. Discovery id `user-management` belongs to the apidiscovery CGI, not `/config/discover/apis.json`, so `api_id = None` (never gated), consistent with the other CGI modules.
 

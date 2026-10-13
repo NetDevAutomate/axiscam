@@ -20,7 +20,7 @@ This document provides detailed documentation for all VAPIX API modules in the `
 
 ## Overview
 
-The `axis_cam.api` package contains 29 API modules, each encapsulating a specific domain of the AXIS VAPIX API. All modules inherit from `BaseAPI` and use composition with `VapixClient` for HTTP communication.
+The `axis_cam.api` package contains 28 API modules, each encapsulating a specific domain of the AXIS VAPIX API. All modules inherit from `BaseAPI` and use composition with `VapixClient` for HTTP communication.
 
 ```mermaid
 flowchart TB
@@ -189,12 +189,8 @@ Access and modify device parameters via the param.cgi endpoint.
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_params(group)` | `dict` | Get parameter group |
-| `get_all_params()` | `dict` | Get all parameters |
-| `set_param(name, value)` | `bool` | Set parameter value |
 | `get_friendly_name()` | `str` | Device friendly name |
 | `get_location()` | `str` | Device location |
-| `export_params()` | `dict` | Export all as dict |
 
 **Example:**
 ```python
@@ -220,8 +216,6 @@ Manage device time settings and timezone configuration.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_info()` | `TimeInfo` | Current time and timezone |
-| `set_timezone(tz)` | `bool` | Set timezone |
-| `sync_with_ntp()` | `bool` | Force NTP sync |
 
 **Example:**
 ```python
@@ -250,11 +244,6 @@ Manage device firewall rules.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `FirewallConfig` | Current firewall state |
-| `enable()` | `bool` | Enable firewall |
-| `disable()` | `bool` | Disable firewall |
-| `add_rule(rule)` | `bool` | Add firewall rule |
-| `remove_rule(id)` | `bool` | Remove rule by ID |
-| `list_rules()` | `list[FirewallRule]` | List all rules |
 
 ---
 
@@ -273,9 +262,41 @@ Configure SSH access.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `SshConfig` | SSH settings |
-| `enable()` | `bool` | Enable SSH |
-| `disable()` | `bool` | Disable SSH |
-| `set_port(port)` | `bool` | Change SSH port |
+
+---
+
+### UsersAPI
+
+**Module:** `api/users.py` — the first write-capable module.
+
+Manage VAPIX user accounts. Registered as `users` and a resource, so
+`report --full` lists accounts (names and roles only; never passwords).
+
+| Endpoint | Type | Description |
+|----------|------|-------------|
+| `/axis-cgi/pwdgrp.cgi` | CGI (GET for `action=get`, form POST for writes) | Accounts and group membership |
+
+**Methods:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `list()` / `read()` | `UserAccounts` | Every account with role and PTZ right |
+| `add(username, password, role, *, ptz, comment, strict_password)` | `UserAccount` | Create and verify |
+| `set_password(username, password, *, strict_password)` | `None` | Rotate a password (acknowledged, not verifiable by reading) |
+| `set_role(username, role, *, ptz, allow_lockout)` | `UserAccount` | Change role and verify |
+| `remove(username, *, allow_lockout)` | `None` | Remove and verify |
+
+**Write-safety rules** (enforced here, not in the CLI):
+
+- Credentials are sent as a form-encoded POST body, never in the URL.
+- The CGI reports failure with HTTP 200 and an `Error:` body → `AxisUserError`.
+- `add`/`set_role`/`remove` re-read the list and raise if the device's
+  acknowledgement does not match reality.
+- Removing or de-admining the authenticated account raises `AxisLockoutError`
+  unless `allow_lockout=True`; removing or de-admining the only administrator
+  is always refused.
+- `validate_username()` / `validate_password()` run before any request
+  (`ValueError`).
 
 ---
 
@@ -295,9 +316,6 @@ Configure SNMP settings.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `SnmpConfig` | SNMP settings |
-| `enable()` | `bool` | Enable SNMP |
-| `disable()` | `bool` | Disable SNMP |
-| `set_community(read, write)` | `bool` | Set community strings |
 
 ---
 
@@ -316,10 +334,6 @@ Manage SSL/TLS certificates.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `CertConfig` | Certificate info |
-| `list_certificates()` | `list[Certificate]` | All certificates |
-| `get_certificate(id)` | `Certificate` | Specific certificate |
-| `install_certificate(cert, key)` | `str` | Install new cert |
-| `delete_certificate(id)` | `bool` | Remove certificate |
 
 ---
 
@@ -338,8 +352,6 @@ Configure TLS/cipher settings.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `CryptoPolicyConfig` | TLS settings |
-| `set_min_tls_version(version)` | `bool` | Set minimum TLS |
-| `set_max_tls_version(version)` | `bool` | Set maximum TLS |
 | `get_cipher_suites()` | `list[str]` | Available ciphers |
 
 ---
@@ -363,9 +375,6 @@ Extended network configuration.
 |--------|---------|-------------|
 | `get_config()` | `NetworkConfig` | Network settings |
 | `get_interfaces()` | `list[NetworkInterface]` | Network interfaces |
-| `get_dns_config()` | `DnsConfig` | DNS settings |
-| `set_dns_servers(primary, secondary)` | `bool` | Configure DNS |
-| `set_hostname(hostname)` | `bool` | Set hostname |
 
 ---
 
@@ -385,8 +394,6 @@ LLDP neighbor discovery for switch port mapping.
 |--------|---------|-------------|
 | `get_info()` | `LldpInfo` | LLDP status and neighbors |
 | `get_neighbors()` | `list[LldpNeighbor]` | Discovered neighbors |
-| `enable()` | `bool` | Enable LLDP |
-| `disable()` | `bool` | Disable LLDP |
 
 **Example:**
 ```python
@@ -413,11 +420,6 @@ NTP time synchronization.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `NtpConfig` | NTP settings |
-| `enable()` | `bool` | Enable NTP |
-| `disable()` | `bool` | Disable NTP |
-| `add_server(server)` | `bool` | Add NTP server |
-| `remove_server(server)` | `bool` | Remove NTP server |
-| `force_sync()` | `bool` | Force immediate sync |
 
 ---
 
@@ -437,8 +439,6 @@ Device pairing configuration.
 |--------|---------|-------------|
 | `get_config()` | `NetworkPairingConfig` | Pairing status |
 | `get_paired_devices()` | `list[PairedDevice]` | Paired devices |
-| `pair_device(host, credentials)` | `bool` | Pair new device |
-| `unpair_device(id)` | `bool` | Remove pairing |
 
 ---
 
@@ -491,8 +491,6 @@ Audio multicast streaming control.
 |--------|---------|-------------|
 | `get_config()` | `AudioMulticastConfig` | Multicast settings |
 | `get_groups()` | `list[MulticastGroup]` | Multicast groups |
-| `create_group(config)` | `str` | Create new group |
-| `delete_group(id)` | `bool` | Delete group |
 
 ---
 
@@ -514,10 +512,6 @@ Recording group and profile configuration.
 |--------|---------|-------------|
 | `get_config()` | `RecordingConfig` | Recording settings |
 | `get_groups()` | `list[RecordingGroup]` | Recording groups |
-| `create_group(config)` | `str` | Create group |
-| `delete_group(id)` | `bool` | Delete group |
-| `start_recording(group_id)` | `bool` | Start recording |
-| `stop_recording(group_id)` | `bool` | Stop recording |
 
 ---
 
@@ -537,9 +531,6 @@ Remote object storage destinations.
 |--------|---------|-------------|
 | `get_config()` | `RemoteStorageConfig` | Storage settings |
 | `get_destinations()` | `list[StorageDestination]` | Storage targets |
-| `add_destination(config)` | `str` | Add storage target |
-| `remove_destination(id)` | `bool` | Remove target |
-| `test_connection(id)` | `bool` | Test connectivity |
 
 ---
 
@@ -582,8 +573,6 @@ Video analytics configuration.
 |--------|---------|-------------|
 | `get_config()` | `AnalyticsConfig` | Analytics settings |
 | `get_profiles()` | `list[AnalyticsProfile]` | Analytics profiles |
-| `create_profile(config)` | `str` | Create profile |
-| `delete_profile(id)` | `bool` | Delete profile |
 | `get_scenarios()` | `list[Scenario]` | Detection scenarios |
 
 ---
@@ -603,9 +592,6 @@ Analytics MQTT event publishing.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `AnalyticsMqttConfig` | Publishing settings |
-| `enable()` | `bool` | Enable publishing |
-| `disable()` | `bool` | Disable publishing |
-| `set_broker(host, port)` | `bool` | Configure broker |
 
 ---
 
@@ -628,8 +614,6 @@ Action rules configuration.
 |--------|---------|-------------|
 | `get_config()` | `ActionConfig` | Action rules |
 | `get_rules()` | `list[ActionRule]` | All rules |
-| `create_rule(config)` | `str` | Create rule |
-| `delete_rule(id)` | `bool` | Delete rule |
 | `get_templates()` | `list[ActionTemplate]` | Rule templates |
 
 ---
@@ -650,9 +634,6 @@ MQTT event bridge configuration.
 |--------|---------|-------------|
 | `get_config()` | `MqttBridgeConfig` | MQTT settings |
 | `get_clients()` | `list[MqttClient]` | MQTT clients |
-| `create_client(config)` | `str` | Create client |
-| `delete_client(id)` | `bool` | Delete client |
-| `test_connection(id)` | `bool` | Test connectivity |
 
 ---
 
@@ -672,8 +653,6 @@ Virtual host configuration.
 |--------|---------|-------------|
 | `get_config()` | `VirtualHostConfig` | Virtual host settings |
 | `get_hosts()` | `list[VirtualHost]` | Configured hosts |
-| `create_host(config)` | `str` | Create host |
-| `delete_host(id)` | `bool` | Delete host |
 
 ---
 
@@ -692,9 +671,6 @@ Device geolocation settings.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `GeolocationConfig` | Location settings |
-| `set_coordinates(lat, lon, alt)` | `bool` | Set GPS coords |
-| `set_direction(heading)` | `bool` | Set compass heading |
-| `clear()` | `bool` | Clear location |
 
 ---
 
@@ -789,9 +765,6 @@ OpenID Connect configuration.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `OidcConfig` | OIDC settings |
-| `enable()` | `bool` | Enable OIDC |
-| `disable()` | `bool` | Disable OIDC |
-| `set_provider(issuer, client_id)` | `bool` | Configure provider |
 
 ---
 
@@ -810,10 +783,6 @@ OAuth 2.0 Client Credentials Grant.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `OAuthConfig` | OAuth settings |
-| `enable()` | `bool` | Enable OAuth |
-| `disable()` | `bool` | Disable OAuth |
-| `create_client(config)` | `str` | Create client |
-| `delete_client(id)` | `bool` | Delete client |
 
 ---
 

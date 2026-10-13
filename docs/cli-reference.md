@@ -667,6 +667,59 @@ flowchart LR
 
 ---
 
+### accounts
+
+User accounts via `pwdgrp.cgi`. These are the first commands that write to a
+device, and they all follow the same write-safety pattern:
+
+```mermaid
+flowchart LR
+    READ[read current accounts] --> PLAN[show Planned change]
+    PLAN -->|--dry-run| STOP[exit 0, nothing changed]
+    PLAN -->|--yes| APPLY
+    PLAN -->|prompt: Apply this change?| Q{y?}
+    Q -->|n| ABORT[Aborted, exit 1]
+    Q -->|y| APPLY[apply]
+    APPLY --> VERIFY[re-read and verify] --> OUT[print verified result]
+```
+
+```bash
+axiscam accounts list [--json] [OPTIONS]
+axiscam accounts add ACCOUNT --role viewer|operator|admin [--ptz] [--comment TEXT]
+                              [--password-stdin] [--no-strict] [--yes] [--dry-run] [OPTIONS]
+axiscam accounts set-password ACCOUNT [--password-stdin] [--no-strict] [--yes] [--dry-run] [OPTIONS]
+axiscam accounts set-role ACCOUNT --role ROLE [--ptz] [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+axiscam accounts remove ACCOUNT [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--role`, `-r` | `viewer`, `operator` or `admin` (VAPIX roles are cumulative) |
+| `--ptz/--no-ptz` | Grant PTZ control (default: no) |
+| `--password-stdin` | Read the **new account's** password from standard input (one line). Without it, the password is prompted for, hidden, after the plan is accepted. It is never a command-line argument. |
+| `--no-strict` | Do not send `strict_pwd=1`; the device will not enforce its passphrase policy |
+| `--allow-lockout` | Permit removing or de-admining the account you are logged in as |
+| `--yes`, `-y` | Apply without the confirmation prompt |
+| `--dry-run` | Show the planned change and exit 0 |
+
+**Rules the library enforces** (the plan warns about them in advance):
+
+- The device reports failures with HTTP 200 and an `Error:` body; these become one-line errors (`invalid password` → passphrase policy, `account user name` → character rules).
+- `add`, `set-role` and `remove` are verified by re-reading the account list; `set-password` cannot be verified by reading, so the device's acknowledgement is the result — test by logging in.
+- Removing or de-admining the authenticated account is refused without `--allow-lockout`.
+- Removing or de-admining the **only** administrator is refused outright.
+- Account names: 1–14 characters, `A-Z a-z 0-9`. Passwords: 1–64 characters, printable ASCII under `strict_pwd`.
+
+**Examples:**
+```bash
+$ axiscam accounts list --device front_camera
+$ axiscam accounts add ops --role operator --device front_camera          # prompts for the password
+$ echo "$PW" | axiscam accounts set-password ops --password-stdin -y --device front_camera
+$ axiscam accounts remove ops --dry-run --device front_camera
+```
+
+---
+
 ### Configuration Commands
 
 #### config

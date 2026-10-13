@@ -82,6 +82,8 @@ axis_cam/
 │   ├── context.py       # DeviceContext + resolve_device_config
 │   ├── options.py       # Shared option aliases
 │   ├── device.py        # info, status, apis, lldp, params, location, report
+│   ├── confirm.py       # Write safety: plan → dry-run / confirm → apply
+│   ├── accounts.py      # accounts list/add/set-password/set-role/remove
 │   ├── config.py        # config, init, migrate, devices, version
 │   └── <group>.py       # logs, network, security, services, automation, media, stream, download
 ├── report.py            # Registry-driven device report
@@ -115,7 +117,8 @@ axis_cam/
 │   ├── oauth.py         # OAuth 2.0
 │   ├── virtualhost.py   # Virtual hosts
 │   ├── crypto_policy.py # TLS/cipher settings
-│   └── networkpairing.py # Device pairing
+│   ├── networkpairing.py # Device pairing
+│   └── users.py         # User accounts (pwdgrp.cgi) — write-capable
 └── devices/             # Device type implementations
     ├── __init__.py
     ├── base.py          # AxisDevice (modules built from the registry)

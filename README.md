@@ -12,6 +12,7 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Device Reports**: Generate comprehensive JSON/YAML configuration reports
 - **Diagnostic Downloads**: Server reports and debug archives for AXIS support
 - **Security Configuration**: Firewall, SSH, certificates, SNMP, NTP
+- **Account Management**: list, add, rotate passwords, change roles, remove — with plan/confirm/verify and a lockout guard
 - **Authentication**: Digest (default) and Basic authentication support
 - **Async**: httpx-based async client; one device per command today (fleet fan-out is planned)
 - **Configuration Management**: YAML config with environment variable interpolation
@@ -328,6 +329,31 @@ axiscam security ssh --device camera1
 axiscam security cert --device camera1
 ```
 
+### Account Commands
+
+The first commands that **change** a device. Every write shows a *Planned change*
+panel first; `--dry-run` stops there, otherwise you confirm (`--yes` skips the
+prompt), the change is applied and verified by re-reading the device.
+
+```bash
+# List accounts with roles
+axiscam accounts list --device camera1
+
+# Create an operator (the new password is prompted for, hidden; never on the command line)
+axiscam accounts add ops --role operator --device camera1
+
+# Rotate a password non-interactively (one line on stdin)
+echo "$NEW_PW" | axiscam accounts set-password ops --password-stdin --yes --device camera1
+
+# Change a role, remove an account, preview first
+axiscam accounts set-role ops --role viewer --ptz --dry-run --device camera1
+axiscam accounts remove ops --device camera1
+```
+
+Guard rails: removing or de-admining the account you are logged in as needs
+`--allow-lockout`; removing the only administrator is refused (a device with no
+administrator accepts an unauthenticated request to create one).
+
 ### Service Commands
 
 ```bash
@@ -505,6 +531,7 @@ This tool covers the following AXIS VAPIX APIs:
 | virtualhost | Virtual host configuration | Full |
 | crypto-policy | TLS/cipher configuration | Full |
 | network-pairing | Device pairing | Full |
+| pwdgrp.cgi (user-management) | User accounts: list, add, set password, set role, remove | Full (write) |
 
 ## Development
 
