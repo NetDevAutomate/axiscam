@@ -92,6 +92,9 @@ Options available for most commands that interact with devices.
 | `--port` | `-P` | `int` | config port, else `443` | TCP port. An explicit value always overrides the device's configured port |
 | `--auth` | - | `auto\|basic\|digest` | `auto` | Follow the device's challenge, or force a scheme |
 | `--json` | `-j` | `bool` | `False` | Output as JSON |
+| `--all` | - | `bool` | `False` | Fleet: run against every configured device (read-only commands: `info`, `security audit`, `accounts list`, `onvif list`, `backup create`) |
+| `--group` | `-g` | `str` | - | Fleet: devices whose `groups:` tags contain NAME or whose `type` is NAME |
+| `--concurrency` | - | `int` | `4` (`2` for backups) | Fleet: devices worked on at once |
 
 ### Option Precedence
 
@@ -492,7 +495,7 @@ flowchart LR
 axiscam security firewall [--json] [OPTIONS]   # activated, default policy, active and pending rules
 axiscam security ssh [--json] [OPTIONS]        # Network.SSH.Enabled + the SSH users
 axiscam security certs [--json] [OPTIONS]      # device and CA certificates (parsed from PEM), keystores
-axiscam security audit [--all] [--json] [--no-fail] [OPTIONS]
+axiscam security audit [--show-all] [--json] [--no-fail] [--all | --group NAME] [--concurrency N] [OPTIONS]
 ```
 
 **`audit`** checks the device against the [AXIS OS Hardening Guide](https://help.axis.com/en-us/axis-os-hardening-guide)
@@ -516,13 +519,20 @@ online).
 | `info` | Recorded for the record (administrators, ONVIF users, firmware) |
 
 Exit status is 1 when any check fails; `--no-fail` for reporting pipelines.
-Passing and n/a checks are hidden unless `--all`. `--json` gives
+Passing and n/a checks are hidden unless `--show-all`. `--json` gives
 `{counts, findings[{id, title, status, severity, evidence, recommendation, reference}]}`.
+
+With `--all` / `--group` the audit runs across the fleet and prints a summary
+(failing / passing / unknown per device) and a matrix of the checks that fail
+or are unknown on at least one device, devices as columns. Exit 1 if any check
+fails anywhere or any device could not be audited. JSON:
+`{devices: {name: {host, ok, result | error}}, failed: [...]}`.
 
 **Examples:**
 ```bash
 $ axiscam security audit --device front_camera
 $ axiscam security audit --device front_camera --json --no-fail | jq '.findings[] | select(.status=="fail") | .id'
+$ axiscam security audit --group camera               # the cameras, as a checks × devices matrix
 ```
 
 ### services

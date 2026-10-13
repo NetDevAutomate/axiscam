@@ -14,7 +14,18 @@ from axis_cam.cli.app import (
     run_async,
     security_app,
 )
-from axis_cam.cli.context import resolve_device_config
+from axis_cam.cli.context import resolve_device_config, select_targets
+from axis_cam.cli.fleet import (
+    AllOption,
+    ConcurrencyOption,
+    FleetResult,
+    GroupOption,
+    finish_fleet,
+    fleet_json,
+    is_fleet,
+    print_fleet_errors,
+    run_fleet_sync,
+)
 from axis_cam.cli.options import (
     AuthOption,
     DeviceOption,
@@ -230,6 +241,65 @@ def _print_audit(report: AuditReport, *, show_passing: bool) -> None:
         console.print("[dim]Passing and n/a checks hidden; --all shows them.[/dim]")
 
 
+def _print_fleet_audit(results: list[FleetResult[AuditReport]]) -> None:
+    """Checks as rows, devices as columns; only checks that fail or are unknown somewhere."""
+    reports = [r for r in results if r.ok and r.value is not None]
+    headline = Table(title="Security audit: fleet summary")
+    for column in ("Device", "Product", "AXIS OS", "Failing", "Passing", "Unknown"):
+        headline.add_column(column, style="cyan" if column == "Device" else "white")
+    for r in results:
+        if r.ok and r.value is not None:
+            c = r.value.counts()
+            headline.add_row(
+                r.name,
+                r.value.product or "-",
+                r.value.firmware or "-",
+                f"[bold red]{c['fail']}[/bold red]" if c["fail"] else "0",
+                str(c["pass"]),
+                f"[yellow]{c['unknown']}[/yellow]" if c["unknown"] else "0",
+            )
+        else:
+            headline.add_row(r.name, "[red]error[/red]", "-", "-", "-", "-")
+    console.print(headline)
+    if not reports:
+        return
+
+    short = {
+        Status.PASS: "[green]·[/green]",
+        Status.FAIL: "[bold red]FAIL[/bold red]",
+        Status.UNKNOWN: "[yellow]?[/yellow]",
+        Status.NOT_APPLICABLE: "[dim]n/a[/dim]",
+        Status.INFO: "[cyan]i[/cyan]",
+    }
+    by_device = {r.name: {f.check_id: f for f in r.value.findings} for r in reports if r.value}
+    check_titles: dict[str, str] = {}
+    for r in reports:
+        for f in r.value.findings if r.value else []:
+            check_titles.setdefault(f.check_id, f.title)
+    rows = [
+        cid
+        for cid in check_titles
+        if any(
+            (f := by_device[d].get(cid)) is not None and f.status in (Status.FAIL, Status.UNKNOWN)
+            for d in by_device
+        )
+    ]
+    matrix = Table(
+        title="Checks failing or unknown on at least one device (· pass, ? unknown)",
+        caption="Check ids as in --json; `security audit --device NAME` for evidence and remedies.",
+    )
+    matrix.add_column("Check", style="cyan", no_wrap=True)
+    for name in by_device:
+        matrix.add_column(name, justify="center", no_wrap=True)
+    for cid in rows:
+        cells = [
+            short[by_device[d][cid].status] if cid in by_device[d] else "[dim]-[/dim]"
+            for d in by_device
+        ]
+        matrix.add_row(cid, *cells)
+    console.print(matrix)
+
+
 @security_app.command("audit")
 def security_audit(
     device: DeviceOption = None,
@@ -240,19 +310,49 @@ def security_audit(
     auth: AuthOption = AuthMode.AUTO,
     json_output: JsonFlag = False,
     show_all: Annotated[
-        bool, typer.Option("--all", "-a", help="Also list passing and n/a checks.")
+        bool, typer.Option("--show-all", "-a", help="Also list passing and n/a checks.")
     ] = False,
     no_fail: Annotated[
         bool,
         typer.Option("--no-fail", help="Exit 0 even when checks fail (for reporting pipelines)."),
     ] = False,
+    all_devices: AllOption = False,
+    group: GroupOption = None,
+    concurrency: ConcurrencyOption = 4,
 ):
-    """Audit the device against the AXIS OS Hardening Guide. Read-only.
+    """Audit a device — or the fleet (--all / --group) — against the AXIS OS Hardening Guide.
 
-    Each check reads a parameter or a REST API and says pass, FAIL, unknown
-    (could not read — never counted as either), n/a (the product does not have
-    the setting) or info. Exit status is 1 when any check fails.
+    Read-only. Each check reads a parameter or a REST API and says pass, FAIL,
+    unknown (could not read — never counted as either), n/a (the product does
+    not have the setting) or info. Exit status is 1 when any check fails or,
+    for a fleet, any device could not be audited.
     """
+    if is_fleet(all_devices, group):
+        targets = select_targets(
+            all_devices=all_devices,
+            group=group,
+            username=username,
+            password=password,
+            port=port,
+            auth_mode=auth,
+        )
+        names = {ctx.host: name for name, ctx in targets}
+
+        async def _audit_one(dev) -> AuditReport:
+            return await run_audit(dev, device_name=names.get(dev.client.host, dev.client.host))
+
+        results = run_fleet_sync(targets, _audit_one, concurrency=concurrency, label="Auditing")
+        if json_output:
+            emit_json(fleet_json(results, lambda report: report.to_dict()))
+        else:
+            _print_fleet_audit(results)
+            print_fleet_errors(results)
+        any_failing = any(
+            r.ok and r.value is not None and r.value.by_status(Status.FAIL) for r in results
+        )
+        finish_fleet(results, also_fail=any_failing and not no_fail)
+        return
+
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _audit() -> AuditReport:

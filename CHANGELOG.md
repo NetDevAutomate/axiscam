@@ -25,6 +25,13 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   that lists what a VAPIX backup cannot contain and what this version does not read.
 - `--auth auto|basic|digest`: `auto` follows the device's `WWW-Authenticate`
   challenge (Basic over HTTPS, Digest over HTTP).
+- Fleet fan-out: `--all` / `--group NAME` on the read-only commands `info`,
+  `security audit`, `accounts list`, `onvif list` and `backup create`, with
+  bounded concurrency (`--concurrency`). Devices carry `groups:` tags in the
+  config (the type is always a group). A failing device is a row, not an
+  abort; exit 1 if any device failed. `security audit --all` prints a
+  checks × devices matrix. `--show-all` replaces `security audit --all` for
+  listing passing checks.
 - `axiscam security audit` and `axis_cam.audit`: the AXIS OS Hardening Guide
   (July 2026) as checks over what the library already reads — the guide's own
   "Basic hardening via VAPIX API" parameters plus HTTPS-only, authentication

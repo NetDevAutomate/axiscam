@@ -108,11 +108,11 @@ exclude_lines = [
 ]
 # Ratchet: measured 53% on 2026-10-12; 60% after Phase 1, 63% after Phase 2,
 # 64.6% after Phase 3, 65.8% after Phase 4, 68% after Phase 5, 69% after Phase 6 and
-# 73% after Phase 7 on 2026-10-13
+# 73% after Phase 7a and 74% after 7b on 2026-10-13
 # (see docs/plans/2026-10-12-admin-and-modularity-review.md).
 # Raise this as each phase adds tests; never lower it. Two points of headroom so
 # one platform-specific probe cannot flip the gate.
-fail_under = 71
+fail_under = 72
 
 [tool.mypy]
 python_version = "3.12"

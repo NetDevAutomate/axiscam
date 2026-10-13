@@ -15,7 +15,17 @@ from axis_cam.auth import AuthMode
 from axis_cam.backup import BackupManifest, create_backup, load_manifest, verify_backup
 from axis_cam.cli.app import backup_app, console, emit_json, run_async
 from axis_cam.cli.confirm import WritePlan, confirm_write
-from axis_cam.cli.context import resolve_device_config
+from axis_cam.cli.context import resolve_device_config, select_targets
+from axis_cam.cli.fleet import (
+    AllOption,
+    ConcurrencyOption,
+    GroupOption,
+    finish_fleet,
+    fleet_json,
+    is_fleet,
+    print_fleet_errors,
+    run_fleet_sync,
+)
 from axis_cam.cli.options import (
     AuthOption,
     DeviceOption,
@@ -100,12 +110,67 @@ def backup_create(
             "--with-server-report", help="Also download the server report (zip with image)."
         ),
     ] = False,
+    all_devices: AllOption = False,
+    group: GroupOption = None,
+    concurrency: ConcurrencyOption = 2,
+    json_output: JsonOption = False,
 ):
-    """Back up everything the device lets us read into a new directory.
+    """Back up everything the device lets us read — one device, or the fleet (--all / --group).
 
     Reads only; nothing on the device changes. The manifest lists what was
-    read and - as importantly - what a VAPIX backup cannot contain.
+    read and - as importantly - what a VAPIX backup cannot contain. A fleet
+    run writes one backup directory per device under --output.
     """
+    if is_fleet(all_devices, group):
+        targets = select_targets(
+            all_devices=all_devices,
+            group=group,
+            username=username,
+            password=password,
+            port=port,
+            auth_mode=auth,
+        )
+        names = {ctx.host: name for name, ctx in targets}
+
+        async def _backup_one(dev) -> tuple[Path, BackupManifest]:
+            return await create_backup(
+                dev,
+                output,
+                name=names.get(dev.client.host, dev.client.host),
+                include_server_report=with_server_report,
+            )
+
+        results = run_fleet_sync(targets, _backup_one, concurrency=concurrency, label="Backing up")
+        if json_output:
+            emit_json(
+                fleet_json(
+                    results,
+                    lambda pair: {"directory": str(pair[0]), **pair[1].to_dict()},
+                )
+            )
+        else:
+            table = Table(title=f"Fleet backup → {output.resolve()}")
+            for column in ("Device", "Directory", "Files", "Read errors", "Not advertised"):
+                table.add_column(
+                    column, style="cyan" if column == "Device" else "white", overflow="fold"
+                )
+            for r in results:
+                if r.ok and r.value is not None:
+                    backup_dir, manifest = r.value
+                    table.add_row(
+                        r.name,
+                        backup_dir.name,
+                        str(len(manifest.files)),
+                        (f"[yellow]{len(manifest.errors)}[/yellow]" if manifest.errors else "0"),
+                        str(len(manifest.skipped)),
+                    )
+                else:
+                    table.add_row(r.name, "[red]error[/red]", "-", "-", "-")
+            console.print(table)
+            print_fleet_errors(results)
+        finish_fleet(results)
+        return
+
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _create():

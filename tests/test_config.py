@@ -556,3 +556,29 @@ class TestLoadEnvConfigTransport:
                 assert config.devices["default"].https is True
             finally:
                 load_config.cache_clear()
+
+
+class TestDeviceGroups:
+    """``groups`` tags and the type both select a device for ``--group``."""
+
+    def test_defaults_to_no_tags(self):
+        config = DeviceConfig(host="10.0.0.1", username="u", password="p")
+        assert config.groups == []
+        assert config.in_group("camera") is True  # the type is always a group
+        assert config.in_group("front") is False
+
+    def test_tags_match_case_insensitively(self):
+        config = DeviceConfig(host="10.0.0.1", username="u", password="p", groups=["Front", "pool"])
+        assert (
+            config.in_group("front") and config.in_group("POOL") and not config.in_group("garden")
+        )
+
+    def test_groups_from_yaml(self, tmp_path, monkeypatch):
+        path = tmp_path / "config.yaml"
+        path.write_text(
+            "devices:\n  cam:\n    host: 10.0.0.1\n    username: u\n    password: p\n"
+            "    type: camera\n    groups: [front, pool]\n"
+        )
+        monkeypatch.setenv("AXISCAM_CONFIG", str(path))
+        config = load_config(path)
+        assert config.devices["cam"].groups == ["front", "pool"]

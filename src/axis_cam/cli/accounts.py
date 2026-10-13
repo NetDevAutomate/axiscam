@@ -16,7 +16,17 @@ from axis_cam.api.users import validate_password, validate_username
 from axis_cam.auth import AuthMode
 from axis_cam.cli.app import accounts_app, console, emit_json, run_async
 from axis_cam.cli.confirm import WritePlan, confirm_write, read_secret
-from axis_cam.cli.context import DeviceContext, resolve_device_config
+from axis_cam.cli.context import DeviceContext, resolve_device_config, select_targets
+from axis_cam.cli.fleet import (
+    AllOption,
+    ConcurrencyOption,
+    GroupOption,
+    finish_fleet,
+    fleet_json,
+    is_fleet,
+    print_fleet_errors,
+    run_fleet_sync,
+)
 from axis_cam.cli.options import (
     AuthOption,
     DeviceOption,
@@ -125,8 +135,52 @@ def accounts_list(
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
+    all_devices: AllOption = False,
+    group: GroupOption = None,
+    concurrency: ConcurrencyOption = 4,
 ):
-    """List user accounts with their roles."""
+    """List user accounts with their roles — one device, or the fleet (--all / --group)."""
+    if is_fleet(all_devices, group):
+        targets = select_targets(
+            all_devices=all_devices,
+            group=group,
+            username=username,
+            password=password,
+            port=port,
+            auth_mode=auth,
+        )
+        results = run_fleet_sync(
+            targets, lambda dev: dev.users.list(), concurrency=concurrency, label="Reading"
+        )
+        if json_output:
+            emit_json(fleet_json(results, lambda accounts: accounts.model_dump(mode="json")))
+        else:
+            table = Table(title="Fleet accounts")
+            for column in ("Device", "Administrators", "Operators", "Viewers", "No role"):
+                table.add_column(
+                    column, style="cyan" if column == "Device" else "white", overflow="fold"
+                )
+            for r in results:
+                if r.ok and r.value is not None:
+                    by_role = {
+                        role: ", ".join(a.username for a in r.value.accounts if a.role is role)
+                        or "-"
+                        for role in (UserRole.ADMIN, UserRole.OPERATOR, UserRole.VIEWER, None)
+                    }
+                    table.add_row(
+                        r.name,
+                        f"[bold red]{by_role[UserRole.ADMIN]}[/bold red]",
+                        by_role[UserRole.OPERATOR],
+                        by_role[UserRole.VIEWER],
+                        by_role[None],
+                    )
+                else:
+                    table.add_row(r.name, "[red]error[/red]", "-", "-", "-")
+            console.print(table)
+            print_fleet_errors(results)
+        finish_fleet(results)
+        return
+
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _list() -> UserAccounts:

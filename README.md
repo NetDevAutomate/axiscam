@@ -15,7 +15,7 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Security Configuration**: Firewall, SSH, certificates, SNMP, NTP
 - **Account Management**: list, add, rotate passwords, change roles, remove — with plan/confirm/verify and a lockout guard
 - **Authentication**: Digest (default) and Basic authentication support
-- **Async**: httpx-based async client; one device per command today (fleet fan-out is planned)
+- **Async**: httpx-based async client; read-only commands fan out across the fleet (`--all` / `--group`)
 - **Configuration Management**: YAML config with environment variable interpolation
 - **Legacy Support**: Automatic migration from `~/.config/axis/` to `~/.config/axiscam/`
 
@@ -84,6 +84,7 @@ devices:
     vendor: axis
     model: M3216-LVE
     type: camera
+    groups: [front, pool]   # optional tags for --group; the type is always a group
     address: 192.168.1.10
     port: 443
     https: true          # default; never inferred from the port. Set false only for plain-HTTP devices
@@ -334,12 +335,32 @@ axiscam security ssh --device camera1
 axiscam security cert --device camera1
 ```
 
+### Fleet Commands
+
+Read-only commands accept `--all` (every configured device) or `--group NAME`
+(devices whose `groups:` tags contain NAME, or whose `type` is NAME) and run
+across the fleet with bounded concurrency (`--concurrency`, default 4; 2 for
+backups). A device that fails is one row in the result, not the end of the
+run; the exit status is 1 if any device failed.
+
+```bash
+axiscam info --all                          # inventory: product, serial, AXIS OS, SoC
+axiscam security audit --group camera       # checks × devices matrix, exit 1 if anything fails
+axiscam accounts list --all                 # who is an administrator where
+axiscam onvif list --all --json             # the ONVIF user databases
+axiscam backup create --all -o ~/backups    # one backup directory per device
+```
+
+Writes (`accounts add`, `onvif set-password`, `backup restore`, …) stay one
+device at a time: the plan → confirm → apply → verify pattern is per device.
+
 ### Security Audit
 
 ```bash
 # Audit a device against the AXIS OS Hardening Guide (read-only; exit 1 if any check fails)
 axiscam security audit --device camera1
-axiscam security audit --device camera1 --all          # include passing and n/a checks
+axiscam security audit --device camera1 --show-all     # include passing and n/a checks
+axiscam security audit --all                           # the whole fleet: checks × devices matrix
 axiscam security audit --device camera1 --json --no-fail > audit.json
 ```
 
