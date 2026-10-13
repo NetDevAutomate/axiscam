@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phase 0 complete; Phase 1 in progress (see [Phase status](#phase-status))
+- **Status:** Phases 0–1 complete; Phase 2 in progress (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -185,10 +185,23 @@ Decisions taken for Phase 1:
 - **Device options stay per command.** Typer's shared-callback pattern would move `--device` before the subcommand (`axiscam --device x info`), a UX break for no gain. `ResolvedDevice` becomes `DeviceContext` with Digest/Basic folded in so `open()` takes no arguments.
 - **`Exportable` / `Restorable` are not defined yet.** They get a Protocol when Phase 4/5 has a second implementer; an abstraction with one implementation is a fake nobody wants.
 
+### Phase 2 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+
+Contract verified against the VAPIX System settings page on 2026-10-13 (fetched, not recalled): `action=add|update|remove|get`; `user` 1–14 chars `[A-Za-z0-9]`; `pwd` 1–64 chars, ASCII `0x20–0x7E` under `strict_pwd=1`; `grp=users` (`root` only for the initial account); `sgrp` one of the six role strings; success bodies `Created|Modified|Removed account <user>.`; error bodies at **HTTP 200**: `Error: consult the system log file.`, `Error: action operation type.`, `Error: account user name.`, `Error: malformed action operation, <action>.`, `Error: invalid password.`; initial-admin errors are 401. The doc itself says not to put credentials in the URL. Discovery id `user-management` belongs to the apidiscovery CGI, not `/config/discover/apis.json`, so `api_id = None` (never gated), consistent with the other CGI modules.
+
+| Step | Scope | Definition of done (countable) |
+|---|---|---|
+| 2.1 | `models.UserRole`/`UserAccount`/`UserAccounts`; `api/users.py` `UsersAPI` (`list`, `add`, `set_password`, `set_role`, `remove`, `read`), registered as `users`; `BaseAPI._get_text`/`_post_form`; `AxisUserError`, `AxisLockoutError` | Parses the doc's `action=get` example to 4 accounts with the right roles; every write sends form data (respx proves the password is in the body and absent from the URL); every `Error:` body raises `AxisUserError`; add/set_role/remove re-read and verify; lockout guard refuses self-removal, self-de-admin and removing the last admin unless `allow_lockout=True`; registry count 28 |
+| 2.2 | `cli/confirm.py` write-safety helper (`plan → --dry-run / --yes / prompt`); `accounts list\|add\|set-password\|set-role\|remove`; new passwords only via hidden prompt or `--password-stdin` | `--dry-run` makes no write call and exits 0; declining makes no write call and exits 1; `--yes` writes; lockout errors are one line; 9 groups in `--help` |
+| 2.3 | Docs (cli-reference, README, api-modules, device-classes), plan status, coverage ratchet | `fail_under` at the new measured floor |
+
+Write-safety pattern (restore reuses it in Phase 5): read current state → compute a human-readable plan → `--dry-run` prints it and exits 0 → otherwise confirm (`--yes` skips) → apply → re-read and verify → print the verified result. Secrets never appear in argv.
+
 ## Decisions and open questions
 
 - **Decided:** secure by default — `https` defaults to `True`; plain HTTP is an explicit `https: false` in config. Ad-hoc `--host` use is HTTPS only; a `--http` option was *not* added in Phase 1 (it would widen every command signature for an ad-hoc-only case) — add it in Phase 2 alongside the write-safety flags if a plain-HTTP device actually needs ad-hoc access.
 - **Decided:** coverage threshold ratchets from the measured baseline rather than being set at an aspirational number nobody can pass (that path leads to `--no-verify`).
+- **Open (filed 2026-10-13):** `VapixClient` itself still defaults to `use_https=False, port=80, use_digest_auth=False`; Phase 0 made `AxisDevice` secure by default but anyone constructing the client directly gets plain HTTP + Basic. Flip the client defaults to match (`use_https=True, port=443`) and refuse Basic-over-HTTP at the client level too; `tests/test_client.py` constructs the client bare in many places and needs the same sweep.
 - **Open:** whether to flip the library default `ssl_verify=False` → `True`. It will break self-signed setups; needs an `ssl_ca_bundle` option first. Not changed in Phase 1; revisit with Phase 2's `DeviceContext` additions.
 - **Fixed (2026-10-13):** every `--json` output and `params --export` to stdout went through `console.print`, which soft-wraps at Rich's console width and interprets `[...]` as markup, corrupting piped JSON (reproduced: a 300-character value split mid-string under an 80-column console). All 14 sites now use `emit_json()` / `typer.echo`; `tests/test_cli_commands.py::test_json_output_is_not_wrapped_at_console_width` guards it.
 - **Open:** whether `download debug` is byte-for-byte the web UI's crash report. One DevTools capture settles it.

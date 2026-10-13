@@ -93,3 +93,23 @@ class BaseAPI:
             Raw response bytes.
         """
         return await self._client.get_raw(path, params)
+
+    async def _get_text(self, path: str, params: dict[str, Any] | None = None) -> str:
+        """Perform a GET request and return the body as text.
+
+        For legacy CGIs that answer ``text/plain``. HTTP-level errors are
+        raised by the client; a CGI that reports failure with a 200 body is
+        the caller's job to inspect.
+        """
+        response = await self._client.get(path, params)
+        return response.text
+
+    async def _post_form(self, path: str, data: dict[str, Any]) -> str:
+        """POST form-encoded data and return the body as text.
+
+        Use this for CGIs that take credentials or other secrets: form data
+        travels in the request body, never in the URL (device access logs,
+        proxies, shell history).
+        """
+        response = await self._client.post(path, data=data)
+        return response.text

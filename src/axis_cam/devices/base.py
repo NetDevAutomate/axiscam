@@ -35,6 +35,7 @@ from axis_cam.api.ssh import SshAPI
 from axis_cam.api.storage import RemoteStorageAPI
 from axis_cam.api.stream import StreamAPI
 from axis_cam.api.time import TimeAPI
+from axis_cam.api.users import UsersAPI
 from axis_cam.api.virtualhost import VirtualHostAPI
 from axis_cam.client import VapixClient
 from axis_cam.exceptions import AxisConfigError
@@ -130,6 +131,7 @@ class AxisDevice(ABC):
     crypto_policy: CryptoPolicyAPI
     networkpairing: NetworkPairingAPI
     stream: StreamAPI
+    users: UsersAPI
 
     def __init__(
         self,

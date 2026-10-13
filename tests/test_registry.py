@@ -19,7 +19,7 @@ from axis_cam.devices.base import AxisDevice
 from axis_cam.devices.camera import AxisCamera
 
 SPECS_DIR = Path(__file__).resolve().parent.parent / "src" / "specs"
-EXPECTED_MODULE_COUNT = 27
+EXPECTED_MODULE_COUNT = 28
 NON_RESOURCES = {"params", "logs", "serverreport"}
 
 
@@ -99,7 +99,7 @@ class TestRegistryContents:
         # These work on firmware whose discovery omits the REST id (c1410 lists
         # neither `time` nor `param`), so they must never be filtered out.
         modules = registered_modules()
-        for name in ("device_info", "time", "params", "logs", "serverreport"):
+        for name in ("device_info", "time", "params", "logs", "serverreport", "users"):
             assert modules[name].api_id is None, name
 
 

@@ -31,6 +31,7 @@ API Modules:
     - crypto_policy: Cryptographic policy settings
     - networkpairing: Network pairing
     - stream: Stream diagnostics (RTSP, RTP, profiles)
+    - users: User accounts (pwdgrp.cgi) - the first write-capable module
 
 Every module class is decorated with ``@register`` and imported here, which is
 what populates the registry ``AxisDevice`` builds its modules from. A module
@@ -70,6 +71,7 @@ from axis_cam.api.ssh import SshAPI
 from axis_cam.api.storage import RemoteStorageAPI
 from axis_cam.api.stream import StreamAPI
 from axis_cam.api.time import TimeAPI
+from axis_cam.api.users import UsersAPI
 from axis_cam.api.virtualhost import VirtualHostAPI
 
 __all__ = [
@@ -100,6 +102,7 @@ __all__ = [
     "SshAPI",
     "StreamAPI",
     "TimeAPI",
+    "UsersAPI",
     "VideoAnalyticsAPI",
     "VirtualHostAPI",
     "build_modules",

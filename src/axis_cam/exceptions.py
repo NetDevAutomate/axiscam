@@ -108,3 +108,31 @@ class AxisApiNotSupportedError(AxisError):
     """
 
     pass
+
+
+class AxisUserError(AxisDeviceError):
+    """Raised when the device rejects an account operation.
+
+    ``pwdgrp.cgi`` reports failures with HTTP 200 and a body starting
+    ``Error:`` (invalid password, bad user name, unknown action), so the
+    HTTP layer cannot see them; the users module raises this instead.
+
+    Example:
+        >>> try:
+        ...     await camera.users.add("joe", "weak", UserRole.VIEWER)
+        ... except AxisUserError as e:
+        ...     print(f"Device refused: {e}")
+    """
+
+    pass
+
+
+class AxisLockoutError(AxisConfigError):
+    """Raised when an account change would lock the caller out of the device.
+
+    Removing or de-admining the account the client is authenticated as, or
+    removing the last administrator, is refused unless the caller passes
+    ``allow_lockout=True`` explicitly.
+    """
+
+    pass
