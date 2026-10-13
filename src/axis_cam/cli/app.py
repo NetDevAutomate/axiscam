@@ -90,6 +90,13 @@ accounts_app = typer.Typer(
 )
 app.add_typer(accounts_app, name="accounts")
 
+backup_app = typer.Typer(
+    name="backup",
+    help="Configuration backups: create, show, verify.",
+    no_args_is_help=True,
+)
+app.add_typer(backup_app, name="backup")
+
 
 def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine synchronously, reporting AXIS errors cleanly.

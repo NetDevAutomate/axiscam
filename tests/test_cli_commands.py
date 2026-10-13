@@ -31,6 +31,7 @@ GROUPS = [
     "media",
     "stream",
     "accounts",
+    "backup",
 ]
 TOP_LEVEL = {
     "info",
