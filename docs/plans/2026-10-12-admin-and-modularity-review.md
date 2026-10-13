@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–1 complete; Phase 2 in progress (see [Phase status](#phase-status))
+- **Status:** Phases 0–2 complete; Phase 3 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -191,7 +191,7 @@ Decisions taken for Phase 1:
 |---|---|---|
 | 2.1 `UsersAPI` on `pwdgrp.cgi`; models, exceptions, `_get_text`/`_post_form`; registry 28 | `d566f28` | ✅ 51 tests incl. respx wire test (password in body, empty query string) |
 | 2.2 `cli/confirm.py` write-safety helper; `accounts list\|add\|set-password\|set-role\|remove` | `1109fbf` | ✅ 25 CLI tests: dry-run writes nothing and never prompts; declining exits 1 with no write; `--yes` writes; refusals are one line |
-| 2.3 docs, coverage ratchet 58 → 61, this table | — | ✅ |
+| 2.3 docs, 66 phantom methods removed + `tests/test_docs.py`, coverage ratchet 58 → 61, this table | `10f30de` | ✅ |
 
 After Phase 2: 631 tests pass (from 553) · 63.2% coverage (from 60.0) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged).
 
