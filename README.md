@@ -373,7 +373,7 @@ axiscam onvif list --device camera1
 # Create one for a VMS (prompts for the password), rotate it, demote it, remove it
 axiscam onvif add frigate --level operator --device camera1
 echo "$NEW_PW" | axiscam onvif set-password frigate --password-stdin --yes --device camera1
-axiscam onvif set-level frigate --level user --dry-run --device camera1
+axiscam onvif set-level frigate --level user --dry-run --device camera1   # asks for the user's password: the device requires it
 axiscam onvif remove frigate --device camera1
 ```
 

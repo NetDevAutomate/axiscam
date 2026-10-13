@@ -62,6 +62,13 @@ FAULT_USERNAME_MISSING = _reply(
     "</SOAP-ENV:Reason><SOAP-ENV:Detail><SOAP-ENV:Text>Username not recognized</SOAP-ENV:Text>"
     "</SOAP-ENV:Detail></SOAP-ENV:Fault>"
 )
+# Verbatim: SetUser without a Password element (HTTP 400) — the live cycle found this.
+FAULT_INVALID_ARGS = _reply(
+    "<SOAP-ENV:Fault><SOAP-ENV:Code><SOAP-ENV:Value>SOAP-ENV:Sender</SOAP-ENV:Value>"
+    "<SOAP-ENV:Subcode><SOAP-ENV:Value>ter:InvalidArgs</SOAP-ENV:Value></SOAP-ENV:Subcode>"
+    '</SOAP-ENV:Code><SOAP-ENV:Reason><SOAP-ENV:Text xml:lang="en">Invalid argument'
+    "</SOAP-ENV:Text></SOAP-ENV:Reason></SOAP-ENV:Fault>"
+)
 # Verbatim: an operation the device does not implement (HTTP 500).
 FAULT_NOT_SUPPORTED = _reply(
     "<SOAP-ENV:Fault><SOAP-ENV:Code><SOAP-ENV:Value>SOAP-ENV:Receiver</SOAP-ENV:Value>"
@@ -95,8 +102,9 @@ class TestEnvelope:
         assert "<tt:Password>p&amp;w&lt;d</tt:Password>" in xml  # escaped, never raw
         assert "<tt:UserLevel>Operator</tt:UserLevel>" in xml
 
-    def test_password_omitted_keeps_the_element_out(self):
-        assert "Password" not in user_element("vms", OnvifUserLevel.USER, None)
+    def test_user_element_always_carries_a_password(self):
+        # Axis answers ter:InvalidArgs to a SetUser without one (live, 12.11.118).
+        assert "<tt:Password>pw</tt:Password>" in user_element("vms", OnvifUserLevel.USER, "pw")
 
     def test_username_validation(self):
         validate_onvif_username("vms-01")
@@ -141,6 +149,11 @@ class TestParsing:
     def test_fault_without_known_meaning(self):
         fault = parse_fault(FAULT_NOT_SUPPORTED, 500)
         assert fault is not None and "does not implement" in str(fault)
+
+    def test_invalid_args_fault(self):
+        fault = parse_fault(FAULT_INVALID_ARGS, 400)
+        assert fault is not None and fault.subcodes == ["ter:InvalidArgs"]
+        assert "missing or malformed" in str(fault)
 
     def test_non_fault_bodies_are_not_faults(self):
         assert parse_fault(_users(), 200) is None
@@ -236,7 +249,7 @@ class TestSetPassword:
 
 
 class TestSetLevel:
-    async def test_set_level_omits_the_password_and_verifies(self):
+    async def test_set_level_sends_level_and_password_and_verifies(self):
         api, client = _api(
             [
                 _response(_users(("onvif", "Administrator"), ("vms", "User"))),
@@ -245,16 +258,24 @@ class TestSetLevel:
             ]
         )
 
-        updated = await api.set_level("vms", OnvifUserLevel.OPERATOR)
+        updated = await api.set_level("vms", OnvifUserLevel.OPERATOR, "Keep-pass")
 
         assert updated.level is OnvifUserLevel.OPERATOR
         sent = _sent(client, 1)
-        assert "<tds:SetUser>" in sent and "Password" not in sent
+        assert "<tds:SetUser>" in sent
+        assert "<tt:Password>Keep-pass</tt:Password>" in sent
+        assert "<tt:UserLevel>Operator</tt:UserLevel>" in sent
+
+    async def test_set_level_without_password_is_what_the_device_refuses(self):
+        # Simulate the real reply to a password-less SetUser so the meaning is checked end to end.
+        api, _ = _api([_response(_users(("vms", "User"))), _response(FAULT_INVALID_ARGS, 400)])
+        with pytest.raises(AxisSoapFault, match="ter:InvalidArgs"):
+            await api.set_level("vms", OnvifUserLevel.OPERATOR, "Keep-pass")
 
     async def test_demoting_the_only_administrator_is_refused(self):
         api, client = _api([_response(_users(("onvif", "Administrator"), ("vms", "User")))])
         with pytest.raises(AxisLockoutError, match="only ONVIF Administrator"):
-            await api.set_level("onvif", OnvifUserLevel.USER)
+            await api.set_level("onvif", OnvifUserLevel.USER, "Keep-pass")
         assert client.post_raw.await_count == 1
 
     async def test_demoting_with_allow_lockout(self):
@@ -265,7 +286,7 @@ class TestSetLevel:
                 _response(_users(("onvif", "User"))),
             ]
         )
-        updated = await api.set_level("onvif", OnvifUserLevel.USER, allow_lockout=True)
+        updated = await api.set_level("onvif", OnvifUserLevel.USER, "Keep-pass", allow_lockout=True)
         assert updated.level is OnvifUserLevel.USER
 
     async def test_demoting_when_another_administrator_exists(self):
@@ -276,7 +297,14 @@ class TestSetLevel:
                 _response(_users(("a", "Operator"), ("b", "Administrator"))),
             ]
         )
-        assert (await api.set_level("a", OnvifUserLevel.OPERATOR)).level is OnvifUserLevel.OPERATOR
+        updated = await api.set_level("a", OnvifUserLevel.OPERATOR, "Keep-pass")
+        assert updated.level is OnvifUserLevel.OPERATOR
+
+    async def test_empty_password_rejected_before_any_request(self):
+        api, client = _api([])
+        with pytest.raises(ValueError):
+            await api.set_level("vms", OnvifUserLevel.OPERATOR, "")
+        client.post_raw.assert_not_awaited()
 
 
 class TestRemove:

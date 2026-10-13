@@ -20,6 +20,11 @@ Transport, verified on AXIS OS 12.11.118 and 11.11.192 on 2026-10-13:
 - ``GetUsers`` never returns passwords (the specification forbids it), so a
   password change is acknowledged, not read back; create/level/delete are
   verified by re-reading the list.
+- ``SetUser`` **must carry a** ``Password``: without one the device answers
+  HTTP 400 ``ter:InvalidArgs`` (live, 12.11.118). The specification lets a
+  device treat a missing password as "clear it"; Axis refuses instead. So a
+  level change needs the user's password — the current one to keep ONVIF
+  clients working, or a new one to rotate it in the same step.
 
 Requests are built from a fixed template with escaped values and parsed with
 defusedxml; no SOAP library is involved.
@@ -59,6 +64,7 @@ _FAULT_MEANINGS: dict[str, str] = {
     "ter:UsernameTooShort": "the user name is too short",
     "ter:TooManyUsers": "the device has reached its maximum number of ONVIF users",
     "ter:AnonymousNotAllowed": "the Anonymous level cannot be assigned",
+    "ter:InvalidArgs": "a required argument is missing or malformed (a SetUser needs the password)",
     "ter:NotAuthorized": "this account may not manage ONVIF users",
     "ter:ActionNotSupported": "the device does not implement this operation",
 }
@@ -93,13 +99,13 @@ def soap_envelope(body: str) -> str:
     )
 
 
-def user_element(username: str, level: OnvifUserLevel, password: str | None) -> str:
-    """A ``tds:User`` element; ``Password`` is omitted when ``None`` (``SetUser`` keeps it)."""
-    parts = [f"<tt:Username>{html.escape(username)}</tt:Username>"]
-    if password is not None:
-        parts.append(f"<tt:Password>{html.escape(password)}</tt:Password>")
-    parts.append(f"<tt:UserLevel>{level.value}</tt:UserLevel>")
-    return f"<tds:User>{''.join(parts)}</tds:User>"
+def user_element(username: str, level: OnvifUserLevel, password: str) -> str:
+    """A ``tds:User`` element for ``CreateUsers`` / ``SetUser`` (password always present)."""
+    return (
+        f"<tds:User><tt:Username>{html.escape(username)}</tt:Username>"
+        f"<tt:Password>{html.escape(password)}</tt:Password>"
+        f"<tt:UserLevel>{level.value}</tt:UserLevel></tds:User>"
+    )
 
 
 def parse_fault(xml: str, status_code: int) -> AxisSoapFault | None:
@@ -210,23 +216,34 @@ class OnvifUsersAPI(BaseAPI):
         )
 
     async def set_level(
-        self, username: str, level: OnvifUserLevel, *, allow_lockout: bool = False
+        self,
+        username: str,
+        level: OnvifUserLevel,
+        password: str,
+        *,
+        allow_lockout: bool = False,
     ) -> OnvifAccount:
-        """``SetUser`` with a new level and no password (the password is kept), then verify.
+        """``SetUser`` with a new level and the user's password, then verify the level.
+
+        The device will not change a level without a password (``ter:InvalidArgs``)
+        and ONVIF never returns one, so the caller must supply it: the current
+        password keeps the user's ONVIF clients working, a new one rotates it.
 
         Args:
             username: Existing ONVIF user.
             level: New level.
+            password: The user's password (current or new).
             allow_lockout: Permit removing the last Administrator level.
 
         Raises:
-            ValueError: Invalid user name, or the Anonymous level.
+            ValueError: Invalid user name or password, or the Anonymous level.
             AxisUserError: The user does not exist, or the level did not change.
             AxisLockoutError: The change would leave no ONVIF Administrator
                 (without ``allow_lockout``).
             AxisSoapFault: The device refused.
         """
         validate_onvif_username(username)
+        validate_onvif_password(password)
         if level is OnvifUserLevel.ANONYMOUS:
             raise ValueError("the Anonymous level cannot be assigned (ter:AnonymousNotAllowed)")
         accounts = await self.list()
@@ -238,7 +255,7 @@ class OnvifUsersAPI(BaseAPI):
             and level is not OnvifUserLevel.ADMINISTRATOR
         ):
             self._guard_last_administrator(accounts, current, "change the level of", allow_lockout)
-        await self._call(f"<tds:SetUser>{user_element(username, level, None)}</tds:SetUser>")
+        await self._call(f"<tds:SetUser>{user_element(username, level, password)}</tds:SetUser>")
         return await self._verify(username, level, verb="updated")
 
     async def remove(self, username: str, *, allow_lockout: bool = False) -> None:

@@ -356,7 +356,7 @@ ONVIF error codes; `AxisSoapFault` carries `code`, `subcodes` and `reason`.
 | `list()` / `read()` | `OnvifAccounts` | Every ONVIF user with its level |
 | `add(username, password, level)` | `OnvifAccount` | `CreateUsers`, then verify by re-reading |
 | `set_password(username, password)` | `None` | `SetUser` with the current level (acknowledged, not verifiable by reading) |
-| `set_level(username, level, *, allow_lockout)` | `OnvifAccount` | `SetUser` without a password (kept), then verify |
+| `set_level(username, level, password, *, allow_lockout)` | `OnvifAccount` | `SetUser` with the level and the user's password (the device refuses a `SetUser` without one), then verify |
 | `remove(username, *, allow_lockout)` | `None` | `DeleteUsers`, then verify it is gone |
 
 **Write-safety rules** (enforced here, not in the CLI):
@@ -373,6 +373,19 @@ ONVIF error codes; `AxisSoapFault` carries `code`, `subcodes` and `reason`.
   administrative control.
 - `validate_onvif_username()` / `validate_onvif_password()` run before any
   request; the `Anonymous` level is refused (`ter:AnonymousNotAllowed`).
+- A `SetUser` **must carry the password** — Axis answers HTTP 400
+  `ter:InvalidArgs` without one (live, 12.11.118), where the specification
+  would have allowed "clear it". So `set_level` takes the password: the current
+  one keeps the user's ONVIF clients working, a new one rotates it in the same
+  step.
+
+Live write cycle, `back_of_house` (M3216-LVE, 12.11.118, 2026-10-13), test user
+`axiscam-test`, every step followed by an HTTP Digest login *as that user* to
+`/onvif/device_service` (`GetDeviceInformation`): add as `User` → login works,
+wrong password 401, `GetUsers` refused (needs Administrator); `set_password` →
+old password 401, new one works; `set_level` Operator with the same password →
+still logs in; `set_level` User with a new password → old 401, new works;
+`remove` → 401, list identical to the start.
 
 ---
 

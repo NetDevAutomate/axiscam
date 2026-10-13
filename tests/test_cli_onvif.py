@@ -161,12 +161,35 @@ class TestSetPassword:
 
 
 class TestSetLevel:
-    def test_applies_and_prints_verified_result(self, no_config, users):
-        result = _run(users, ["set-level", "vms", "--level", "user", "--yes"])
+    def test_applies_with_the_password_and_prints_verified_result(self, no_config, users):
+        result = _run(
+            users,
+            ["set-level", "vms", "--level", "user", "--yes", "--password-stdin"],
+            input="Keep-pass\n",
+        )
 
         assert result.exit_code == 0, result.output
-        users.set_level.assert_awaited_once_with("vms", OnvifUserLevel.USER, allow_lockout=False)
+        users.set_level.assert_awaited_once_with(
+            "vms", OnvifUserLevel.USER, "Keep-pass", allow_lockout=False
+        )
         assert "Updated and verified: vms (User)" in _text(result)
+        assert "Keep-pass" not in result.output
+
+    def test_password_is_prompted_after_confirmation(self, no_config, users):
+        result = _run(
+            users, ["set-level", "vms", "--level", "user"], input="y\nKeep-pass\nKeep-pass\n"
+        )
+        assert result.exit_code == 0, result.output
+        users.set_level.assert_awaited_once_with(
+            "vms", OnvifUserLevel.USER, "Keep-pass", allow_lockout=False
+        )
+
+    def test_dry_run_explains_the_password_requirement_and_writes_nothing(self, no_config, users):
+        result = _run(users, ["set-level", "vms", "--level", "user", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert "requires the user's password" in _text(result)
+        assert users.writes() == 0
 
     def test_warns_when_demoting_the_only_administrator(self, no_config, users):
         result = _run(users, ["set-level", "onvif", "--level", "operator", "--dry-run"])
@@ -179,7 +202,11 @@ class TestSetLevel:
         users.set_level = AsyncMock(
             side_effect=AxisLockoutError("refusing: only ONVIF Administrator")
         )
-        result = _run(users, ["set-level", "onvif", "--level", "operator", "--yes"])
+        result = _run(
+            users,
+            ["set-level", "onvif", "--level", "operator", "--yes", "--password-stdin"],
+            input="x-pass\n",
+        )
         assert result.exit_code == 1 and "only ONVIF Administrator" in _text(result)
 
 

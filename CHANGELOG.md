@@ -32,6 +32,10 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   creates, level changes and deletes are verified by re-reading; the only
   ONVIF Administrator is protected unless `--allow-lockout`. ONVIF users are
   now part of `report --full` and `backup create` (names and levels only).
+  Live-tested on an M3216-LVE: create, rotate, level up, level down with a new
+  password, remove — each followed by an ONVIF login as the test user. A
+  `SetUser` must carry the password (Axis: `ter:InvalidArgs` without one), so
+  `set-level` asks for it.
 - `VapixClient.post_raw()` for SOAP/XML bodies (401/403 raised, other
   statuses returned for the caller to read the fault).
 - `backup restore DIR`: restores the parameter tree from a backup through

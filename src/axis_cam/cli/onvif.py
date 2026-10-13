@@ -54,7 +54,7 @@ PasswordStdinOption = Annotated[
     bool,
     typer.Option(
         "--password-stdin",
-        help="Read the new password from standard input instead of prompting.",
+        help="Read the ONVIF user's password from standard input instead of prompting.",
     ),
 ]
 AllowLockoutOption = Annotated[
@@ -103,8 +103,8 @@ def _print_accounts(accounts: OnvifAccounts, host: str) -> None:
     console.print(table)
 
 
-def _new_password(from_stdin: bool) -> str:
-    password = read_secret("New ONVIF password", from_stdin=from_stdin)
+def _new_password(from_stdin: bool, label: str = "New ONVIF password") -> str:
+    password = read_secret(label, from_stdin=from_stdin)
     try:
         validate_onvif_password(password)
     except ValueError as exc:
@@ -239,14 +239,22 @@ def onvif_set_level(
     password: PasswordOption = None,
     port: PortOption = None,
     auth: AuthOption = AuthMode.AUTO,
+    password_stdin: PasswordStdinOption = False,
     allow_lockout: AllowLockoutOption = False,
     yes: YesOption = False,
     dry_run: DryRunOption = False,
 ):
-    """Change an ONVIF user's level; the password is kept."""
+    """Change an ONVIF user's level. The device requires the user's password with the change.
+
+    Enter the current password to keep the user's ONVIF clients working, or a
+    new one to rotate it in the same step. It is prompted for, never passed on
+    the command line.
+    """
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
+    user_password = _new_password(True, "ONVIF user password") if password_stdin else None
 
     async def _set_level() -> None:
+        nonlocal user_password
         async with target.open() as dev:
             current = await dev.onvif_users.list()
             existing = current.get(user)
@@ -261,12 +269,20 @@ def onvif_set_level(
             plan = WritePlan(
                 target=target.host,
                 action=f"Change ONVIF user {_describe(existing)} to level {level.value}",
-                context=_context(current),
+                context=(
+                    *_context(current),
+                    "the device requires the user's password with a level change; "
+                    "the current one keeps ONVIF clients working, a new one rotates it",
+                ),
                 warnings=warnings,
             )
             if not confirm_write(plan, yes=yes, dry_run=dry_run):
                 return
-            updated = await dev.onvif_users.set_level(user, level, allow_lockout=allow_lockout)
+            if user_password is None:
+                user_password = _new_password(False, "ONVIF user password (current or new)")
+            updated = await dev.onvif_users.set_level(
+                user, level, user_password, allow_lockout=allow_lockout
+            )
             console.print(f"[green]Updated and verified:[/green] {_describe(updated)}")
 
     run_async(_set_level())

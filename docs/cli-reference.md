@@ -749,14 +749,14 @@ NVR or Home Assistant that talks ONVIF logs in with one of these, and
 axiscam onvif list [--json] [OPTIONS]
 axiscam onvif add USER --level administrator|operator|user [--password-stdin] [--yes] [--dry-run] [OPTIONS]
 axiscam onvif set-password USER [--password-stdin] [--yes] [--dry-run] [OPTIONS]
-axiscam onvif set-level USER --level LEVEL [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+axiscam onvif set-level USER --level LEVEL [--password-stdin] [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
 axiscam onvif remove USER [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
 ```
 
 | Option | Description |
 |--------|-------------|
 | `--level`, `-l` | ONVIF `UserLevel`: `administrator`, `operator` or `user` |
-| `--password-stdin` | Read the **ONVIF user's** new password from standard input (one line). Otherwise it is prompted for, hidden, after the plan is accepted. Never a command-line argument. |
+| `--password-stdin` | Read the **ONVIF user's** password from standard input (one line). Otherwise it is prompted for, hidden, after the plan is accepted. Never a command-line argument. |
 | `--allow-lockout` | Permit removing or demoting the only ONVIF Administrator |
 | `--yes`, `-y` | Apply without the confirmation prompt |
 | `--dry-run` | Show the planned change and exit 0 |
@@ -765,6 +765,7 @@ axiscam onvif remove USER [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
 
 - Transport is ONVIF Device Management SOAP on `POST /vapix/services`, which accepts the device's VAPIX administrator credentials (verified on AXIS OS 12.11 and 11.11). Device refusals are SOAP faults; they are shown with the ONVIF code (`ter:UsernameClash`, `ter:Password` = too weak, `ter:FixedUser`).
 - `add`, `set-level` and `remove` are verified by re-reading the list; `set-password` cannot be — ONVIF never returns passwords — so verify by connecting the client.
+- `set-level` asks for the user's password: the device refuses a `SetUser` without one (`ter:InvalidArgs`). Enter the current password to keep the user's clients working, or a new one to rotate it in the same step.
 - `set-password` warns that every ONVIF client using that user must be updated.
 - Removing or demoting the **only** ONVIF Administrator is refused without `--allow-lockout`.
 
