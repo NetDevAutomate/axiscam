@@ -150,7 +150,21 @@ After Phase 0: 485 tests pass · 54.6% coverage · ruff clean · pyright 0 error
 
 Behaviour changes a library user will notice: a non-443 port no longer implies HTTP (`https=False` is explicit); Basic auth over plain HTTP raises `AxisConfigError` unless `allow_insecure_basic=True`; `get_config()`-style methods raise `AxisAuthenticationError`/`AxisConnectionError` instead of returning defaults.
 
-### Phase 1 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+### Phase 1 — complete on branch `phase-0-security-fixes` (2026-10-13)
+
+| Step | Commit | Status |
+|---|---|---|
+| 1.1 registry, `ResourceModule`, `AxisDevice.modules` / `resources` / `available_resources()` | `f3737b4` | ✅ 21 tests, incl. gating against all four `src/specs` captures |
+| 1.2 delete the 29 pass-through wrappers; 34 CLI + 4 test + 1 doc call sites rewritten | `2f23115` | ✅ `devices/base.py` 603 → 334 lines |
+| 1.3 `axis_cam/report.py`; `report` command registry-driven; JSON via `typer.echo` | `fd4226a` | ✅ fake-module test proves report code lists no modules |
+| 1.4 `cli/` package; `DeviceContext`; `cli.py` deleted | `df52dfc` | ✅ 32 CLI tests: every `--help`, commands end to end through `DeviceContext.open` |
+| 1.5 docs, coverage ratchet 50 → 58, this table | — | ✅ |
+
+After Phase 1: 553 tests pass (from 485) · 60% coverage (from 54.6) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged). Each step was committed through the pre-commit gate.
+
+Found and fixed along the way: `console.print(json.dumps(...))` soft-wraps at Rich's console width and corrupts piped JSON (reproduced: a 300-character value split mid-string). Every `--json` path now goes through `emit_json()` (`typer.echo`), with a regression test.
+
+Behaviour changes a library user will notice: `device.get_ssh_config()` and the other 28 forwarders are gone (`device.ssh.get_config()`); `LogsAPI(client, device_name=None)` defaults the name to `client.host`; `report` output is nested under `sections` and keyed by module name.
 
 Sequence, one commit each, ordered so every step can end on its own:
 
@@ -173,8 +187,9 @@ Decisions taken for Phase 1:
 
 ## Decisions and open questions
 
-- **Decided:** secure by default — `https` defaults to `True`; plain HTTP is an explicit `https: false` in config. Ad-hoc `--host` use is HTTPS only until a `--http` option is added with the Phase 1 `DeviceContext`.
+- **Decided:** secure by default — `https` defaults to `True`; plain HTTP is an explicit `https: false` in config. Ad-hoc `--host` use is HTTPS only; a `--http` option was *not* added in Phase 1 (it would widen every command signature for an ad-hoc-only case) — add it in Phase 2 alongside the write-safety flags if a plain-HTTP device actually needs ad-hoc access.
 - **Decided:** coverage threshold ratchets from the measured baseline rather than being set at an aspirational number nobody can pass (that path leads to `--no-verify`).
-- **Open:** whether to flip the library default `ssl_verify=False` → `True`. It will break self-signed setups; needs an `ssl_ca_bundle` option first. Revisit in Phase 1.
+- **Open:** whether to flip the library default `ssl_verify=False` → `True`. It will break self-signed setups; needs an `ssl_ca_bundle` option first. Not changed in Phase 1; revisit with Phase 2's `DeviceContext` additions.
+- **Fixed (2026-10-13):** every `--json` output and `params --export` to stdout went through `console.print`, which soft-wraps at Rich's console width and interprets `[...]` as markup, corrupting piped JSON (reproduced: a 300-character value split mid-string under an 80-column console). All 14 sites now use `emit_json()` / `typer.echo`; `tests/test_cli_commands.py::test_json_output_is_not_wrapped_at_console_width` guards it.
 - **Open:** whether `download debug` is byte-for-byte the web UI's crash report. One DevTools capture settles it.
 - **Open:** local `main` vs `origin/main` divergence (5/5).

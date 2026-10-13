@@ -115,7 +115,8 @@ axiscam report --device front_camera --full --output report.json
 
 | Module | Description | Lines |
 |--------|-------------|-------|
-| `cli.py` | Typer CLI implementation | ~2600 |
+| `cli/` | Typer CLI package (app, context, one module per group) | ~2300 |
+| `report.py` | Registry-driven device report | ~150 |
 | `client.py` | VapixClient HTTP client | ~375 |
 | `config.py` | Configuration management | ~575 |
 | `models.py` | Pydantic data models | ~2000 |

@@ -105,6 +105,29 @@ class TestCommandsEndToEnd:
         data = json.loads(result.output)
         assert data["enabled"] is True and data["port"] == 2222
 
+    def test_json_output_is_not_wrapped_at_console_width(self, no_config):
+        # Rich soft-wraps console.print at its width; machine output must not go
+        # through it. A 300-character value would be split mid-string.
+        from axis_cam.models import SshKey
+
+        long_comment = "c" * 300
+        ssh = SimpleNamespace(
+            get_config=AsyncMock(
+                return_value=SshConfig(
+                    enabled=True,
+                    authorized_keys=[
+                        SshKey(key_type="ssh-ed25519", fingerprint="f", comment=long_comment)
+                    ],
+                )
+            )
+        )
+
+        with _open(FakeDevice(ssh=ssh)):
+            result = runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--json"])
+
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["authorized_keys"][0]["comment"] == long_comment
+
     def test_security_ssh_table_renders(self, no_config):
         ssh = SimpleNamespace(get_config=AsyncMock(return_value=SshConfig(enabled=False)))
 

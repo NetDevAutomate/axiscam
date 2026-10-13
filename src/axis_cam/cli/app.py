@@ -6,6 +6,7 @@ which is what populates the application.
 """
 
 import asyncio
+import json
 from collections.abc import Coroutine
 from typing import Any
 
@@ -104,6 +105,15 @@ def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     except AxisError as e:
         console.print(f"[red]Error:[/red] {e}", style="bold")
         raise typer.Exit(1) from None
+
+
+def emit_json(data: Any) -> None:
+    """Print ``data`` as indented JSON for machines.
+
+    Deliberately not ``console.print``: Rich soft-wraps at the console width
+    and interprets ``[...]`` as markup, both of which corrupt piped JSON.
+    """
+    typer.echo(json.dumps(data, indent=2))
 
 
 def main() -> None:

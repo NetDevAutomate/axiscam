@@ -13,7 +13,7 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Diagnostic Downloads**: Server reports and debug archives for AXIS support
 - **Security Configuration**: Firewall, SSH, certificates, SNMP, NTP
 - **Authentication**: Digest (default) and Basic authentication support
-- **Async Operations**: Efficient parallel communication with multiple devices
+- **Async**: httpx-based async client; one device per command today (fleet fan-out is planned)
 - **Configuration Management**: YAML config with environment variable interpolation
 - **Legacy Support**: Automatic migration from `~/.config/axis/` to `~/.config/axiscam/`
 
@@ -225,7 +225,7 @@ axiscam report --device camera1 --full --output full_report.json
 | `--device` | `-d` | Device name or IP address |
 | `--output` | `-o` | Output file path |
 | `--format` | `-f` | Output format: `json` (default), `yaml`, `text` |
-| `--full` | | Include all configurations (SSH, SNMP, certs, MQTT, actions, recording, storage, geolocation, analytics, OIDC, OAuth, crypto policy) |
+| `--full` | | Include every resource the device advertises (SSH, SNMP, certs, MQTT, actions, recording, storage, geolocation, analytics, OIDC, OAuth, crypto policy, virtual hosts, pairing) |
 
 ### Download Commands
 
@@ -551,13 +551,15 @@ uv run mypy src/
 axis/
 ├── src/axis_cam/
 │   ├── __init__.py          # Package exports
-│   ├── cli.py               # Typer CLI (~2200 lines)
+│   ├── cli/                 # Typer CLI package (one module per command group)
+│   ├── report.py            # Registry-driven device report
 │   ├── client.py            # VapixClient HTTP client
 │   ├── config.py            # Configuration management
 │   ├── models.py            # Pydantic models (~2000 lines)
 │   ├── exceptions.py        # Exception hierarchy
 │   ├── api/                  # VAPIX API modules
-│   │   ├── base.py          # BaseAPI abstract class
+│   │   ├── base.py          # BaseAPI (request helpers, name/api_id)
+│   │   ├── registry.py      # @register, ResourceModule protocol
 │   │   ├── device_info.py   # Basic device info
 │   │   ├── param.py         # Parameters
 │   │   ├── stream.py        # Stream diagnostics
@@ -565,7 +567,7 @@ axis/
 │   │   ├── network.py       # Network settings
 │   │   └── ... (30 modules)
 │   └── devices/
-│       ├── base.py          # AxisDevice abstract base
+│       ├── base.py          # AxisDevice (modules built from the registry)
 │       ├── camera.py        # AxisCamera
 │       ├── recorder.py      # AxisRecorder
 │       ├── intercom.py      # AxisIntercom

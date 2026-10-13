@@ -1,6 +1,5 @@
 """``axiscam network``: interfaces and DNS."""
 
-import json
 from typing import Annotated
 
 import typer
@@ -9,6 +8,7 @@ from rich.table import Table
 
 from axis_cam.cli.app import (
     console,
+    emit_json,
     network_app,
     run_async,
 )
@@ -63,7 +63,7 @@ def network_show(
                         "domain": config.dns.domain,
                     },
                 }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Main info panel

@@ -46,11 +46,14 @@ flowchart TB
 
 ### BaseAPI Class
 
-All API modules inherit from `BaseAPI`, which provides:
+All API modules inherit from `BaseAPI`, a plain base class (not an ABC: it has
+no method every module must override) that provides the request helpers and the
+two class attributes every module declares:
 
 ```python
-class BaseAPI(ABC):
-    """Abstract base class for VAPIX API modules."""
+class BaseAPI:
+    name: ClassVar[str]              # attribute on AxisDevice, key in reports/backups
+    api_id: ClassVar[str | None]     # id in /config/discover/apis.json; None = legacy CGI
 
     def __init__(self, client: VapixClient) -> None:
         self._client = client
@@ -68,6 +71,51 @@ class BaseAPI(ABC):
         """Perform a GET request and return raw bytes."""
         return await self._client.get_raw(path, params)
 ```
+
+### Registry and the ResourceModule protocol
+
+Modules are registered with `@register` (`axis_cam.api.registry`) and
+`AxisDevice` builds its modules from the registry, so no code lists the modules
+by hand. A module that implements `read() -> BaseModel` is a *resource*; generic
+services (the `report` command today, backup and the security audit later)
+iterate resources without knowing which ones exist.
+
+```python
+from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+
+@register
+class SshAPI(BaseAPI):
+    name = "ssh"          # device.ssh
+    api_id = "ssh"        # gated by API discovery; None for CGI-only modules
+
+    REST_PATH = "/config/rest/ssh/v2"
+
+    async def read(self) -> SshConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
+
+    async def get_config(self) -> SshConfig: ...
+```
+
+`ResourceModule` is a `typing.Protocol` (structural): a module is a resource by
+having `name`, `api_id` and `read()`, not by inheriting anything. `params`,
+`logs` and `serverreport` are registered modules but not resources.
+
+### Adding a module
+
+1. Create `api/<module>.py` with the class above (`@register`, `name`, `api_id`,
+   and `read()` if it is a resource).
+2. Import it in `api/__init__.py` — a module that is not imported is not
+   registered.
+3. Add one typed declaration to `AxisDevice` (`<name>: <Class>`) so attribute
+   access stays statically typed.
+4. Add a CLI command only if a human-facing view is wanted; `report --full`
+   already includes the module.
+
+`tests/test_registry.py` fails if a `BaseAPI` subclass is not registered, if the
+`AxisDevice` declarations drift from the registry, or if an `api_id` is not one a
+captured device advertises (`src/specs/*.json`).
 
 ### Common Patterns
 

@@ -1,6 +1,5 @@
 """Device-level commands: info, status, apis, lldp, params, location, report."""
 
-import json
 from pathlib import Path
 from typing import Annotated
 
@@ -12,6 +11,7 @@ from rich.tree import Tree
 from axis_cam.cli.app import (
     app,
     console,
+    emit_json,
     run_async,
 )
 from axis_cam.cli.context import resolve_device_config
@@ -223,7 +223,7 @@ def show_lldp(
                         for n in lldp_info.neighbors
                     ],
                 }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel
@@ -291,7 +291,7 @@ def list_params(
                     output.write_text(json_output)
                     console.print(f"[green]Exported parameters to:[/green] {output}")
                 else:
-                    console.print(json_output)
+                    typer.echo(json_output)  # not console.print: Rich would wrap long lines
                 return
 
             if search:
@@ -351,8 +351,6 @@ def show_location(
     json_output: JsonOption = False,
 ):
     """Show device geolocation configuration."""
-    import json as json_mod
-
     target = resolve_device_config(device, host, username, password, port, digest=digest)
 
     async def _show_location():
@@ -371,7 +369,7 @@ def show_location(
                     "vertical_accuracy": config.vertical_accuracy,
                     "timestamp": config.timestamp,
                 }
-                console.print(json_mod.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Check if location is configured

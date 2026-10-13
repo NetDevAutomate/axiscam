@@ -1,6 +1,5 @@
 """``axiscam services``: SNMP and NTP."""
 
-import json
 from typing import Annotated
 
 import typer
@@ -9,6 +8,7 @@ from rich.table import Table
 
 from axis_cam.cli.app import (
     console,
+    emit_json,
     run_async,
     services_app,
 )
@@ -58,7 +58,7 @@ def services_snmp(
                         for t in config.trap_receivers
                     ],
                 }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel
@@ -141,7 +141,7 @@ def services_ntp(
                         "delay_ms": config.sync_status.delay_ms,
                         "current_server": config.sync_status.current_server,
                     }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel

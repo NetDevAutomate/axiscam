@@ -1,6 +1,5 @@
 """``axiscam security``: firewall, SSH and certificates."""
 
-import json
 from typing import Annotated
 
 import typer
@@ -9,6 +8,7 @@ from rich.table import Table
 
 from axis_cam.cli.app import (
     console,
+    emit_json,
     run_async,
     security_app,
 )
@@ -57,7 +57,7 @@ def security_firewall(
                         for r in config.rules
                     ],
                 }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel
@@ -132,7 +132,7 @@ def security_ssh(
                         for k in config.authorized_keys
                     ],
                 }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel
@@ -212,7 +212,7 @@ def security_certs(
                         for c in config.certificates
                     ],
                 }
-                console.print(json.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel

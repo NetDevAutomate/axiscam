@@ -4,6 +4,7 @@ from rich.table import Table
 
 from axis_cam.cli.app import (
     console,
+    emit_json,
     media_app,
     run_async,
 )
@@ -30,8 +31,6 @@ def show_recording(
     json_output: JsonOption = False,
 ):
     """Show recording configuration."""
-    import json as json_mod
-
     target = resolve_device_config(device, host, username, password, port, digest=digest)
 
     async def _show_recording():
@@ -64,7 +63,7 @@ def show_recording(
                         for p in config.profiles
                     ],
                 }
-                console.print(json_mod.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Groups table
@@ -125,8 +124,6 @@ def show_storage(
     json_output: JsonOption = False,
 ):
     """Show remote storage configuration."""
-    import json as json_mod
-
     target = resolve_device_config(device, host, username, password, port, digest=digest)
 
     async def _show_storage():
@@ -148,7 +145,7 @@ def show_storage(
                         for d in config.destinations
                     ],
                 }
-                console.print(json_mod.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Destinations table

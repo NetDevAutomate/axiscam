@@ -8,6 +8,7 @@ from rich.table import Table
 
 from axis_cam.cli.app import (
     console,
+    emit_json,
     run_async,
     stream_app,
 )
@@ -37,8 +38,6 @@ def stream_show(
     Displays streaming configuration useful for troubleshooting
     connectivity issues with third-party systems.
     """
-    import json as json_mod
-
     target = resolve_device_config(device, host, username, password, port, digest=digest)
 
     async def _show_stream():
@@ -73,7 +72,7 @@ def stream_show(
                     ],
                     "errors": diag.errors,
                 }
-                console.print(json_mod.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # RTSP panel

@@ -6,6 +6,7 @@ from rich.table import Table
 from axis_cam.cli.app import (
     automation_app,
     console,
+    emit_json,
     run_async,
 )
 from axis_cam.cli.context import resolve_device_config
@@ -31,8 +32,6 @@ def show_actions(
     json_output: JsonOption = False,
 ):
     """Show action rules configuration."""
-    import json as json_mod
-
     target = resolve_device_config(device, host, username, password, port, digest=digest)
 
     async def _show_actions():
@@ -61,7 +60,7 @@ def show_actions(
                         for t in config.templates
                     ],
                 }
-                console.print(json_mod.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Rules table
@@ -104,8 +103,6 @@ def show_mqtt(
     json_output: JsonOption = False,
 ):
     """Show MQTT event bridge configuration."""
-    import json as json_mod
-
     target = resolve_device_config(device, host, username, password, port, digest=digest)
 
     async def _show_mqtt():
@@ -137,7 +134,7 @@ def show_mqtt(
                         for f in config.event_filters
                     ],
                 }
-                console.print(json_mod.dumps(data, indent=2))
+                emit_json(data)
                 return
 
             # Status panel

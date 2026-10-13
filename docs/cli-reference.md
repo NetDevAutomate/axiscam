@@ -275,35 +275,49 @@ axiscam report [OPTIONS]
 |--------|-------|-------------|
 | `--output` | `-o` | Output file path |
 | `--format` | `-f` | Format: `json`, `yaml`, `text` |
-| `--full` | - | Include all configurations |
+| `--full` | - | Include every resource the device advertises |
 
 **Example:**
 ```bash
-# Basic report
+# Summary report
 $ axiscam report --device front_camera --format json --output report.json
 
-# Full report with all configurations
+# Everything the device advertises
 $ axiscam report --device front_camera --full --output full_report.json
 ```
 
-**Full Report Includes:**
-- Basic device info
-- Time configuration
-- LLDP neighbors
-- Stream settings
-- Firewall rules
-- SSH configuration
-- SNMP settings
-- Certificates
-- NTP configuration
-- MQTT bridge
-- Action rules
-- Recording profiles
-- Storage destinations
-- Geolocation
-- Analytics
-- OIDC/OAuth
-- Crypto policy
+**What is included.** The report is driven by the API module registry: it asks the
+device which APIs it advertises (`/config/discover/apis.json`) and reads each
+matching module. The summary report covers `device_info`, `time`, `network`,
+`lldp`, `stream`, `firewall` and `ntp`; `--full` reads every available resource
+(additionally `ssh`, `snmp`, `cert`, `action`, `mqtt`, `recording`, `storage`,
+`geolocation`, `analytics`, `snapshot`, `analytics_mqtt`, `audio_multicast`,
+`oidc`, `oauth`, `virtualhost`, `crypto_policy`, `networkpairing`). A module
+added to the registry appears in `--full` automatically.
+
+**Output shape** (`json` / `yaml`):
+
+```json
+{
+  "device": "front_camera",
+  "generated_at": "2026-10-13T09:00:00+00:00",
+  "sections": {
+    "device_info": { "product_number": "M3216-LVE", "serial_number": "...", "firmware_version": "12.1.60" },
+    "ssh": { "enabled": false, "port": 22, "..." : "..." }
+  },
+  "errors": { "ntp": "Device error: 500" },
+  "skipped": ["stream"]
+}
+```
+
+- `sections` — one entry per module read, keyed by module name, holding the full
+  model (`model_dump(mode="json")`).
+- `errors` — modules the device advertises but that failed to read. Authentication
+  and connection failures are not per-module errors: the command exits 1.
+- `skipped` — requested modules the device does not advertise (not an error).
+
+`--format text` prints a short summary (model, serial, firmware, IP, MAC, LLDP
+neighbour) followed by any errors and skipped modules.
 
 ---
 
