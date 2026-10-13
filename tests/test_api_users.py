@@ -376,7 +376,7 @@ class TestTransport:
         )
 
         async with VapixClient(
-            "192.168.1.10", "root", "rootpw", port=443, use_https=True, use_digest_auth=False
+            "192.168.1.10", "root", "rootpw", port=443, use_https=True, auth_mode="basic"
         ) as client:
             await UsersAPI(client).add("ops", "Sup3r-secret", UserRole.OPERATOR)
 
@@ -401,7 +401,7 @@ class TestTransport:
         )
 
         async with VapixClient(
-            "192.168.1.10", "root", "pw", port=443, use_https=True, use_digest_auth=False
+            "192.168.1.10", "root", "pw", port=443, use_https=True, auth_mode="basic"
         ) as client:
             with pytest.raises(AxisAuthenticationError):
                 await UsersAPI(client).list()

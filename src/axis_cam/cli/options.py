@@ -4,6 +4,8 @@ from typing import Annotated
 
 import typer
 
+from axis_cam.auth import AuthMode
+
 DeviceOption = Annotated[
     str | None,
     typer.Option(
@@ -58,11 +60,15 @@ LinesOption = Annotated[
     ),
 ]
 
-DigestOption = Annotated[
-    bool,
+AuthOption = Annotated[
+    AuthMode,
     typer.Option(
-        "--digest/--no-digest",
-        help="Use Digest authentication (default) or Basic auth.",
+        "--auth",
+        help=(
+            "Authentication scheme: auto (default) follows the device's challenge - Basic over "
+            "HTTPS, Digest over HTTP; basic or digest forces one."
+        ),
+        case_sensitive=False,
     ),
 ]
 

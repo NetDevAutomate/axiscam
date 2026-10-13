@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.tree import Tree
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     app,
     console,
@@ -16,8 +17,8 @@ from axis_cam.cli.app import (
 )
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     JsonOption,
     PasswordOption,
@@ -36,14 +37,14 @@ def device_info(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
 ):
     """Get device information.
 
     Displays basic device info including model, serial number,
     firmware version, and available capabilities.
     """
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _get_info():
         async with target.open() as dev:
@@ -113,10 +114,10 @@ def device_status(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
 ):
     """Check device status and connectivity."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _check_status():
         async with target.open() as dev:
@@ -151,10 +152,10 @@ def list_apis(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
 ):
     """List available APIs on the device."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _list_apis():
         async with target.open() as dev:
@@ -191,7 +192,7 @@ def show_lldp(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show LLDP neighbor information.
@@ -199,7 +200,7 @@ def show_lldp(
     Displays discovered network neighbors via LLDP (Link Layer Discovery Protocol).
     Shows the switch/device the camera is connected to, including port information.
     """
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_lldp():
         async with target.open() as dev:
@@ -268,7 +269,7 @@ def list_params(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     group: Annotated[
         str | None, typer.Option("--group", "-g", help="Parameter group to list")
     ] = None,
@@ -277,7 +278,7 @@ def list_params(
     output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
 ):
     """List device parameters."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _list_params():
         async with target.open() as dev:
@@ -348,11 +349,11 @@ def show_location(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
 ):
     """Show device geolocation configuration."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_location():
         async with target.open() as dev:
@@ -414,7 +415,7 @@ def device_report(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
     format_opt: Annotated[
         str, typer.Option("--format", "-f", help="Output format (json, yaml, text)")
@@ -433,7 +434,7 @@ def device_report(
     """
     import json as json_mod
 
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _generate_report() -> DeviceReport:
         async with target.open() as dev:

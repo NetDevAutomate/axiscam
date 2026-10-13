@@ -187,10 +187,10 @@ axiscam info --device front_camera
 | `--username` | `-u` | Authentication username |
 | `--password` | `-p` | Authentication password |
 | `--port` | `-P` | Port number (default: 443) |
-| `--digest/--no-digest` | | Authentication mode (default: digest) |
+| `--auth` | | `auto` (default), `basic` or `digest`; auto follows the device's challenge |
 | `--json` | `-j` | Output as JSON |
 
-**Note**: Digest authentication is enabled by default as most AXIS devices require it. Use `--no-digest` for devices that only support Basic authentication.
+**Note**: `--auth auto` does what Axis documents: Basic over HTTPS, Digest over HTTP, and if the device's `WWW-Authenticate` offers only the other scheme it switches once and remembers. A fleet mixes both — an AXIS OS 12 camera with `Network.HTTP.AuthenticationPolicy=recommended` offers only Basic on HTTPS, an 11.x speaker only Digest — so a fixed choice fails on part of any real fleet. Basic over plain HTTP is never chosen automatically.
 
 ### Core Commands
 
@@ -262,7 +262,7 @@ axiscam download crash-report --device camera1 --timeout 600
 | `--output` | `-o` | Output file (auto-generates if not specified) |
 | `--format` | `-f` | Report format: `zip_with_image` (default), `zip`, `text` |
 | `--timeout` | `-t` | Download timeout in seconds (default: 60) |
-| `--digest/--no-digest` | | Authentication mode (default: digest) |
+| `--auth` | | `auto` (default), `basic` or `digest`; auto follows the device's challenge |
 
 #### Crash Report Options (`axiscam download crash-report`)
 
@@ -271,7 +271,7 @@ axiscam download crash-report --device camera1 --timeout 600
 | `--device` | `-d` | Device name or IP address |
 | `--output` | `-o` | Output file (auto-generates `crash_report_<device>.tgz`) |
 | `--timeout` | `-t` | Download timeout in seconds (default: 300) |
-| `--digest/--no-digest` | | Authentication mode (default: digest) |
+| `--auth` | | `auto` (default), `basic` or `digest`; auto follows the device's challenge |
 
 **Note**: The crash report is large (10+ MB) and the device builds it on demand. Axis's privacy statement says it can include user IDs, passwords, video images and network traffic — the command prints that notice and writes the file `0600`.
 
@@ -455,15 +455,15 @@ axiscam status --device camera1
 # Check if HTTPS is required
 axiscam status --host 192.168.1.10 --port 80 -u admin -p pass
 
-# Try Basic auth if Digest fails (rare)
-axiscam info --device camera1 --no-digest
+# Force a scheme if a device misbehaves with auto
+axiscam info --device camera1 --auth digest
 ```
 
 ### Authentication Errors
 
 1. Verify credentials are correct
 2. Check if account is locked (too many failed attempts)
-3. Digest authentication is default; try `--no-digest` for older devices
+3. `--auth auto` follows the device's challenge; force `--auth basic` or `--auth digest` only to diagnose
 4. Verify user has admin privileges
 
 ### SSL Certificate Errors
@@ -480,15 +480,29 @@ devices:
 
 ### Port 80 vs 443
 
-- **Port 443 (HTTPS)**: Default, recommended for security
-- **Port 80 (HTTP)**: Legacy, sends credentials in clear text
+The scheme is **never inferred from the port**: `https` defaults to `true`, so a
+device entry with `port: 80` and nothing else sends TLS to a plain-HTTP port and
+fails with:
+
+```
+Error: 192.168.1.10:80 answered plain HTTP to an HTTPS request. If this device is
+meant to use HTTP, set `https: false` for it in the config (library: https=False);
+otherwise set `port: 443`.
+```
+
+Prefer moving the device to 443. Only if the device really must speak HTTP:
 
 ```yaml
 devices:
   legacy_camera:
     address: 192.168.1.10
-    port: 80  # HTTP - not recommended
+    port: 80
+    https: false   # explicit; Digest auth is still used, but config and data travel in clear
 ```
+
+The reverse mistake (`https: false` against a TLS port) is reported as
+"expects HTTPS but was sent plain HTTP". Basic authentication over plain HTTP is
+refused outright.
 
 ### Config Migration
 

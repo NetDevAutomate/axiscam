@@ -37,6 +37,7 @@ from axis_cam.api.stream import StreamAPI
 from axis_cam.api.time import TimeAPI
 from axis_cam.api.users import UsersAPI
 from axis_cam.api.virtualhost import VirtualHostAPI
+from axis_cam.auth import AuthMode
 from axis_cam.client import VapixClient
 from axis_cam.exceptions import AxisConfigError
 from axis_cam.models import (
@@ -141,7 +142,7 @@ class AxisDevice(ABC):
         port: int = 443,
         ssl_verify: bool = False,
         timeout: float = 30.0,
-        use_digest_auth: bool = False,
+        auth_mode: AuthMode | str = AuthMode.AUTO,
         *,
         https: bool = True,
         allow_insecure_basic: bool = False,
@@ -149,9 +150,11 @@ class AxisDevice(ABC):
         """Initialize the AXIS device.
 
         The transport scheme is never inferred from the port: HTTPS is used
-        unless ``https=False`` is passed explicitly. Basic authentication over
-        plain HTTP sends credentials in cleartext and is refused unless
-        ``allow_insecure_basic=True`` is passed as well.
+        unless ``https=False`` is passed explicitly. The authentication scheme
+        follows the device's challenge by default (Basic over HTTPS, Digest
+        over HTTP). Forcing Basic over plain HTTP sends credentials in
+        cleartext and is refused unless ``allow_insecure_basic=True`` is passed
+        as well.
 
         Args:
             host: Device IP address or hostname.
@@ -160,19 +163,20 @@ class AxisDevice(ABC):
             port: TCP port (default 443).
             ssl_verify: Whether to verify SSL certificates.
             timeout: Request timeout in seconds.
-            use_digest_auth: Use Digest auth instead of Basic.
+            auth_mode: ``auto`` (default), ``basic`` or ``digest``.
             https: Use HTTPS (default True). Set False only for plain-HTTP devices.
             allow_insecure_basic: Permit Basic auth over plain HTTP.
 
         Raises:
-            AxisConfigError: If Basic auth over plain HTTP is requested without
+            AxisConfigError: If Basic auth over plain HTTP is forced without
                 ``allow_insecure_basic``.
         """
-        if not https and not use_digest_auth and not allow_insecure_basic:
+        auth_mode = AuthMode(auth_mode)
+        if not https and auth_mode is AuthMode.BASIC and not allow_insecure_basic:
             raise AxisConfigError(
                 f"Refusing Basic authentication over plain HTTP to {host}:{port}: "
                 "credentials would be sent in cleartext. Use https=True, "
-                "use_digest_auth=True, or pass allow_insecure_basic=True explicitly."
+                "auth_mode='digest' (or 'auto'), or pass allow_insecure_basic=True explicitly."
             )
 
         self._host = host
@@ -184,7 +188,8 @@ class AxisDevice(ABC):
             use_https=https,
             verify_ssl=ssl_verify,
             timeout=timeout,
-            use_digest_auth=use_digest_auth,
+            auth_mode=auth_mode,
+            allow_insecure_basic=allow_insecure_basic,
         )
 
         # Build every registered API module against this client and expose

@@ -152,7 +152,8 @@ classDiagram
         +use_https: bool
         +timeout: float
         +verify_ssl: bool
-        +use_digest_auth: bool
+        +auth_mode: AuthMode
+        +allow_insecure_basic: bool
         -_client: httpx.AsyncClient
         +base_url: str
         +__aenter__() VapixClient
@@ -461,10 +462,12 @@ Authentication method selection:
 
 ```mermaid
 flowchart LR
-    CLIENT[VapixClient] --> |use_digest_auth=true| DIGEST[Digest Auth]
-    CLIENT --> |use_digest_auth=false| BASIC[Basic Auth]
-    DIGEST --> HTTPX[httpx.DigestAuth]
-    BASIC --> HTTPX2[httpx.BasicAuth]
+    CLIENT[VapixClient] --> AUTH[VapixAuth - auth.py]
+    AUTH -->|auto + HTTPS| BASIC[httpx.BasicAuth first]
+    AUTH -->|auto + HTTP| DIGEST[httpx.DigestAuth first]
+    BASIC -->|401 offers Digest| DIGEST
+    DIGEST -->|401 offers only Basic, HTTPS| BASIC
+    AUTH -->|basic / digest| FORCED[forced scheme, no switching]
 ```
 
 ### 5. Template Method Pattern

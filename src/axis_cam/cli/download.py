@@ -11,6 +11,7 @@ from typing import Annotated
 
 import typer
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     console,
     download_app,
@@ -18,8 +19,8 @@ from axis_cam.cli.app import (
 )
 from axis_cam.cli.context import DeviceContext, resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     PasswordOption,
     PortOption,
@@ -92,7 +93,7 @@ def download_server_report(
             help="Download timeout in seconds.",
         ),
     ] = 60.0,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
 ):
     """Download the server report from an AXIS device.
 
@@ -105,7 +106,7 @@ def download_server_report(
         axiscam download report -d camera1 --format text -o ~/report.txt
         axiscam download report -H 192.168.1.10 -u admin -p secret
     """
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     format_map = {
         "zip_with_image": ServerReportFormat.ZIP_WITH_IMAGE,
@@ -151,7 +152,7 @@ def _download_crash_report(
             help="Download timeout in seconds (the device may take minutes to build the archive).",
         ),
     ] = CRASH_REPORT_TIMEOUT,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
 ):
     """Download the crash report (debug archive, debug.tgz) from an AXIS device.
 
@@ -165,7 +166,7 @@ def _download_crash_report(
         axiscam download crash-report -d front_of_house -o ~/crash.tgz
         axiscam download crash-report -d camera1 --timeout 600
     """
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
     destination = output or _default_name("crash_report", device, target, ".tgz")
     console.print(f"[yellow]Notice:[/yellow] {CRASH_REPORT_NOTICE}")
 

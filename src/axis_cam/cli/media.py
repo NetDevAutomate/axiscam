@@ -2,6 +2,7 @@
 
 from rich.table import Table
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     console,
     emit_json,
@@ -10,8 +11,8 @@ from axis_cam.cli.app import (
 )
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     JsonOption,
     PasswordOption,
@@ -27,11 +28,11 @@ def show_recording(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
 ):
     """Show recording configuration."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_recording():
         async with target.open() as dev:
@@ -120,11 +121,11 @@ def show_storage(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
 ):
     """Show remote storage configuration."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_storage():
         async with target.open() as dev:

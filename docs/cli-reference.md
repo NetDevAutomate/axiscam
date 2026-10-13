@@ -90,7 +90,7 @@ Options available for most commands that interact with devices.
 | `--username` | `-u` | `str` | Config value | Authentication username |
 | `--password` | `-p` | `str` | Config value | Authentication password |
 | `--port` | `-P` | `int` | config port, else `443` | TCP port. An explicit value always overrides the device's configured port |
-| `--digest/--no-digest` | - | `bool` | `True` | Use Digest auth (default) or Basic |
+| `--auth` | - | `auto\|basic\|digest` | `auto` | Follow the device's challenge, or force a scheme |
 | `--json` | `-j` | `bool` | `False` | Output as JSON |
 
 ### Option Precedence
@@ -110,16 +110,24 @@ flowchart TD
 
 ## Authentication
 
-### Digest vs Basic Authentication
+### Basic vs Digest Authentication
 
-Most AXIS devices require **Digest authentication** (the default). Use `--no-digest` only for older devices that require Basic auth.
+Axis's guidance is Basic over HTTPS and Digest over HTTP, and devices differ: an
+AXIS OS 12 camera with `Network.HTTP.AuthenticationPolicy=recommended` offers
+*only* Basic on HTTPS and rejects Digest; an AXIS OS 11 speaker offers only
+Digest. `--auth auto` (the default) starts with the scheme Axis recommends for
+the transport and, if the device answers 401 offering only the other scheme,
+switches once and remembers for the session. A 401 that offers the same scheme
+is a genuine credential failure. Basic over plain HTTP is never chosen
+automatically.
 
 ```bash
-# Default: Digest authentication
+# Default: follow the device
 axiscam info --device front_camera
 
-# Force Basic authentication (rare)
-axiscam info --device legacy_camera --no-digest
+# Force a scheme (diagnosis)
+axiscam info --device front_camera --auth digest
+axiscam info --device front_camera --auth basic
 ```
 
 ### Environment Variables
@@ -573,7 +581,7 @@ Options:
   --output, -o    Output file path
   --format, -f    Report format (zip_with_image, zip, text)
   --timeout, -t   Download timeout in seconds (default: 60)
-  --digest/--no-digest    Authentication mode
+  --auth auto|basic|digest    Authentication scheme (default: auto)
 ```
 
 **Formats:**
@@ -598,7 +606,7 @@ Options:
   --device, -d    Device name
   --output, -o    Output file path (default: crash_report_<device>.tgz)
   --timeout, -t   Download timeout in seconds (default: 300; the device builds the archive on demand)
-  --digest/--no-digest    Authentication mode
+  --auth auto|basic|digest    Authentication scheme (default: auto)
 ```
 
 **Examples:**

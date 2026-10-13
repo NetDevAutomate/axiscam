@@ -1,7 +1,7 @@
 """Resolving a command's device options into an open device.
 
 Every device command takes the same options (``--device``/``--host``,
-credentials, ``--port``, ``--digest``). :func:`resolve_device_config` turns
+credentials, ``--port``, ``--auth``). :func:`resolve_device_config` turns
 them, plus the config file, into one :class:`DeviceContext`; ``open()`` on
 that context is the single place the device class is instantiated, so
 transport settings (``https``, ``ssl_verify``, ``timeout``) cannot be dropped
@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import typer
 
 from axis_cam import AxisCamera, AxisIntercom, AxisRecorder, AxisSpeaker
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import console
 from axis_cam.config import DeviceConfig, load_config
 from axis_cam.devices.base import AxisDevice
@@ -49,7 +50,7 @@ class DeviceContext:
         https: Use HTTPS (never inferred from the port).
         ssl_verify: Verify the device certificate.
         timeout: Request timeout in seconds.
-        use_digest_auth: Digest (``True``) or Basic (``False``) authentication.
+        auth_mode: ``auto`` (follow the device's challenge), ``basic`` or ``digest``.
     """
 
     host: str
@@ -60,7 +61,7 @@ class DeviceContext:
     https: bool = True
     ssl_verify: bool = False
     timeout: float = 30.0
-    use_digest_auth: bool = True
+    auth_mode: AuthMode = AuthMode.AUTO
 
     def open(self) -> AxisDevice:
         """Instantiate the device class for ``device_type`` with these parameters."""
@@ -71,7 +72,7 @@ class DeviceContext:
             self.port,
             ssl_verify=self.ssl_verify,
             timeout=self.timeout,
-            use_digest_auth=self.use_digest_auth,
+            auth_mode=self.auth_mode,
             https=self.https,
         )
 
@@ -83,7 +84,7 @@ def _from_config(
     password: str | None,
     port: int | None,
     timeout: float,
-    digest: bool,
+    auth_mode: AuthMode,
 ) -> DeviceContext:
     """Build a DeviceContext from a config entry plus CLI overrides."""
     return DeviceContext(
@@ -95,7 +96,7 @@ def _from_config(
         https=config.https,
         ssl_verify=config.ssl_verify,
         timeout=timeout,
-        use_digest_auth=digest,
+        auth_mode=auth_mode,
     )
 
 
@@ -106,7 +107,7 @@ def _ad_hoc(
     port: int | None,
     *,
     timeout: float,
-    digest: bool,
+    auth_mode: AuthMode,
 ) -> DeviceContext:
     """A device given by address only: credentials required, secure defaults."""
     if not username or not password:
@@ -123,7 +124,7 @@ def _ad_hoc(
         port=port if port is not None else 443,
         device_type="camera",
         timeout=timeout,
-        use_digest_auth=digest,
+        auth_mode=auth_mode,
     )
 
 
@@ -134,7 +135,7 @@ def resolve_device_config(
     password: str | None,
     port: int | None = None,
     *,
-    digest: bool = True,
+    auth_mode: AuthMode = AuthMode.AUTO,
 ) -> DeviceContext:
     """Resolve device connection parameters from options or config.
 
@@ -149,7 +150,7 @@ def resolve_device_config(
         username: Username override.
         password: Password override.
         port: Port override; ``None`` means the configured port, else 443.
-        digest: Use Digest authentication (default) rather than Basic.
+        auth_mode: Authentication scheme policy (default: follow the device's challenge).
 
     Returns:
         DeviceContext carrying everything the device class needs, including
@@ -161,7 +162,9 @@ def resolve_device_config(
     app_config = load_config()
 
     if host:
-        return _ad_hoc(host, username, password, port, timeout=app_config.timeout, digest=digest)
+        return _ad_hoc(
+            host, username, password, port, timeout=app_config.timeout, auth_mode=auth_mode
+        )
 
     # Named device, or the configured default device.
     name = device or app_config.default_device
@@ -172,7 +175,7 @@ def resolve_device_config(
             password=password,
             port=port,
             timeout=app_config.timeout,
-            digest=digest,
+            auth_mode=auth_mode,
         )
 
     # --device that looks like a host/IP: config lookup by host, else ad hoc.
@@ -185,9 +188,11 @@ def resolve_device_config(
                     password=password,
                     port=port,
                     timeout=app_config.timeout,
-                    digest=digest,
+                    auth_mode=auth_mode,
                 )
-        return _ad_hoc(device, username, password, port, timeout=app_config.timeout, digest=digest)
+        return _ad_hoc(
+            device, username, password, port, timeout=app_config.timeout, auth_mode=auth_mode
+        )
 
     console.print(
         "[red]Error:[/red] No device specified. Use --device or --host",

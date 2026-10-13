@@ -4,6 +4,7 @@ from typing import Annotated
 
 import typer
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     console,
     logs_app,
@@ -11,8 +12,8 @@ from axis_cam.cli.app import (
 )
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     LinesOption,
     PasswordOption,
@@ -29,11 +30,11 @@ def logs_system(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     lines: LinesOption = 20,
 ):
     """Get system logs from the device."""
-    _get_logs(device, host, username, password, port, LogType.SYSTEM, lines, digest)
+    _get_logs(device, host, username, password, port, LogType.SYSTEM, lines, auth)
 
 
 @logs_app.command("access")
@@ -43,11 +44,11 @@ def logs_access(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     lines: LinesOption = 20,
 ):
     """Get access logs from the device."""
-    _get_logs(device, host, username, password, port, LogType.ACCESS, lines, digest)
+    _get_logs(device, host, username, password, port, LogType.ACCESS, lines, auth)
 
 
 @logs_app.command("audit")
@@ -57,11 +58,11 @@ def logs_audit(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     lines: LinesOption = 20,
 ):
     """Get audit logs from the device."""
-    _get_logs(device, host, username, password, port, LogType.AUDIT, lines, digest)
+    _get_logs(device, host, username, password, port, LogType.AUDIT, lines, auth)
 
 
 @logs_app.command("all")
@@ -71,11 +72,11 @@ def logs_all(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     lines: LinesOption = 50,
 ):
     """Get all logs from the device."""
-    _get_logs(device, host, username, password, port, LogType.ALL, lines, digest)
+    _get_logs(device, host, username, password, port, LogType.ALL, lines, auth)
 
 
 @logs_app.command("search")
@@ -86,11 +87,11 @@ def logs_search(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     lines: LinesOption = 50,
 ):
     """Search logs for a pattern."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _search_logs():
         async with target.open() as dev:
@@ -119,10 +120,10 @@ def _get_logs(
     port: int | None,
     log_type: LogType,
     lines: int | None,
-    digest: bool = False,
+    auth: AuthMode = AuthMode.AUTO,
 ):
     """Internal function to retrieve and display logs."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _fetch_logs():
         async with target.open() as dev:

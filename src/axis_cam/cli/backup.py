@@ -11,12 +11,13 @@ from typing import Annotated
 import typer
 from rich.table import Table
 
+from axis_cam.auth import AuthMode
 from axis_cam.backup import BackupManifest, create_backup, load_manifest, verify_backup
 from axis_cam.cli.app import backup_app, console, emit_json, run_async
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     JsonOption,
     PasswordOption,
@@ -82,7 +83,7 @@ def backup_create(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     output: Annotated[
         Path,
         typer.Option(
@@ -101,7 +102,7 @@ def backup_create(
     Reads only; nothing on the device changes. The manifest lists what was
     read and - as importantly - what a VAPIX backup cannot contain.
     """
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _create():
         async with target.open() as dev:

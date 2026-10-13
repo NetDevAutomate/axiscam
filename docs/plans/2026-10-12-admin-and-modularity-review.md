@@ -254,6 +254,15 @@ No `Exportable` protocol: backup is every resource's `read()` plus the one modul
 
 The manifest's honesty list (what a VAPIX backup cannot contain, by design): account passwords and hashes; private keys of device certificates; ACAP application binaries and licence keys; recordings and edge-storage content; the device's own TLS/SSH host keys. Not implemented yet (readable in principle): ONVIF users; installed ACAP list; stream profiles beyond what `stream` reads; view areas / PTZ presets; overlays.
 
+### First contact with real devices (2026-10-13, read-only)
+
+Five configured devices (I8016-LVE intercom, 2× M3216-LVE, S3008 recorder — all AXIS OS 12.11.118; C1410 speaker on 11.11.192). Two things broke before a single API was exercised:
+
+1. **Secure-by-default broke the pre-Phase-0 config.** Devices were on `port: 80` with no `https:` key, so TLS went to a plain-HTTP port and failed with the raw `SSL: WRONG_VERSION_NUMBER`. Fixed: `VapixClient` now reports "`host:port` answered plain HTTP to an HTTPS request — set `https: false` or `port: 443`", and the reverse (`400 … plain HTTP … SSL-enabled server port`, Apache wording — the devices run Apache 2.4) as "expects HTTPS but was sent plain HTTP". Test uses a real plain-HTTP socket on 127.0.0.1. The user's config was migrated to 443 (backup kept) and `config.yaml` / `.env` tightened from `0644` to `0600` — they hold literal credentials.
+2. **Digest-by-default failed on three of five devices.** The AXIS OS 12 cameras/intercom with `Network.HTTP.AuthenticationPolicy=recommended` offer *only* `Basic` on HTTPS (401 `WWW-Authenticate: Basic realm=…`) and reject Digest; the 11.x speaker offers only Digest. Axis's Authentication page recommends Basic over HTTPS and Digest over HTTP and says to follow the challenge. Fixed: `axis_cam.auth.VapixAuth` — `auto` (new default) starts with the recommended scheme for the transport and switches once when the device offers only the other; `basic`/`digest` force. `--digest/--no-digest` → `--auth auto|basic|digest`; `use_digest_auth` → `auth_mode`. Basic over plain HTTP is never chosen automatically (`allow_insecure_basic` remains the explicit opt-in). All five devices answer `axiscam info` with defaults.
+
+Both were invisible to 719 green tests. The device pass (item 4) is the gate it was claimed to be.
+
 ## Decisions and open questions
 
 - **Decided:** secure by default — `https` defaults to `True`; plain HTTP is an explicit `https: false` in config. Ad-hoc `--host` use is HTTPS only; a `--http` option was *not* added in Phase 1 (it would widen every command signature for an ad-hoc-only case) — add it in Phase 2 alongside the write-safety flags if a plain-HTTP device actually needs ad-hoc access.

@@ -3,6 +3,7 @@
 from rich.panel import Panel
 from rich.table import Table
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     automation_app,
     console,
@@ -11,8 +12,8 @@ from axis_cam.cli.app import (
 )
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     JsonOption,
     PasswordOption,
@@ -28,11 +29,11 @@ def show_actions(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
 ):
     """Show action rules configuration."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_actions():
         async with target.open() as dev:
@@ -99,11 +100,11 @@ def show_mqtt(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
 ):
     """Show MQTT event bridge configuration."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_mqtt():
         async with target.open() as dev:

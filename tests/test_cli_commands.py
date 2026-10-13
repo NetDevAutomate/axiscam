@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli import DeviceContext, app
 from axis_cam.config import AppConfig
 from axis_cam.exceptions import AxisAuthenticationError, AxisConnectionError
@@ -148,7 +149,7 @@ class TestCommandsEndToEnd:
         assert result.exit_code == 0, result.output
         assert "SSH Configuration" in result.output and "Disabled" in result.output
 
-    def test_digest_flag_reaches_the_context(self, no_config):
+    def test_auth_option_reaches_the_context(self, no_config):
         opened: list[DeviceContext] = []
 
         def fake_open(self):
@@ -156,10 +157,11 @@ class TestCommandsEndToEnd:
             return FakeDevice(ssh=SimpleNamespace(get_config=AsyncMock(return_value=SshConfig())))
 
         with patch.object(DeviceContext, "open", fake_open):
-            runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--no-digest"])
+            runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--auth", "digest"])
+            runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--auth", "BASIC"])
             runner.invoke(app, ["security", "ssh", *HOST_ARGS])
 
-        assert [ctx.use_digest_auth for ctx in opened] == [False, True]
+        assert [ctx.auth_mode for ctx in opened] == [AuthMode.DIGEST, AuthMode.BASIC, AuthMode.AUTO]
         assert opened[0].https is True and opened[0].port == 443
 
     @pytest.mark.parametrize(

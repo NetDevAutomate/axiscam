@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from axis_cam.auth import AuthMode
 from axis_cam.devices import (
     AxisCamera,
     AxisIntercom,
@@ -1150,7 +1151,7 @@ class TestAxisDeviceTransport:
 
     def test_plain_http_is_an_explicit_opt_in(self):
         camera = AxisCamera(
-            "192.168.1.10", "admin", "password", port=80, use_digest_auth=True, https=False
+            "192.168.1.10", "admin", "password", port=80, auth_mode="digest", https=False
         )
         assert camera.client.base_url == "http://192.168.1.10:80"
 
@@ -1158,17 +1159,27 @@ class TestAxisDeviceTransport:
         from axis_cam.exceptions import AxisConfigError
 
         with pytest.raises(AxisConfigError, match="cleartext"):
-            AxisCamera("192.168.1.10", "admin", "password", https=False)
+            AxisCamera("192.168.1.10", "admin", "password", https=False, auth_mode="basic")
+
+    def test_auto_auth_over_plain_http_is_allowed_and_never_falls_back_to_basic(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", https=False)
+        assert camera.client.auth_mode is AuthMode.AUTO
+        assert camera.client.allow_insecure_basic is False
 
     def test_basic_auth_over_plain_http_needs_explicit_allow(self):
         camera = AxisCamera(
-            "192.168.1.10", "admin", "password", https=False, allow_insecure_basic=True
+            "192.168.1.10",
+            "admin",
+            "password",
+            https=False,
+            auth_mode="basic",
+            allow_insecure_basic=True,
         )
         assert camera.client.base_url.startswith("http://")
-        assert camera.client.use_digest_auth is False
+        assert camera.client.auth_mode is AuthMode.BASIC
 
     def test_digest_over_plain_http_is_allowed(self):
-        camera = AxisCamera("192.168.1.10", "admin", "password", https=False, use_digest_auth=True)
+        camera = AxisCamera("192.168.1.10", "admin", "password", https=False, auth_mode="digest")
         assert camera.client.base_url.startswith("http://")
 
     def test_ssl_verify_and_timeout_reach_the_client(self):

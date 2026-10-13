@@ -6,6 +6,7 @@ import typer
 from rich.panel import Panel
 from rich.table import Table
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import (
     console,
     emit_json,
@@ -14,8 +15,8 @@ from axis_cam.cli.app import (
 )
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     HostOption,
     PasswordOption,
     PortOption,
@@ -30,7 +31,7 @@ def stream_show(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: Annotated[bool, typer.Option("--json", "-j", help="Output as JSON")] = False,
 ):
     """Show stream diagnostics (RTSP, RTP, profiles).
@@ -38,7 +39,7 @@ def stream_show(
     Displays streaming configuration useful for troubleshooting
     connectivity issues with third-party systems.
     """
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _show_stream():
         async with target.open() as dev:

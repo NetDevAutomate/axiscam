@@ -12,6 +12,7 @@ from typing import Any
 
 import httpx
 
+from axis_cam.auth import AuthMode, VapixAuth
 from axis_cam.exceptions import (
     AxisAuthenticationError,
     AxisConnectionError,
@@ -23,7 +24,7 @@ class VapixClient:
     """HTTP client for VAPIX API communication.
 
     This client handles all HTTP communication with AXIS devices, including:
-    - Basic or Digest authentication (configurable, defaults to Basic)
+    - Basic or Digest authentication, chosen from the device's challenge by default
     - Request formatting for both legacy CGI and REST APIs
     - Response parsing and error handling
     - Connection management via async context manager
@@ -43,7 +44,10 @@ class VapixClient:
         use_https: Whether to use HTTPS (default False).
         timeout: Request timeout in seconds.
         verify_ssl: Whether to verify SSL certificates.
-        use_digest_auth: Use Digest auth instead of Basic (default False).
+        auth_mode: ``AUTO`` (follow the device's challenge: Basic over HTTPS,
+            Digest over HTTP, switching if the device offers only the other),
+            or ``BASIC`` / ``DIGEST`` to force one.
+        allow_insecure_basic: Permit Basic over plain HTTP (cleartext credentials).
     """
 
     def __init__(
@@ -55,7 +59,9 @@ class VapixClient:
         use_https: bool = False,
         timeout: float = 30.0,
         verify_ssl: bool = False,
-        use_digest_auth: bool = False,
+        auth_mode: AuthMode | str = AuthMode.AUTO,
+        *,
+        allow_insecure_basic: bool = False,
     ) -> None:
         """Initialize the VAPIX client.
 
@@ -67,7 +73,8 @@ class VapixClient:
             use_https: Whether to use HTTPS (default False).
             timeout: Request timeout in seconds.
             verify_ssl: Whether to verify SSL certificates.
-            use_digest_auth: Use Digest auth instead of Basic (default False).
+            auth_mode: Authentication scheme policy (see class docstring).
+            allow_insecure_basic: Permit Basic over plain HTTP.
         """
         self.host = host.strip()
         self.username = username
@@ -76,8 +83,15 @@ class VapixClient:
         self.use_https = use_https
         self.timeout = timeout
         self.verify_ssl = verify_ssl
-        self.use_digest_auth = use_digest_auth
+        self.auth_mode = AuthMode(auth_mode)
+        self.allow_insecure_basic = allow_insecure_basic
+        self._auth: VapixAuth | None = None
         self._client: httpx.AsyncClient | None = None
+
+    @property
+    def auth_scheme(self) -> str | None:
+        """``"basic"`` or ``"digest"`` once settled by a request, else ``None``."""
+        return self._auth.scheme if self._auth else None
 
     @property
     def base_url(self) -> str:
@@ -95,13 +109,15 @@ class VapixClient:
         Returns:
             The connected client instance.
         """
-        if self.use_digest_auth:
-            auth = httpx.DigestAuth(self.username, self.password)
-        else:
-            auth = httpx.BasicAuth(self.username, self.password)
-
+        self._auth = VapixAuth(
+            self.username,
+            self.password,
+            mode=self.auth_mode,
+            https=self.use_https,
+            allow_insecure_basic=self.allow_insecure_basic,
+        )
         self._client = httpx.AsyncClient(
-            auth=auth,
+            auth=self._auth,
             timeout=self.timeout,
             verify=self.verify_ssl,
             follow_redirects=True,
@@ -165,7 +181,7 @@ class VapixClient:
             self._check_response(response)
             return response
         except httpx.ConnectError as e:
-            raise AxisConnectionError(f"Failed to connect to {self.host}: {e}") from e
+            raise self._connection_error(e) from e
         except httpx.TimeoutException as e:
             raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
 
@@ -198,7 +214,7 @@ class VapixClient:
             self._check_response(response)
             return response
         except httpx.ConnectError as e:
-            raise AxisConnectionError(f"Failed to connect to {self.host}: {e}") from e
+            raise self._connection_error(e) from e
         except httpx.TimeoutException as e:
             raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
 
@@ -313,9 +329,26 @@ class VapixClient:
             self._check_response(response)
             return response.content
         except httpx.ConnectError as e:
-            raise AxisConnectionError(f"Failed to connect to {self.host}: {e}") from e
+            raise self._connection_error(e) from e
         except httpx.TimeoutException as e:
             raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
+
+    def _connection_error(self, exc: httpx.ConnectError) -> AxisConnectionError:
+        """Translate a transport failure into an error that names the remedy.
+
+        A TLS handshake against a port that speaks plain HTTP fails with
+        ``SSL: WRONG_VERSION_NUMBER``. Since the scheme is no longer inferred
+        from the port, a device configured ``port: 80`` without ``https: false``
+        hits exactly this; the raw OpenSSL text does not tell the user what to
+        change.
+        """
+        if "WRONG_VERSION_NUMBER" in str(exc):
+            return AxisConnectionError(
+                f"{self.host}:{self.port} answered plain HTTP to an HTTPS request. "
+                "If this device is meant to use HTTP, set `https: false` for it in the "
+                "config (library: https=False); otherwise set `port: 443`."
+            )
+        return AxisConnectionError(f"Failed to connect to {self.host}: {exc}")
 
     def _check_response(self, response: httpx.Response) -> None:
         """Check HTTP response for errors.
@@ -324,9 +357,18 @@ class VapixClient:
             response: HTTP response to check.
 
         Raises:
+            AxisConnectionError: Plain HTTP was sent to a port that expects TLS.
             AxisAuthenticationError: If authentication failed (401).
             AxisDeviceError: If device returned an error status.
         """
+        if response.status_code == 400 and "plain http" in response.text.lower():
+            # Apache: "You're speaking plain HTTP to an SSL-enabled server port";
+            # nginx: "The plain HTTP request was sent to HTTPS port".
+            raise AxisConnectionError(
+                f"{self.host}:{self.port} expects HTTPS but was sent plain HTTP. "
+                "Remove `https: false` for this device (library: https=True), or use "
+                "the device's HTTP port."
+            )
         if response.status_code == 401:
             raise AxisAuthenticationError(
                 f"Authentication failed for {self.host}. Check username/password."

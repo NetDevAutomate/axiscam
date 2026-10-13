@@ -243,7 +243,7 @@ class TestWire:
         )
 
         async with VapixClient(
-            "192.168.1.10", "root", "pw", port=443, use_https=True, use_digest_auth=False
+            "192.168.1.10", "root", "pw", port=443, use_https=True, auth_mode="basic"
         ) as client:
             groups = await ParamAPI(client).get_all()
 
@@ -259,7 +259,7 @@ class TestWire:
             return_value=httpx.Response(200, text=DOC_EXAMPLE)
         )
         async with VapixClient(
-            "192.168.1.10", "root", "pw", port=443, use_https=True, use_digest_auth=False
+            "192.168.1.10", "root", "pw", port=443, use_https=True, auth_mode="basic"
         ) as client:
             with pytest.raises(AxisDeviceError, match="Invalid JSON"):
                 await client.get_json("/axis-cgi/param.cgi", {"action": "list"})

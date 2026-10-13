@@ -13,12 +13,13 @@ import typer
 from rich.table import Table
 
 from axis_cam.api.users import validate_password, validate_username
+from axis_cam.auth import AuthMode
 from axis_cam.cli.app import accounts_app, console, emit_json, run_async
 from axis_cam.cli.confirm import WritePlan, confirm_write, read_secret
 from axis_cam.cli.context import DeviceContext, resolve_device_config
 from axis_cam.cli.options import (
+    AuthOption,
     DeviceOption,
-    DigestOption,
     DryRunOption,
     HostOption,
     JsonOption,
@@ -122,11 +123,11 @@ def accounts_list(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     json_output: JsonOption = False,
 ):
     """List user accounts with their roles."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _list() -> UserAccounts:
         async with target.open() as dev:
@@ -148,7 +149,7 @@ def accounts_add(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     ptz: PtzOption = False,
     comment: Annotated[
         str, typer.Option("--comment", help="Description stored on the device.")
@@ -159,7 +160,7 @@ def accounts_add(
     dry_run: DryRunOption = False,
 ):
     """Create a user account. The new password is prompted for, never passed on the command line."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
     # Non-interactive input is consumed before anything else so a failure is immediate.
     new_password = _new_password(True, not no_strict) if password_stdin else None
 
@@ -203,14 +204,14 @@ def accounts_set_password(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     password_stdin: PasswordStdinOption = False,
     no_strict: NoStrictOption = False,
     yes: YesOption = False,
     dry_run: DryRunOption = False,
 ):
     """Change an account's password (rotate credentials)."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
     new_password = _new_password(True, not no_strict) if password_stdin else None
 
     async def _set_password() -> None:
@@ -253,14 +254,14 @@ def accounts_set_role(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     ptz: PtzOption = False,
     allow_lockout: AllowLockoutOption = False,
     yes: YesOption = False,
     dry_run: DryRunOption = False,
 ):
     """Change an account's role."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _set_role() -> None:
         async with target.open() as dev:
@@ -296,13 +297,13 @@ def accounts_remove(
     username: UsernameOption = None,
     password: PasswordOption = None,
     port: PortOption = None,
-    digest: DigestOption = True,
+    auth: AuthOption = AuthMode.AUTO,
     allow_lockout: AllowLockoutOption = False,
     yes: YesOption = False,
     dry_run: DryRunOption = False,
 ):
     """Remove a user account."""
-    target = resolve_device_config(device, host, username, password, port, digest=digest)
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _remove() -> None:
         async with target.open() as dev:

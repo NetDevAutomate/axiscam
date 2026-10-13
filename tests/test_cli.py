@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
+from axis_cam.auth import AuthMode
 from axis_cam.cli import DeviceContext, app, get_device_class, resolve_device_config
 from axis_cam.config import AppConfig, DeviceConfig
 
@@ -219,14 +220,14 @@ class TestDeviceContextOpen:
             https=False,
             ssl_verify=True,
             timeout=5.0,
-            use_digest_auth=True,
+            auth_mode=AuthMode.DIGEST,
         )
         dev = target.open()
         assert type(dev).__name__ == "AxisSpeaker"
         assert dev.client.base_url == "http://10.0.0.5:8080"
         assert dev.client.verify_ssl is True
         assert dev.client.timeout == 5.0
-        assert dev.client.use_digest_auth is True
+        assert dev.client.auth_mode is AuthMode.DIGEST
 
     def test_open_defaults_to_https_and_verified_flag_from_config(self):
         target = DeviceContext(
@@ -235,10 +236,9 @@ class TestDeviceContextOpen:
             password="p",
             port=8443,
             device_type="camera",
-            use_digest_auth=False,
         )
         dev = target.open()
-        assert dev.client.use_digest_auth is False
+        assert dev.client.auth_mode is AuthMode.AUTO  # default: follow the device
         assert dev.client.base_url == "https://10.0.0.5:8443"
 
 
