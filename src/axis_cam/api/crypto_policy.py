@@ -1,35 +1,30 @@
-"""Cryptographic Policy API module.
+"""System-wide cryptographic policy (``/config/rest/crypto-policy/v1``).
 
-This module provides access to cryptographic policy settings on AXIS devices
-via the VAPIX crypto-policy API.
+Contract (AXIS OS 12.11, ``crypto-policy/v1/openapi.json``)::
 
-API Endpoints:
-    - /config/rest/crypto-policy/v1 (REST API)
+    {"active_policy": "DEFAULT", "policies": [{"name", "nice_name", "description"}]}
+
+The device offers ``DEFAULT`` (OpenSSL default), ``MODERN`` and ``FIPS``. There
+is no per-cipher or per-TLS-version detail in this API; the HTTPS cipher list
+and legacy TLS switches are parameters (``HTTPS.Ciphers``, ``HTTPS.AllowTLS1``,
+``HTTPS.AllowTLS11`` — the last two absent on AXIS OS 12, which removed them).
 """
 
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
-from axis_cam.models import CipherSuite, CryptoPolicyConfig, TlsVersion
+from axis_cam.models import CryptoPolicy, CryptoPolicyConfig
 
 
 @register
 class CryptoPolicyAPI(BaseAPI):
-    """API module for cryptographic policy configuration.
-
-    This module provides methods to retrieve and manage crypto settings:
-    - TLS version requirements
-    - Cipher suite configuration
-    - HSTS settings
-    - OCSP stapling
+    """Read the active cryptographic policy.
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
-        ...     config = await camera.crypto_policy.get_config()
-        ...     print(f"Min TLS: {config.tls_min_version}")
-        ...     print(f"Weak ciphers: {config.weak_ciphers_enabled}")
+        ...     policy = await camera.crypto_policy.read()
+        ...     policy.active_policy
     """
 
     name = "crypto_policy"
@@ -38,114 +33,26 @@ class CryptoPolicyAPI(BaseAPI):
     REST_PATH = "/config/rest/crypto-policy/v1"
 
     async def read(self) -> CryptoPolicyConfig:
-        """Read the current configuration (``ResourceModule`` protocol)."""
-        return await self.get_config()
+        """Read the policy; errors propagate (404 on products without the API)."""
+        response = await self._get(await self._rest_path())
+        return self.parse(response.get("data", {}))
 
     async def get_config(self) -> CryptoPolicyConfig:
-        """Get cryptographic policy configuration.
+        """Alias of :meth:`read`."""
+        return await self.read()
 
-        Returns:
-            CryptoPolicyConfig model with crypto settings.
-        """
-        try:
-            response = await self._get(await self._rest_path(), params={"recursive": "true"})
-            data = response.get("data", {})
-            return self._parse_config(data)
-        except (AxisDeviceError, AxisApiNotSupportedError):
-            return CryptoPolicyConfig()
-
-    async def get_tls_version_range(self) -> tuple[TlsVersion, TlsVersion]:
-        """Get the allowed TLS version range.
-
-        Returns:
-            Tuple of (min_version, max_version).
-        """
-        config = await self.get_config()
-        return (config.tls_min_version, config.tls_max_version)
-
-    async def get_cipher_suites(self) -> list[CipherSuite]:
-        """Get list of cipher suites.
-
-        Returns:
-            List of CipherSuite models.
-        """
-        config = await self.get_config()
-        return config.cipher_suites
-
-    async def get_enabled_ciphers(self) -> list[CipherSuite]:
-        """Get only enabled cipher suites.
-
-        Returns:
-            List of enabled CipherSuite models.
-        """
-        config = await self.get_config()
-        return [c for c in config.cipher_suites if c.enabled]
-
-    async def weak_ciphers_enabled(self) -> bool:
-        """Check if weak ciphers are enabled.
-
-        Returns:
-            True if weak ciphers are allowed.
-        """
-        config = await self.get_config()
-        return config.weak_ciphers_enabled
-
-    async def hsts_enabled(self) -> bool:
-        """Check if HSTS is enabled.
-
-        Returns:
-            True if HSTS is active.
-        """
-        config = await self.get_config()
-        return config.hsts_enabled
-
-    def _parse_config(self, data: dict[str, Any]) -> CryptoPolicyConfig:
-        """Parse cryptographic policy configuration response.
-
-        Args:
-            data: Raw API response data.
-
-        Returns:
-            CryptoPolicyConfig model instance.
-        """
-        # Parse TLS versions
-        tls_min_str = data.get("tlsMinVersion", "1.2")
-        tls_max_str = data.get("tlsMaxVersion", "1.3")
-
-        try:
-            tls_min = TlsVersion(tls_min_str)
-        except ValueError:
-            tls_min = TlsVersion.TLS_1_2
-
-        try:
-            tls_max = TlsVersion(tls_max_str)
-        except ValueError:
-            tls_max = TlsVersion.TLS_1_3
-
-        # Parse cipher suites
-        cipher_suites = []
-        for cipher_data in data.get("cipherSuites", []):
-            if isinstance(cipher_data, dict):
-                cipher = CipherSuite(
-                    name=cipher_data.get("name", ""),
-                    enabled=cipher_data.get("enabled", True),
-                    strength=cipher_data.get("strength", ""),
-                    key_exchange=cipher_data.get("keyExchange", ""),
-                    authentication=cipher_data.get("authentication", ""),
-                    encryption=cipher_data.get("encryption", ""),
-                    mac=cipher_data.get("mac", ""),
-                )
-                cipher_suites.append(cipher)
-
+    @staticmethod
+    def parse(data: dict[str, Any]) -> CryptoPolicyConfig:
+        """Build the model from the ``data`` object."""
         return CryptoPolicyConfig(
-            tls_min_version=tls_min,
-            tls_max_version=tls_max,
-            cipher_suites=cipher_suites,
-            weak_ciphers_enabled=data.get("weakCiphersEnabled", False),
-            prefer_server_ciphers=data.get("preferServerCiphers", True),
-            session_tickets_enabled=data.get("sessionTicketsEnabled", True),
-            ocsp_stapling_enabled=data.get("ocspStaplingEnabled", False),
-            hsts_enabled=data.get("hstsEnabled", False),
-            hsts_max_age=data.get("hstsMaxAge", 31536000),
-            hsts_include_subdomains=data.get("hstsIncludeSubdomains", False),
+            active_policy=str(data.get("active_policy", "")),
+            policies=[
+                CryptoPolicy(
+                    name=str(p.get("name", "")),
+                    nice_name=str(p.get("nice_name", "")),
+                    description=str(p.get("description", "")),
+                )
+                for p in data.get("policies", [])
+                if isinstance(p, dict)
+            ],
         )

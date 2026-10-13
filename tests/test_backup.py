@@ -28,7 +28,14 @@ from axis_cam.backup import (
 from axis_cam.devices.base import AxisDevice
 from axis_cam.devices.camera import AxisCamera
 from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
-from axis_cam.models import BasicDeviceInfo, NtpConfig, ServerReport, ServerReportFormat, SshConfig
+from axis_cam.models import (
+    BasicDeviceInfo,
+    NtpConfig,
+    ServerReport,
+    ServerReportFormat,
+    SshConfig,
+    SshUser,
+)
 
 posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission bits")
 
@@ -78,7 +85,9 @@ class TestCreateBackup:
     async def test_layout_manifest_and_hashes(self, tmp_path):
         device = _device(
             FakeModule("device_info", INFO),
-            FakeModule("ssh", SshConfig(enabled=True, port=2222), api_id="ssh"),
+            FakeModule(
+                "ssh", SshConfig(enabled=True, users=[SshUser(username="ops")]), api_id="ssh"
+            ),
             params=PARAMS,
         )
 
@@ -91,7 +100,7 @@ class TestCreateBackup:
             "params.json",
             "ssh.json",
         ]
-        assert json.loads((backup_dir / "ssh.json").read_text())["port"] == 2222
+        assert json.loads((backup_dir / "ssh.json").read_text())["users"][0]["username"] == "ops"
         assert json.loads((backup_dir / "params.json").read_text()) == PARAMS
 
         assert manifest.format_version == MANIFEST_VERSION
@@ -273,7 +282,7 @@ class TestVerifyBackup:
     async def test_tampered_file(self, tmp_path):
         backup_dir = await self._backup(tmp_path)
         path = backup_dir / "ssh.json"
-        path.write_text(path.read_text().replace("false", "true "))  # same size
+        path.write_text(path.read_text().replace("null", "true"))  # same size
 
         problems = verify_backup(backup_dir)
 

@@ -1,36 +1,31 @@
-"""Network Time Sync (NTP) API module.
+"""Network time synchronisation (``/config/rest/network-time-sync/v1``).
 
-This module provides access to NTP configuration on AXIS devices
-via the VAPIX network-time-sync API.
+Contract (AXIS OS 12.11, ``network-time-sync/v1/openapi.json``)::
 
-API Endpoints:
-    - /config/rest/network-time-sync/v1beta (REST API)
+    {"ntp": {"client": {"enabled", "synced", "serversSource": "STATIC"|"DHCP",
+                        "staticServers": [..], "advertisedServers": [..],
+                        "timeOffset", "nts": {"enabled", ...}, ...}},
+     "ptp": {"portState", ...}, "ptp_supported": bool}
+
+The device advertises this API as ``v1beta`` on some firmware; the path is
+resolved from discovery, so either answers.
 """
 
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
-from axis_cam.models import NtpConfig, NtpServer, NtpSyncStatus
+from axis_cam.models import NtpConfig
 
 
 @register
 class NtpAPI(BaseAPI):
-    """API module for NTP configuration.
-
-    This module provides methods to retrieve and manage NTP settings:
-    - NTP enabled/disabled state
-    - NTP server configuration
-    - Synchronization status
-    - DHCP-provided NTP servers
+    """Read NTP/PTP state.
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
-        ...     config = await camera.ntp.get_config()
-        ...     print(f"NTP enabled: {config.enabled}")
-        ...     for server in config.servers:
-        ...         print(f"  Server: {server.address}")
+        ...     ntp = await camera.ntp.read()
+        ...     ntp.enabled, ntp.synced, ntp.static_servers
     """
 
     name = "ntp"
@@ -39,95 +34,28 @@ class NtpAPI(BaseAPI):
     REST_PATH = "/config/rest/network-time-sync/v1beta"
 
     async def read(self) -> NtpConfig:
-        """Read the current configuration (``ResourceModule`` protocol)."""
-        return await self.get_config()
+        """Read the configuration; errors propagate (404 on products without the API)."""
+        response = await self._get(await self._rest_path())
+        return self.parse(response.get("data", {}))
 
     async def get_config(self) -> NtpConfig:
-        """Get NTP configuration.
+        """Alias of :meth:`read`."""
+        return await self.read()
 
-        Returns:
-            NtpConfig model with NTP settings.
-        """
-        try:
-            response = await self._get(await self._rest_path(), params={"recursive": "true"})
-            data = response.get("data", {})
-            return self._parse_config(data)
-        except (AxisDeviceError, AxisApiNotSupportedError):
-            return NtpConfig()
-
-    async def is_enabled(self) -> bool:
-        """Check if NTP is enabled.
-
-        Returns:
-            True if NTP is active.
-        """
-        config = await self.get_config()
-        return config.enabled
-
-    async def get_servers(self) -> list[NtpServer]:
-        """Get list of configured NTP servers.
-
-        Returns:
-            List of NtpServer models.
-        """
-        config = await self.get_config()
-        return config.servers
-
-    async def get_sync_status(self) -> NtpSyncStatus:
-        """Get NTP synchronization status.
-
-        Returns:
-            NtpSyncStatus model.
-        """
-        config = await self.get_config()
-        return config.sync_status
-
-    async def is_synchronized(self) -> bool:
-        """Check if time is synchronized via NTP.
-
-        Returns:
-            True if synchronized.
-        """
-        config = await self.get_config()
-        return config.sync_status.synchronized
-
-    def _parse_config(self, data: dict[str, Any]) -> NtpConfig:
-        """Parse NTP configuration response.
-
-        Args:
-            data: Raw API response data.
-
-        Returns:
-            NtpConfig model instance.
-        """
-        # Parse NTP servers
-        servers = []
-        for server_data in data.get("servers", []):
-            if isinstance(server_data, dict):
-                server = NtpServer(
-                    address=server_data.get("address", ""),
-                    enabled=server_data.get("enabled", True),
-                    prefer=server_data.get("prefer", False),
-                    source=server_data.get("source", "static"),
-                )
-                servers.append(server)
-            elif isinstance(server_data, str):
-                servers.append(NtpServer(address=server_data))
-
-        # Parse sync status
-        status_data = data.get("status", {})
-        sync_status = NtpSyncStatus(
-            synchronized=status_data.get("synchronized", False),
-            current_server=status_data.get("currentServer", ""),
-            stratum=status_data.get("stratum", 0),
-            offset_ms=status_data.get("offset", 0.0),
-            last_sync=status_data.get("lastSync", ""),
-        )
-
+    @staticmethod
+    def parse(data: dict[str, Any]) -> NtpConfig:
+        """Build the model from the ``data`` object."""
+        client = (data.get("ntp") or {}).get("client") or {}
+        nts = client.get("nts") or {}
+        ptp = data.get("ptp") or {}
         return NtpConfig(
-            enabled=data.get("enabled", False),
-            servers=servers,
-            sync_status=sync_status,
-            use_dhcp_servers=data.get("useDHCPServers", False),
-            fallback_enabled=data.get("fallbackEnabled", False),
+            enabled=bool(client.get("enabled", False)),
+            synced=bool(client.get("synced", False)),
+            servers_source=str(client.get("serversSource", "")),
+            static_servers=[s for s in client.get("staticServers", []) if s],
+            advertised_servers=[s for s in client.get("advertisedServers", []) if s],
+            time_offset_s=float(client.get("timeOffset", 0.0) or 0.0),
+            nts_enabled=bool(nts.get("enabled", False)),
+            ptp_supported=bool(data.get("ptp_supported", False)),
+            ptp_port_state=str(ptp.get("portState", "")),
         )

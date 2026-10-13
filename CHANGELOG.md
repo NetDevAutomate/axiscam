@@ -25,6 +25,14 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   that lists what a VAPIX backup cannot contain and what this version does not read.
 - `--auth auto|basic|digest`: `auto` follows the device's `WWW-Authenticate`
   challenge (Basic over HTTPS, Digest over HTTP).
+- `axiscam security audit` and `axis_cam.audit`: the AXIS OS Hardening Guide
+  (July 2026) as checks over what the library already reads — the guide's own
+  "Basic hardening via VAPIX API" parameters plus HTTPS-only, authentication
+  policy, cipher list, remote syslog, accounts, ONVIF users, SNMP, firewall,
+  crypto policy, NTP, certificates, firmware. Each finding carries evidence,
+  the guide's remedy and section; `unknown` (could not read) is never pass or
+  fail; `n/a` when the product lacks the setting. Exit 1 on any failure
+  (`--no-fail` for pipelines), `--all`, `--json`.
 - `axiscam onvif list|add|set-password|set-level|remove` and `OnvifUsersAPI`:
   the ONVIF user database (separate from VAPIX accounts) over the ONVIF Device
   Management SOAP service on `/vapix/services`, which takes VAPIX administrator
@@ -69,6 +77,17 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
 - Coverage gate measures coverage (`--cov=src/axis_cam`) with a ratcheting floor.
 
 ### Fixed
+
+- The SSH, firewall, SNMP, crypto-policy, certificate and NTP readers were
+  parsing field names no device sends (`ipv4Rules`, `tlsMinVersion`,
+  `authorizedKeys`, …) and swallowing every error into an all-defaults model,
+  so `security ssh` reported SSH disabled on a device where it is on. Each is
+  now shaped by the device's own OpenAPI (fetched from
+  `/config/discover/apis/<api>/<version>/openapi.json`) and verified live;
+  errors propagate. `SshConfig.enabled` comes from `Network.SSH.Enabled` (the
+  REST API has no switch). Certificates are parsed from their PEM
+  (`cryptography`): subject, issuer, validity, key type, fingerprint,
+  self-signed. `SnmpConfig` never holds community strings.
 - `ParamAPI` parsed JSON against a `text/plain` CGI and had never returned data on
   a real device.
 - API discovery fetched `/config/discover/apis.json` (404 on AXIS OS 11.11 and

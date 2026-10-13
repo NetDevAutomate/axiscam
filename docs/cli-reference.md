@@ -476,56 +476,54 @@ $ axiscam network dns --device front_camera
 
 ### security
 
-Security configuration commands.
+Security configuration readers and the hardening audit.
 
 ```mermaid
 flowchart LR
     SECURITY[axiscam security] --> FIREWALL[firewall]
     SECURITY --> SSH[ssh]
     SECURITY --> CERTS[certs]
+    SECURITY --> AUDIT[audit]
+    AUDIT --> PARAMS[param.cgi tree] & READERS[ssh, firewall, snmp, crypto-policy, cert, ntp, users, onvif_users, device_info]
+    AUDIT --> REPORT[pass / FAIL / unknown / n/a / info]
 ```
-
-#### security firewall
 
 ```bash
-axiscam security firewall [OPTIONS]
-
-Options:
-  --device, -d    Device name
-  --json, -j      Output as JSON
+axiscam security firewall [--json] [OPTIONS]   # activated, default policy, active and pending rules
+axiscam security ssh [--json] [OPTIONS]        # Network.SSH.Enabled + the SSH users
+axiscam security certs [--json] [OPTIONS]      # device and CA certificates (parsed from PEM), keystores
+axiscam security audit [--all] [--json] [--no-fail] [OPTIONS]
 ```
 
-#### security ssh
+**`audit`** checks the device against the [AXIS OS Hardening Guide](https://help.axis.com/en-us/axis-os-hardening-guide)
+(July 2026 edition), read-only. The guide's "Basic hardening via VAPIX API" table
+names a parameter and a hardened value for each basic recommendation; those are
+checked verbatim (Bonjour, UPnP, Zero-Conf, WS-Discovery, O3C, SSH, FTP, ARP/Ping,
+script editor, web interface, TLS 1.0/1.1, access log, ONVIF replay protection,
+server tokens, brute-force delay, HTTPS). On top: HTTPS-only per role
+(`System.BoaGroupPolicy.*`), HTTP authentication policy, the TLS 1.2 cipher list
+against the guide's, remote syslog, a dedicated non-admin account and unknown
+administrators (AXIS OS Forensics Guide), ONVIF users, SNMP v1/v2c and default
+community, firewall activated with DROP, crypto policy, NTP synced, certificates
+expiring within 90 days or self-signed, firmware version (recorded, not compared
+online).
 
-```bash
-axiscam security ssh [OPTIONS]
+| Status | Meaning |
+|--------|---------|
+| `pass` / `FAIL` | The setting was read and compared |
+| `unknown` | Could not read (403, 404, missing parameter): **never** counted as pass or fail |
+| `n/a` | The product does not have the setting (AXIS OS 12 removed FTP and TLS 1.0/1.1): nothing to harden |
+| `info` | Recorded for the record (administrators, ONVIF users, firmware) |
 
-Options:
-  --device, -d    Device name
-```
-
-#### security certs
-
-```bash
-axiscam security certs [OPTIONS]
-
-Options:
-  --device, -d    Device name
-```
+Exit status is 1 when any check fails; `--no-fail` for reporting pipelines.
+Passing and n/a checks are hidden unless `--all`. `--json` gives
+`{counts, findings[{id, title, status, severity, evidence, recommendation, reference}]}`.
 
 **Examples:**
 ```bash
-# Show firewall rules
-$ axiscam security firewall --device front_camera
-
-# Show SSH configuration
-$ axiscam security ssh --device front_camera
-
-# Show certificates
-$ axiscam security certs --device front_camera
+$ axiscam security audit --device front_camera
+$ axiscam security audit --device front_camera --json --no-fail | jq '.findings[] | select(.status=="fail") | .id'
 ```
-
----
 
 ### services
 

@@ -1,8 +1,9 @@
 """Tests for Pydantic models."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 from axis_cam.models import (
     ActionConfig,
@@ -22,16 +23,15 @@ from axis_cam.models import (
     BestSnapshotConfig,
     CertConfig,
     Certificate,
-    CertificateType,
+    CryptoPolicyConfig,
     DeviceCapabilities,
     DeviceParameter,
     DeviceProperties,
     DeviceStatus,
     DeviceType,
     DnsSettings,
-    FirewallAction,
     FirewallConfig,
-    FirewallProtocol,
+    FirewallPolicy,
     FirewallRule,
     GeolocationConfig,
     LogEntry,
@@ -46,9 +46,7 @@ from axis_cam.models import (
     NetworkInterface,
     NetworkSettings,
     NtpConfig,
-    NtpServer,
     NtpStatus,
-    NtpSyncStatus,
     ObjectClass,
     ParameterGroup,
     ProxySettings,
@@ -61,10 +59,8 @@ from axis_cam.models import (
     SnapshotProfile,
     SnapshotTrigger,
     SnmpConfig,
-    SnmpTrapReceiver,
-    SnmpVersion,
     SshConfig,
-    SshKey,
+    SshUser,
     StorageDestination,
     StorageType,
     TimeInfo,
@@ -154,8 +150,6 @@ class TestBasicDeviceInfo:
 
     def test_model_is_frozen(self):
         """Test that BasicDeviceInfo is immutable."""
-        from pydantic import ValidationError
-
         info = BasicDeviceInfo(serial_number="ABC123")
         with pytest.raises(ValidationError):
             info.serial_number = "XYZ789"
@@ -607,344 +601,67 @@ class TestNetworkConfig:
         assert config.global_proxy.server == "proxy.local"
 
 
-class TestFirewallEnums:
-    """Tests for Firewall enumeration types."""
-
-    def test_firewall_action_values(self):
-        """Test FirewallAction enum values."""
-        assert FirewallAction.ALLOW.value == "allow"
-        assert FirewallAction.DENY.value == "deny"
-        assert FirewallAction.DROP.value == "drop"
-        assert FirewallAction.REJECT.value == "reject"
-
-    def test_firewall_protocol_values(self):
-        """Test FirewallProtocol enum values."""
-        assert FirewallProtocol.ANY.value == "any"
-        assert FirewallProtocol.TCP.value == "tcp"
-        assert FirewallProtocol.UDP.value == "udp"
-        assert FirewallProtocol.ICMP.value == "icmp"
-        assert FirewallProtocol.ICMPV6.value == "icmpv6"
-
-
-class TestFirewallRule:
-    """Tests for FirewallRule model."""
-
-    def test_create_with_defaults(self):
-        """Test creating FirewallRule with defaults."""
-        rule = FirewallRule()
-        assert rule.action == FirewallAction.ALLOW
-        assert rule.protocol == FirewallProtocol.ANY
-        assert rule.source == ""
-        assert rule.dest_port == ""
-        assert rule.enabled is True
-
-    def test_create_with_values(self):
-        """Test creating FirewallRule with values."""
-        rule = FirewallRule(
-            action=FirewallAction.DENY,
-            protocol=FirewallProtocol.TCP,
-            source="192.168.1.0/24",
-            dest_port="22",
-            description="Block SSH from internal",
-            enabled=True,
-        )
-        assert rule.action == FirewallAction.DENY
-        assert rule.protocol == FirewallProtocol.TCP
-        assert rule.source == "192.168.1.0/24"
-        assert rule.dest_port == "22"
-
-
-class TestFirewallConfig:
-    """Tests for FirewallConfig model."""
-
-    def test_create_with_defaults(self):
-        """Test creating FirewallConfig with defaults."""
+class TestFirewallModels:
+    def test_defaults_are_the_api_defaults(self):
         config = FirewallConfig()
-        assert config.enabled is False
-        assert config.ipv4_rules == []
-        assert config.ipv6_rules == []
-        assert config.default_policy == FirewallAction.ALLOW
-        assert config.icmp_allowed is True
+        assert config.activated is False
+        assert config.default_policy is FirewallPolicy.ACCEPT
+        assert config.rules == [] and config.pending_rules == []
 
-    def test_create_with_rules(self):
-        """Test creating FirewallConfig with rules."""
-        rules = [
-            FirewallRule(action=FirewallAction.ALLOW, dest_port="443"),
-            FirewallRule(action=FirewallAction.DROP, protocol=FirewallProtocol.TCP),
-        ]
-        config = FirewallConfig(
-            enabled=True,
-            ipv4_rules=rules,
-            default_policy=FirewallAction.DENY,
+    def test_rule_is_flattened_strings(self):
+        rule = FirewallRule(
+            rule_type="LIMIT", port="TCP/22", limit="3 NEWCONNECTIONS/SECOND burst 3"
         )
-        assert config.enabled is True
-        assert len(config.ipv4_rules) == 2
-        assert config.default_policy == FirewallAction.DENY
+        assert rule.ip is None and rule.port == "TCP/22"
+
+    def test_frozen(self):
+        config = FirewallConfig(activated=True)
+        with pytest.raises(ValidationError):
+            config.activated = False  # type: ignore[misc]
 
 
-class TestSshKey:
-    """Tests for SshKey model."""
+class TestSshModels:
+    def test_enabled_is_tri_state(self):
+        assert SshConfig().enabled is None
+        assert SshConfig(enabled=False, users=[SshUser(username="ataylor")]).users[0].comment == ""
 
-    def test_create_with_defaults(self):
-        """Test creating SshKey with defaults."""
-        key = SshKey()
-        assert key.key_type == ""
-        assert key.key == ""
-        assert key.comment == ""
-        assert key.fingerprint == ""
 
-    def test_create_with_values(self):
-        """Test creating SshKey with values."""
-        key = SshKey(
-            key_type="ssh-ed25519",
-            key="AAAAC3NzaC1lZDI1NTE5AAAA...",
-            comment="admin@example.com",
-            fingerprint="SHA256:abc123...",
+class TestSnmpModel:
+    def test_never_holds_community_strings(self):
+        fields = set(SnmpConfig.model_fields)
+        assert "read_community" not in fields and "write_community" not in fields
+        assert {"read_community_is_default", "write_community_set"} <= fields
+
+
+class TestCryptoPolicyModel:
+    def test_defaults(self):
+        config = CryptoPolicyConfig()
+        assert config.active_policy == "" and config.policies == []
+
+
+class TestCertificateModel:
+    def test_expires_within(self):
+        now = datetime(2026, 10, 13, tzinfo=UTC)
+        soon = Certificate(alias="a", not_after=datetime(2026, 12, 1, tzinfo=UTC))
+        later = Certificate(alias="b", not_after=datetime(2030, 1, 1, tzinfo=UTC))
+        unparsed = Certificate(alias="c")
+        assert soon.expires_within(90, now=now) is True
+        assert later.expires_within(90, now=now) is False
+        assert unparsed.expires_within(90, now=now) is False
+        assert Certificate(alias="d", not_after=datetime(2020, 1, 1, tzinfo=UTC)).expires_within(
+            0, now=now
         )
-        assert key.key_type == "ssh-ed25519"
-        assert key.comment == "admin@example.com"
+
+    def test_store_defaults(self):
+        store = CertConfig()
+        assert store.certificates == [] and store.keystores == [] and store.default_keystore == ""
 
 
-class TestSshConfig:
-    """Tests for SshConfig model."""
-
-    def test_create_with_defaults(self):
-        """Test creating SshConfig with defaults."""
-        config = SshConfig()
-        assert config.enabled is False
-        assert config.port == 22
-        assert config.root_login_allowed is False
-        assert config.password_auth_enabled is True
-        assert config.authorized_keys == []
-
-    def test_create_with_values(self):
-        """Test creating SshConfig with values."""
-        config = SshConfig(
-            enabled=True,
-            port=2222,
-            root_login_allowed=True,
-            authorized_keys=[SshKey(key_type="ssh-rsa", comment="test")],
-        )
-        assert config.enabled is True
-        assert config.port == 2222
-        assert len(config.authorized_keys) == 1
-
-
-class TestSnmpVersion:
-    """Tests for SnmpVersion enum."""
-
-    def test_snmp_version_values(self):
-        """Test SnmpVersion enum values."""
-        assert SnmpVersion.V1.value == "v1"
-        assert SnmpVersion.V2C.value == "v2c"
-        assert SnmpVersion.V3.value == "v3"
-
-
-class TestSnmpTrapReceiver:
-    """Tests for SnmpTrapReceiver model."""
-
-    def test_create_with_defaults(self):
-        """Test creating SnmpTrapReceiver with defaults."""
-        receiver = SnmpTrapReceiver()
-        assert receiver.address == ""
-        assert receiver.port == 162
-        assert receiver.community == ""
-        assert receiver.enabled is True
-
-    def test_create_with_values(self):
-        """Test creating SnmpTrapReceiver with values."""
-        receiver = SnmpTrapReceiver(
-            address="192.168.1.100",
-            port=1162,
-            community="private",
-            enabled=True,
-        )
-        assert receiver.address == "192.168.1.100"
-        assert receiver.port == 1162
-        assert receiver.community == "private"
-
-
-class TestSnmpConfig:
-    """Tests for SnmpConfig model."""
-
-    def test_create_with_defaults(self):
-        """Test creating SnmpConfig with defaults."""
-        config = SnmpConfig()
-        assert config.enabled is False
-        assert config.version == SnmpVersion.V2C
-        assert config.read_community == "public"
-        assert config.write_community == ""
-        assert config.trap_receivers == []
-        assert config.v3_enabled is False
-
-    def test_create_with_values(self):
-        """Test creating SnmpConfig with values."""
-        config = SnmpConfig(
-            enabled=True,
-            version=SnmpVersion.V3,
-            read_community="public",
-            system_contact="admin@example.com",
-            system_location="Building A, Room 101",
-            v3_enabled=True,
-            v3_username="admin",
-        )
-        assert config.enabled is True
-        assert config.version == SnmpVersion.V3
-        assert config.system_location == "Building A, Room 101"
-
-
-class TestCertificateType:
-    """Tests for CertificateType enum."""
-
-    def test_certificate_type_values(self):
-        """Test CertificateType enum values."""
-        assert CertificateType.SERVER.value == "server"
-        assert CertificateType.CLIENT.value == "client"
-        assert CertificateType.CA.value == "ca"
-
-
-class TestCertificate:
-    """Tests for Certificate model."""
-
-    def test_create_with_defaults(self):
-        """Test creating Certificate with defaults."""
-        cert = Certificate()
-        assert cert.cert_id == ""
-        assert cert.cert_type == CertificateType.SERVER
-        assert cert.subject == ""
-        assert cert.issuer == ""
-        assert cert.key_size == 0
-        assert cert.self_signed is False
-
-    def test_create_with_values(self):
-        """Test creating Certificate with values."""
-        cert = Certificate(
-            cert_id="cert-001",
-            cert_type=CertificateType.CA,
-            subject="CN=Example CA",
-            issuer="CN=Root CA",
-            not_before="2024-01-01T00:00:00Z",
-            not_after="2025-01-01T00:00:00Z",
-            serial_number="1234567890",
-            key_size=4096,
-            key_type="RSA",
-            self_signed=True,
-        )
-        assert cert.cert_id == "cert-001"
-        assert cert.cert_type == CertificateType.CA
-        assert cert.key_size == 4096
-        assert cert.self_signed is True
-
-
-class TestCertConfig:
-    """Tests for CertConfig model."""
-
-    def test_create_with_defaults(self):
-        """Test creating CertConfig with defaults."""
-        config = CertConfig()
-        assert config.certificates == []
-        assert config.ca_certificates == []
-        assert config.active_certificate is None
-        assert config.https_enabled is True
-        assert config.https_only is False
-
-    def test_create_with_certificates(self):
-        """Test creating CertConfig with certificates."""
-        server_cert = Certificate(cert_id="server-1", cert_type=CertificateType.SERVER)
-        ca_cert = Certificate(cert_id="ca-1", cert_type=CertificateType.CA)
-        config = CertConfig(
-            certificates=[server_cert],
-            ca_certificates=[ca_cert],
-            active_certificate=server_cert,
-            https_only=True,
-        )
-        assert len(config.certificates) == 1
-        assert len(config.ca_certificates) == 1
-        assert config.active_certificate == server_cert
-        assert config.https_only is True
-
-
-class TestNtpServer:
-    """Tests for NtpServer model."""
-
-    def test_create_with_defaults(self):
-        """Test creating NtpServer with defaults."""
-        server = NtpServer()
-        assert server.address == ""
-        assert server.enabled is True
-        assert server.prefer is False
-        assert server.source == "static"
-
-    def test_create_with_values(self):
-        """Test creating NtpServer with values."""
-        server = NtpServer(
-            address="pool.ntp.org",
-            enabled=True,
-            prefer=True,
-            source="static",
-        )
-        assert server.address == "pool.ntp.org"
-        assert server.prefer is True
-
-
-class TestNtpSyncStatus:
-    """Tests for NtpSyncStatus model."""
-
-    def test_create_with_defaults(self):
-        """Test creating NtpSyncStatus with defaults."""
-        status = NtpSyncStatus()
-        assert status.synchronized is False
-        assert status.current_server == ""
-        assert status.stratum == 0
-        assert status.offset_ms == 0.0
-        assert status.last_sync == ""
-
-    def test_create_with_values(self):
-        """Test creating NtpSyncStatus with values."""
-        status = NtpSyncStatus(
-            synchronized=True,
-            current_server="pool.ntp.org",
-            stratum=2,
-            offset_ms=15.5,
-            last_sync="2024-01-15T12:00:00Z",
-        )
-        assert status.synchronized is True
-        assert status.stratum == 2
-        assert status.offset_ms == 15.5
-
-
-class TestNtpConfig:
-    """Tests for NtpConfig model."""
-
-    def test_create_with_defaults(self):
-        """Test creating NtpConfig with defaults."""
+class TestNtpModel:
+    def test_defaults(self):
         config = NtpConfig()
-        assert config.enabled is False
-        assert config.servers == []
-        assert config.sync_status.synchronized is False
-        assert config.use_dhcp_servers is False
-        assert config.fallback_enabled is False
-
-    def test_create_with_servers(self):
-        """Test creating NtpConfig with servers."""
-        servers = [
-            NtpServer(address="pool.ntp.org", prefer=True),
-            NtpServer(address="time.google.com"),
-        ]
-        config = NtpConfig(
-            enabled=True,
-            servers=servers,
-            sync_status=NtpSyncStatus(synchronized=True, stratum=2),
-            use_dhcp_servers=True,
-        )
-        assert config.enabled is True
-        assert len(config.servers) == 2
-        assert config.sync_status.synchronized is True
-
-
-# =============================================================================
-# Action Rules Models Tests
-# =============================================================================
+        assert config.enabled is False and config.synced is False
+        assert config.static_servers == [] and config.ptp_port_state == ""
 
 
 class TestActionRule:

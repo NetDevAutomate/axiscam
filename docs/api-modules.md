@@ -257,18 +257,19 @@ print(f"Timezone: {time_info.timezone}")
 
 **Module:** `api/firewall.py`
 
-Manage device firewall rules.
-
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/config/rest/firewall/v1` | REST | Firewall configuration |
-| `/axis-cgi/firewall.cgi` | CGI | Legacy fallback |
+| `/config/rest/firewall/v1` | REST (`firewall` 1.1.2) | `activated`, `conf.rules.{activeDefaultPolicy, activeRules, pendingDefaultPolicy, pendingRules, testTimeLeft}` |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_config()` | `FirewallConfig` | Current firewall state |
+| `read()` / `get_config()` | `FirewallConfig` | Activated flag, default policy (`ACCEPT`/`DROP`), active and pending rules (flattened `FILTER`/`LIMIT` rules) |
+
+Errors propagate (a 404 on a product without the API is `AxisDeviceError`,
+never an "all defaults" model). Shape verified against the device's OpenAPI on
+AXIS OS 12.11 (2026-10-13).
 
 ---
 
@@ -276,17 +277,19 @@ Manage device firewall rules.
 
 **Module:** `api/ssh.py`
 
-Configure SSH access.
-
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/config/rest/ssh/v1` | REST | SSH configuration |
+| `/config/rest/ssh/v2` | REST (`ssh` 2.0.2) | `users[]` — the accounts with SSH access; nothing else |
+| `/axis-cgi/param.cgi` `Network.SSH.Enabled` | CGI | Whether the SSH service is on (the hardening guide's own switch) |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_config()` | `SshConfig` | SSH settings |
+| `read()` / `get_config()` | `SshConfig` | `enabled` (`None` when the parameter is absent), `users` |
+
+The REST API has no on/off flag, so the reader combines it with the parameter.
+Errors propagate.
 
 ---
 
@@ -393,18 +396,18 @@ still logs in; `set_level` User with a new password → old 401, new works;
 
 **Module:** `api/snmp.py`
 
-Configure SNMP settings.
-
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/config/rest/snmp/v1` | REST | SNMP configuration |
-| `/axis-cgi/param.cgi` | CGI | Legacy SNMP params |
+| `/config/rest/snmp/v1` | REST (`snmp` 1.3.1) | `enabled`, `snmpV1/snmpV2/snmpV3.enabled`, `snmpV3.userPasswdSet/userEncryption`, `snmpV1V2Common.{readCommunity, writeCommunity, address, trap}`, `transportProtocol` |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_config()` | `SnmpConfig` | SNMP settings |
+| `read()` / `get_config()` | `SnmpConfig` | Per-version switches, `read_community_is_default` (is it `public`), `write_community_set`, trap state |
+
+Community strings are credentials: the model never stores them, only whether
+they are set and whether the read community is the default. Errors propagate.
 
 ---
 
@@ -412,17 +415,20 @@ Configure SNMP settings.
 
 **Module:** `api/cert.py`
 
-Manage SSL/TLS certificates.
-
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/config/rest/cert/v1` | REST | Certificate management |
+| `/config/rest/cert/v1` | REST (`cert` 1.1.2) | `certificates[] {alias, certificate (PEM), keystore}`, `ca_certificates[]`, `keystores[]`, `settings.keystore` |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_config()` | `CertConfig` | Certificate info |
+| `read()` / `get_config()` | `CertConfig` | Device and CA certificates with subject, issuer, validity, key type, SHA-256 fingerprint and `self_signed` parsed from the PEM (`cryptography`); keystores |
+| `get_certificates()` | `list[Certificate]` | Device certificates only |
+
+The device gives alias + PEM; everything else is parsed. A PEM that does not
+parse yields a certificate with just its alias. `Certificate.expires_within(days)`
+drives the audit's expiry check. Errors propagate.
 
 ---
 
@@ -430,18 +436,20 @@ Manage SSL/TLS certificates.
 
 **Module:** `api/crypto_policy.py`
 
-Configure TLS/cipher settings.
-
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/config/rest/cryptopolicy/v1` | REST | Crypto configuration |
+| `/config/rest/crypto-policy/v1` | REST (`crypto-policy` 1.1.0, AXIS OS 12) | `active_policy` (`DEFAULT`/`MODERN`/`FIPS`), `policies[]` |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_config()` | `CryptoPolicyConfig` | TLS settings |
-| `get_cipher_suites()` | `list[str]` | Available ciphers |
+| `read()` / `get_config()` | `CryptoPolicyConfig` | The active system-wide policy and the ones offered |
+
+There is no per-cipher or per-TLS-version detail here; the HTTPS cipher list is
+the parameter `HTTPS.Ciphers` (the audit checks it against the hardening guide's
+list) and the legacy TLS switches `HTTPS.AllowTLS1`/`AllowTLS11` exist only on
+AXIS OS 11. Not present on the C1410 (404 → `AxisDeviceError`).
 
 ---
 
@@ -497,18 +505,18 @@ for neighbor in lldp.neighbors:
 
 **Module:** `api/ntp.py`
 
-NTP time synchronization.
-
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/config/rest/ntp/v1` | REST | NTP configuration |
-| `/axis-cgi/param.cgi` | CGI | Legacy NTP params |
+| `/config/rest/network-time-sync/v1` | REST (`network-time-sync` 1.0.2) | `ntp.client.{enabled, synced, serversSource, staticServers, advertisedServers, timeOffset, nts}`, `ptp`, `ptp_supported` |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_config()` | `NtpConfig` | NTP settings |
+| `read()` / `get_config()` | `NtpConfig` | Enabled, synced, server source and lists, offset, NTS, PTP state |
+
+The path is resolved from discovery (advertised as `v1beta` on some firmware).
+Not present on the C1410 (404 → `AxisDeviceError`).
 
 ---
 

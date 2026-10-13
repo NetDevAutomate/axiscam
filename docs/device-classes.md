@@ -228,11 +228,11 @@ The attribute name is the module's registered `name`:
 | `device.logs` | `LogsAPI` | `get_logs(type, max)` → `LogReport` |
 | `device.lldp` | `LldpAPI` | `get_info()` → `LldpInfo` |
 | `device.network` | `NetworkSettingsAPI` | `get_config()` → `NetworkConfig` |
-| `device.firewall` | `FirewallAPI` | `get_config()` → `FirewallConfig` |
-| `device.ssh` | `SshAPI` | `get_config()` → `SshConfig` |
-| `device.snmp` | `SnmpAPI` | `get_config()` → `SnmpConfig` |
-| `device.cert` | `CertAPI` | `get_config()` → `CertConfig` |
-| `device.ntp` | `NtpAPI` | `get_config()` → `NtpConfig` |
+| `device.firewall` | `FirewallAPI` | `read()` → `FirewallConfig` (activated, default policy, active/pending rules) |
+| `device.ssh` | `SshAPI` | `read()` → `SshConfig` (`Network.SSH.Enabled` + SSH users) |
+| `device.snmp` | `SnmpAPI` | `read()` → `SnmpConfig` (per-version switches; community strings never stored) |
+| `device.cert` | `CertAPI` | `read()` → `CertConfig` (PEMs parsed: subject, validity, key type, fingerprint) |
+| `device.ntp` | `NtpAPI` | `read()` → `NtpConfig` (enabled, synced, servers, offset, NTS, PTP) |
 | `device.action` | `ActionAPI` | `get_config()` → `ActionConfig` |
 | `device.mqtt` | `MqttBridgeAPI` | `get_config()` → `MqttBridgeConfig` |
 | `device.recording` | `RecordingAPI` | `get_config()` → `RecordingConfig` |
@@ -246,7 +246,7 @@ The attribute name is the module's registered `name`:
 | `device.oidc` | `OidcAPI` | `get_config()` → `OidcConfig` |
 | `device.oauth` | `OAuthAPI` | `get_config()` → `OAuthConfig` |
 | `device.virtualhost` | `VirtualHostAPI` | `get_config()` → `VirtualHostConfig` |
-| `device.crypto_policy` | `CryptoPolicyAPI` | `get_config()` → `CryptoPolicyConfig` |
+| `device.crypto_policy` | `CryptoPolicyAPI` | `read()` → `CryptoPolicyConfig` (`DEFAULT`/`MODERN`/`FIPS`) |
 | `device.networkpairing` | `NetworkPairingAPI` | `get_config()` → `NetworkPairingConfig` |
 | `device.stream` | `StreamAPI` | `get_diagnostics()` → `StreamDiagnostics` |
 | `device.users` | `UsersAPI` | `list()` → `UserAccounts`; **writes:** `add()`, `set_password()`, `set_role()`, `remove()` |

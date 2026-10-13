@@ -17,7 +17,7 @@ from axis_cam.auth import AuthMode
 from axis_cam.cli import DeviceContext, app
 from axis_cam.config import AppConfig
 from axis_cam.exceptions import AxisAuthenticationError, AxisConnectionError
-from axis_cam.models import SshConfig
+from axis_cam.models import SshConfig, SshUser
 from axis_cam.report import DeviceReport
 
 runner = CliRunner()
@@ -109,28 +109,25 @@ class TestStructure:
 
 class TestCommandsEndToEnd:
     def test_security_ssh_json_renders_the_module_result(self, no_config):
-        ssh = SimpleNamespace(get_config=AsyncMock(return_value=SshConfig(enabled=True, port=2222)))
+        ssh = SimpleNamespace(
+            read=AsyncMock(return_value=SshConfig(enabled=True, users=[SshUser(username="ops")]))
+        )
 
         with _open(FakeDevice(ssh=ssh)):
             result = runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--json"])
 
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert data["enabled"] is True and data["port"] == 2222
+        assert data["enabled"] is True and data["users"][0]["username"] == "ops"
 
     def test_json_output_is_not_wrapped_at_console_width(self, no_config):
         # Rich soft-wraps console.print at its width; machine output must not go
         # through it. A 300-character value would be split mid-string.
-        from axis_cam.models import SshKey
-
         long_comment = "c" * 300
         ssh = SimpleNamespace(
-            get_config=AsyncMock(
+            read=AsyncMock(
                 return_value=SshConfig(
-                    enabled=True,
-                    authorized_keys=[
-                        SshKey(key_type="ssh-ed25519", fingerprint="f", comment=long_comment)
-                    ],
+                    enabled=True, users=[SshUser(username="ops", comment=long_comment)]
                 )
             )
         )
@@ -139,10 +136,10 @@ class TestCommandsEndToEnd:
             result = runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--json"])
 
         assert result.exit_code == 0, result.output
-        assert json.loads(result.output)["authorized_keys"][0]["comment"] == long_comment
+        assert json.loads(result.output)["users"][0]["comment"] == long_comment
 
     def test_security_ssh_table_renders(self, no_config):
-        ssh = SimpleNamespace(get_config=AsyncMock(return_value=SshConfig(enabled=False)))
+        ssh = SimpleNamespace(read=AsyncMock(return_value=SshConfig(enabled=False)))
 
         with _open(FakeDevice(ssh=ssh)):
             result = runner.invoke(app, ["security", "ssh", *HOST_ARGS])
@@ -155,7 +152,7 @@ class TestCommandsEndToEnd:
 
         def fake_open(self):
             opened.append(self)
-            return FakeDevice(ssh=SimpleNamespace(get_config=AsyncMock(return_value=SshConfig())))
+            return FakeDevice(ssh=SimpleNamespace(read=AsyncMock(return_value=SshConfig())))
 
         with patch.object(DeviceContext, "open", fake_open):
             runner.invoke(app, ["security", "ssh", *HOST_ARGS, "--auth", "digest"])

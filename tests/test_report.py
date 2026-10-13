@@ -18,7 +18,7 @@ from axis_cam.exceptions import (
     AxisConnectionError,
     AxisDeviceError,
 )
-from axis_cam.models import FirewallConfig, NtpConfig, SshConfig
+from axis_cam.models import FirewallConfig, NtpConfig, SshConfig, SshUser
 from axis_cam.report import SUMMARY_SECTIONS, DeviceReport, collect_report, render_text
 
 
@@ -75,14 +75,14 @@ class TestCollectReport:
 
     async def test_full_reads_every_available_resource(self):
         device = _device(
-            FakeModule("ssh", SshConfig(enabled=True, port=2222)),
+            FakeModule("ssh", SshConfig(enabled=True, users=[SshUser(username="ops")])),
             FakeModule("ntp", NtpConfig()),
         )
 
         report = await collect_report(device, full=True)
 
         assert set(report.sections) == {"ssh", "ntp"}
-        assert report.sections["ssh"]["port"] == 2222
+        assert report.sections["ssh"]["users"][0]["username"] == "ops"
 
     async def test_sections_hold_json_mode_dumps(self):
         device = _device(FakeModule("ssh", SshConfig(enabled=True)))
@@ -99,12 +99,12 @@ class TestCollectReport:
         device = _device(
             FakeModule("ssh", AxisDeviceError("500 from device")),
             FakeModule("ntp", AxisApiNotSupportedError("no such API")),
-            FakeModule("firewall", FirewallConfig(enabled=True)),
+            FakeModule("firewall", FirewallConfig(activated=True)),
         )
 
         report = await collect_report(device, full=True)
 
-        assert report.sections["firewall"]["enabled"] is True
+        assert report.sections["firewall"]["activated"] is True
         assert report.errors == {"ssh": "500 from device", "ntp": "no such API"}
 
     @pytest.mark.parametrize("exc", [AxisAuthenticationError("401"), AxisConnectionError("down")])
