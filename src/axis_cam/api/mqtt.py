@@ -10,9 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import MqttBridgeConfig, MqttClient, MqttEventFilter
 
 
+@register
 class MqttBridgeAPI(BaseAPI):
     """API module for MQTT event bridge configuration.
 
@@ -29,7 +32,14 @@ class MqttBridgeAPI(BaseAPI):
         ...         print(f"  Broker: {client.host}:{client.port}")
     """
 
+    name = "mqtt"
+    api_id = "event-mqtt-bridge"
+
     REST_PATH = "/config/rest/event-mqtt-bridge/v1beta"
+
+    async def read(self) -> MqttBridgeConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> MqttBridgeConfig:
         """Get complete MQTT bridge configuration.
@@ -38,10 +48,10 @@ class MqttBridgeAPI(BaseAPI):
             MqttBridgeConfig model with MQTT settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return MqttBridgeConfig()
 
     async def get_clients(self) -> list[MqttClient]:
@@ -82,15 +92,17 @@ class MqttBridgeAPI(BaseAPI):
         """
         # Parse clients
         clients = []
-        clients_data = data.get("clients", {})
-        for client_id, client_info in clients_data.items():
+        for client_id, client_info in self._items(data.get("clients")):
             if isinstance(client_info, dict):
                 clients.append(self._parse_client(client_id, client_info))
 
         # Parse event filters
         event_filters = []
-        filters_data = data.get("eventFilters", {})
-        for filter_id, filter_info in filters_data.items():
+        # event-mqtt-bridge v2 nests the filter list under "publication".
+        filters_data = data.get("eventFilters")
+        if filters_data is None and isinstance(data.get("publication"), dict):
+            filters_data = data["publication"].get("eventFilter")
+        for filter_id, filter_info in self._items(filters_data):
             if isinstance(filter_info, dict):
                 event_filters.append(self._parse_filter(filter_id, filter_info))
 

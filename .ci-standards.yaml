@@ -1,0 +1,19 @@
+# Central CI standard (ci-standards, profile python-uv) plus what this repository
+# adds on top. `ci-standards check --target .` resolves this locally; the GitHub
+# Actions workflow mirrors the same checks until the tool is published somewhere
+# CI can fetch it from.
+profile: python-uv
+
+checks:
+  # The profile's `test` is `uv run pytest -q`; this repo gates on coverage too.
+  # The floor lives in pyproject.toml ([tool.coverage.report] fail_under) and
+  # ratchets upward only.
+  test:
+    command: uv run pytest -q --cov=src/axis_cam --cov-report=term:skip-covered
+  # The pre-commit gate runs pyright; the shared profile does not.
+  typecheck:
+    command: uv run pyright
+  # Documented methods must exist on the real classes (tests/test_docs.py), and
+  # every registered module must be documented.
+  docs-match-code:
+    command: uv run pytest -q tests/test_docs.py tests/test_registry.py

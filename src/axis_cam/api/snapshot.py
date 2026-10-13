@@ -11,6 +11,8 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     BestSnapshotConfig,
     SnapshotProfile,
@@ -18,6 +20,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class BestSnapshotAPI(BaseAPI):
     """API module for best snapshot configuration.
 
@@ -36,8 +39,15 @@ class BestSnapshotAPI(BaseAPI):
         ...     image = await camera.snapshot.capture()
     """
 
+    name = "snapshot"
+    api_id = "best-snapshot"
+
     REST_PATH = "/config/rest/best-snapshot/v1beta"
     IMAGE_CGI = "/axis-cgi/jpg/image.cgi"
+
+    async def read(self) -> BestSnapshotConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> BestSnapshotConfig:
         """Get complete best snapshot configuration.
@@ -46,10 +56,10 @@ class BestSnapshotAPI(BaseAPI):
             BestSnapshotConfig model with all snapshot settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return BestSnapshotConfig()
 
     async def get_profiles(self) -> list[SnapshotProfile]:

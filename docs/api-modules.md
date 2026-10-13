@@ -20,7 +20,7 @@ This document provides detailed documentation for all VAPIX API modules in the `
 
 ## Overview
 
-The `axis_cam.api` package contains 29 API modules, each encapsulating a specific domain of the AXIS VAPIX API. All modules inherit from `BaseAPI` and use composition with `VapixClient` for HTTP communication.
+The `axis_cam.api` package contains 28 API modules, each encapsulating a specific domain of the AXIS VAPIX API. All modules inherit from `BaseAPI` and use composition with `VapixClient` for HTTP communication.
 
 ```mermaid
 flowchart TB
@@ -46,11 +46,14 @@ flowchart TB
 
 ### BaseAPI Class
 
-All API modules inherit from `BaseAPI`, which provides:
+All API modules inherit from `BaseAPI`, a plain base class (not an ABC: it has
+no method every module must override) that provides the request helpers and the
+two class attributes every module declares:
 
 ```python
-class BaseAPI(ABC):
-    """Abstract base class for VAPIX API modules."""
+class BaseAPI:
+    name: ClassVar[str]              # attribute on AxisDevice, key in reports/backups
+    api_id: ClassVar[str | None]     # id in /config/discover/apis.json; None = legacy CGI
 
     def __init__(self, client: VapixClient) -> None:
         self._client = client
@@ -68,6 +71,51 @@ class BaseAPI(ABC):
         """Perform a GET request and return raw bytes."""
         return await self._client.get_raw(path, params)
 ```
+
+### Registry and the ResourceModule protocol
+
+Modules are registered with `@register` (`axis_cam.api.registry`) and
+`AxisDevice` builds its modules from the registry, so no code lists the modules
+by hand. A module that implements `read() -> BaseModel` is a *resource*; generic
+services (the `report` command today, backup and the security audit later)
+iterate resources without knowing which ones exist.
+
+```python
+from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+
+@register
+class SshAPI(BaseAPI):
+    name = "ssh"          # device.ssh
+    api_id = "ssh"        # gated by API discovery; None for CGI-only modules
+
+    REST_PATH = "/config/rest/ssh/v2"
+
+    async def read(self) -> SshConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
+
+    async def get_config(self) -> SshConfig: ...
+```
+
+`ResourceModule` is a `typing.Protocol` (structural): a module is a resource by
+having `name`, `api_id` and `read()`, not by inheriting anything. `params`,
+`logs` and `serverreport` are registered modules but not resources.
+
+### Adding a module
+
+1. Create `api/<module>.py` with the class above (`@register`, `name`, `api_id`,
+   and `read()` if it is a resource).
+2. Import it in `api/__init__.py` — a module that is not imported is not
+   registered.
+3. Add one typed declaration to `AxisDevice` (`<name>: <Class>`) so attribute
+   access stays statically typed.
+4. Add a CLI command only if a human-facing view is wanted; `report --full`
+   already includes the module.
+
+`tests/test_registry.py` fails if a `BaseAPI` subclass is not registered, if the
+`AxisDevice` declarations drift from the registry, or if an `api_id` is not one a
+captured device advertises (`src/specs/*.json`).
 
 ### Common Patterns
 
@@ -131,27 +179,48 @@ print(f"Firmware: {info.firmware_version}")
 
 **Module:** `api/param.py`
 
-Access and modify device parameters via the param.cgi endpoint.
+Read device parameters via `param.cgi`. The CGI answers `text/plain` with one
+`<parameter>=<value>` line per parameter (errors are HTTP 200 `# Error: ...`);
+the module parses exactly that and always sends `responseformat=rfc`. Keys are
+normalised to `root.`-prefixed names: a single-parameter group is echoed the way
+it was requested (`group=Image.I0.Name` answers `Image.I0.Name=…`), a group
+always with `root.` (AXIS OS 12.11, live). The one write, `set()`, is driven by
+`axis_cam.restore` through plan → confirm → apply → verify.
+
+`securityLevel` is four digits — the privilege needed to add, remove, read and
+write: `0` anonymous, `1` viewer, `4` operator, `6` admin, `7` nobody. Evidence:
+`Brand.Brand` is `7707`; the Param API page's own example `HTTPS.Enabled` is
+`7706` ("readable by viewer/operator/admin", writable); on the M3216 the 1200
+parameters the beta Param API `$export` marks writable are exactly those whose
+write digit is not `7`.
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/axis-cgi/param.cgi` | CGI | Parameter management |
+| `/axis-cgi/param.cgi?action=list[&group=…]&responseformat=rfc` | CGI (text) | Parameter listing |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_params(group)` | `dict` | Get parameter group |
-| `get_all_params()` | `dict` | Get all parameters |
-| `set_param(name, value)` | `bool` | Set parameter value |
-| `get_friendly_name()` | `str` | Device friendly name |
-| `get_location()` | `str` | Device location |
-| `export_params()` | `dict` | Export all as dict |
+| `get(name)` | `str \| None` | One value; `None` if the parameter does not exist |
+| `get_group(name)` | `ParameterGroup` | Everything under a group (`Network`, `Network.eth0`) |
+| `get_all()` | `list[ParameterGroup]` | Everything, by top-level group; errors propagate |
+| `get_many(names)` | `dict[str, str \| None]` | Several values in one request |
+| `search(pattern)` | `list[DeviceParameter]` | Case-insensitive name match |
+| `export()` | `dict[str, str]` | The whole tree as `{"root.Group.Name": "value"}` — the backup payload |
+| `definitions()` | `dict[str, ParamDefinition]` | `action=listdefinitions`: per-parameter `securityLevel`; `.writable` / `.write_access` decode the write digit |
+| `set(name, value)` | `None` | `action=update` for one parameter; `# Error` body → `AxisDeviceError` (the only write) |
+| `get_friendly_name()` | `str` | Convenience reader |
+| `get_location()` | `str` | Convenience reader |
+| `get_ip_address()` | `str` | Convenience reader |
+| `get_mac_address()` | `str` | Convenience reader |
 
 **Example:**
+
 ```python
-params = await device.params.get_params("Network")
+network = await device.params.get_group("Network")
 name = await device.params.get_friendly_name()
+everything = await device.params.export()
 ```
 
 ---
@@ -172,8 +241,6 @@ Manage device time settings and timezone configuration.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_info()` | `TimeInfo` | Current time and timezone |
-| `set_timezone(tz)` | `bool` | Set timezone |
-| `sync_with_ntp()` | `bool` | Force NTP sync |
 
 **Example:**
 ```python
@@ -202,11 +269,6 @@ Manage device firewall rules.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `FirewallConfig` | Current firewall state |
-| `enable()` | `bool` | Enable firewall |
-| `disable()` | `bool` | Disable firewall |
-| `add_rule(rule)` | `bool` | Add firewall rule |
-| `remove_rule(id)` | `bool` | Remove rule by ID |
-| `list_rules()` | `list[FirewallRule]` | List all rules |
 
 ---
 
@@ -225,9 +287,41 @@ Configure SSH access.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `SshConfig` | SSH settings |
-| `enable()` | `bool` | Enable SSH |
-| `disable()` | `bool` | Disable SSH |
-| `set_port(port)` | `bool` | Change SSH port |
+
+---
+
+### UsersAPI
+
+**Module:** `api/users.py` — the first write-capable module.
+
+Manage VAPIX user accounts. Registered as `users` and a resource, so
+`report --full` lists accounts (names and roles only; never passwords).
+
+| Endpoint | Type | Description |
+|----------|------|-------------|
+| `/axis-cgi/pwdgrp.cgi` | CGI (GET for `action=get`, form POST for writes) | Accounts and group membership |
+
+**Methods:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `list()` / `read()` | `UserAccounts` | Every account with role and PTZ right |
+| `add(username, password, role, *, ptz, comment, strict_password)` | `UserAccount` | Create and verify |
+| `set_password(username, password, *, strict_password)` | `None` | Rotate a password (acknowledged, not verifiable by reading) |
+| `set_role(username, role, *, ptz, allow_lockout)` | `UserAccount` | Change role and verify |
+| `remove(username, *, allow_lockout)` | `None` | Remove and verify |
+
+**Write-safety rules** (enforced here, not in the CLI):
+
+- Credentials are sent as a form-encoded POST body, never in the URL.
+- The CGI reports failure with HTTP 200 and an `Error:` body → `AxisUserError`.
+- `add`/`set_role`/`remove` re-read the list and raise if the device's
+  acknowledgement does not match reality.
+- Removing or de-admining the authenticated account raises `AxisLockoutError`
+  unless `allow_lockout=True`; removing or de-admining the only administrator
+  is always refused.
+- `validate_username()` / `validate_password()` run before any request
+  (`ValueError`).
 
 ---
 
@@ -247,9 +341,6 @@ Configure SNMP settings.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `SnmpConfig` | SNMP settings |
-| `enable()` | `bool` | Enable SNMP |
-| `disable()` | `bool` | Disable SNMP |
-| `set_community(read, write)` | `bool` | Set community strings |
 
 ---
 
@@ -268,10 +359,6 @@ Manage SSL/TLS certificates.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `CertConfig` | Certificate info |
-| `list_certificates()` | `list[Certificate]` | All certificates |
-| `get_certificate(id)` | `Certificate` | Specific certificate |
-| `install_certificate(cert, key)` | `str` | Install new cert |
-| `delete_certificate(id)` | `bool` | Remove certificate |
 
 ---
 
@@ -290,8 +377,6 @@ Configure TLS/cipher settings.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `CryptoPolicyConfig` | TLS settings |
-| `set_min_tls_version(version)` | `bool` | Set minimum TLS |
-| `set_max_tls_version(version)` | `bool` | Set maximum TLS |
 | `get_cipher_suites()` | `list[str]` | Available ciphers |
 
 ---
@@ -315,9 +400,6 @@ Extended network configuration.
 |--------|---------|-------------|
 | `get_config()` | `NetworkConfig` | Network settings |
 | `get_interfaces()` | `list[NetworkInterface]` | Network interfaces |
-| `get_dns_config()` | `DnsConfig` | DNS settings |
-| `set_dns_servers(primary, secondary)` | `bool` | Configure DNS |
-| `set_hostname(hostname)` | `bool` | Set hostname |
 
 ---
 
@@ -337,8 +419,6 @@ LLDP neighbor discovery for switch port mapping.
 |--------|---------|-------------|
 | `get_info()` | `LldpInfo` | LLDP status and neighbors |
 | `get_neighbors()` | `list[LldpNeighbor]` | Discovered neighbors |
-| `enable()` | `bool` | Enable LLDP |
-| `disable()` | `bool` | Disable LLDP |
 
 **Example:**
 ```python
@@ -365,11 +445,6 @@ NTP time synchronization.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `NtpConfig` | NTP settings |
-| `enable()` | `bool` | Enable NTP |
-| `disable()` | `bool` | Disable NTP |
-| `add_server(server)` | `bool` | Add NTP server |
-| `remove_server(server)` | `bool` | Remove NTP server |
-| `force_sync()` | `bool` | Force immediate sync |
 
 ---
 
@@ -389,8 +464,6 @@ Device pairing configuration.
 |--------|---------|-------------|
 | `get_config()` | `NetworkPairingConfig` | Pairing status |
 | `get_paired_devices()` | `list[PairedDevice]` | Paired devices |
-| `pair_device(host, credentials)` | `bool` | Pair new device |
-| `unpair_device(id)` | `bool` | Remove pairing |
 
 ---
 
@@ -443,8 +516,6 @@ Audio multicast streaming control.
 |--------|---------|-------------|
 | `get_config()` | `AudioMulticastConfig` | Multicast settings |
 | `get_groups()` | `list[MulticastGroup]` | Multicast groups |
-| `create_group(config)` | `str` | Create new group |
-| `delete_group(id)` | `bool` | Delete group |
 
 ---
 
@@ -466,10 +537,6 @@ Recording group and profile configuration.
 |--------|---------|-------------|
 | `get_config()` | `RecordingConfig` | Recording settings |
 | `get_groups()` | `list[RecordingGroup]` | Recording groups |
-| `create_group(config)` | `str` | Create group |
-| `delete_group(id)` | `bool` | Delete group |
-| `start_recording(group_id)` | `bool` | Start recording |
-| `stop_recording(group_id)` | `bool` | Stop recording |
 
 ---
 
@@ -489,9 +556,6 @@ Remote object storage destinations.
 |--------|---------|-------------|
 | `get_config()` | `RemoteStorageConfig` | Storage settings |
 | `get_destinations()` | `list[StorageDestination]` | Storage targets |
-| `add_destination(config)` | `str` | Add storage target |
-| `remove_destination(id)` | `bool` | Remove target |
-| `test_connection(id)` | `bool` | Test connectivity |
 
 ---
 
@@ -534,8 +598,6 @@ Video analytics configuration.
 |--------|---------|-------------|
 | `get_config()` | `AnalyticsConfig` | Analytics settings |
 | `get_profiles()` | `list[AnalyticsProfile]` | Analytics profiles |
-| `create_profile(config)` | `str` | Create profile |
-| `delete_profile(id)` | `bool` | Delete profile |
 | `get_scenarios()` | `list[Scenario]` | Detection scenarios |
 
 ---
@@ -555,9 +617,6 @@ Analytics MQTT event publishing.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `AnalyticsMqttConfig` | Publishing settings |
-| `enable()` | `bool` | Enable publishing |
-| `disable()` | `bool` | Disable publishing |
-| `set_broker(host, port)` | `bool` | Configure broker |
 
 ---
 
@@ -580,8 +639,6 @@ Action rules configuration.
 |--------|---------|-------------|
 | `get_config()` | `ActionConfig` | Action rules |
 | `get_rules()` | `list[ActionRule]` | All rules |
-| `create_rule(config)` | `str` | Create rule |
-| `delete_rule(id)` | `bool` | Delete rule |
 | `get_templates()` | `list[ActionTemplate]` | Rule templates |
 
 ---
@@ -602,9 +659,6 @@ MQTT event bridge configuration.
 |--------|---------|-------------|
 | `get_config()` | `MqttBridgeConfig` | MQTT settings |
 | `get_clients()` | `list[MqttClient]` | MQTT clients |
-| `create_client(config)` | `str` | Create client |
-| `delete_client(id)` | `bool` | Delete client |
-| `test_connection(id)` | `bool` | Test connectivity |
 
 ---
 
@@ -624,8 +678,6 @@ Virtual host configuration.
 |--------|---------|-------------|
 | `get_config()` | `VirtualHostConfig` | Virtual host settings |
 | `get_hosts()` | `list[VirtualHost]` | Configured hosts |
-| `create_host(config)` | `str` | Create host |
-| `delete_host(id)` | `bool` | Delete host |
 
 ---
 
@@ -644,9 +696,6 @@ Device geolocation settings.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `GeolocationConfig` | Location settings |
-| `set_coordinates(lat, lon, alt)` | `bool` | Set GPS coords |
-| `set_direction(heading)` | `bool` | Set compass heading |
-| `clear()` | `bool` | Clear location |
 
 ---
 
@@ -660,9 +709,14 @@ System, access, and audit log retrieval.
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/axis-cgi/systemlog.cgi` | CGI | System logs |
-| `/axis-cgi/accesslog.cgi` | CGI | Access logs |
-| `/axis-cgi/auditlog.cgi` | CGI | Audit logs |
+| `/axis-cgi/systemlog.cgi` | CGI | System log (tried first) |
+| `/axis-cgi/accesslog.cgi` | CGI | Access log (tried first) |
+| `/axis-cgi/auditlog.cgi?tail=N` | CGI | Audit log, AXIS OS 12.7+ (tried first) |
+| `/axis-cgi/serverreport.cgi?mode=tar_all` | CGI | Fallback when a CGI is absent; the source for `LogType.ALL` |
+| `/config/rest/log/v1beta` | REST | Persistent-logging setting |
+
+`LogReport.source` names the endpoint that answered. Device-level errors (404) on a
+dedicated CGI fall back to the tarball; authentication and connection errors propagate.
 
 **Methods:**
 
@@ -672,7 +726,7 @@ System, access, and audit log retrieval.
 | `get_system_logs(max_entries)` | `LogReport` | System logs |
 | `get_access_logs(max_entries)` | `LogReport` | HTTP access logs |
 | `get_audit_logs(max_entries)` | `LogReport` | Config change logs |
-| `get_all_logs(max_entries)` | `list[LogReport]` | All log types |
+| `get_all_logs(max_entries)` | `LogReport` | All log types (tarball) |
 
 **Example:**
 ```python
@@ -692,7 +746,10 @@ Server report and debug archive downloads.
 | Endpoint | Type | Description |
 |----------|------|-------------|
 | `/axis-cgi/serverreport.cgi` | CGI | Server reports |
-| `/axis-cgi/debug/debug.tgz` | CGI | Debug archive |
+| `/axis-cgi/debug/debug.tgz` | CGI | Crash report / debug archive (`?cmd=pcapdump&duration=N` is the network trace — not wrapped yet) |
+
+`save_report()` and `save_debug_archive()` write through `axis_cam.files.write_private`
+(`0600`).
 
 **Methods:**
 
@@ -741,9 +798,6 @@ OpenID Connect configuration.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `OidcConfig` | OIDC settings |
-| `enable()` | `bool` | Enable OIDC |
-| `disable()` | `bool` | Disable OIDC |
-| `set_provider(issuer, client_id)` | `bool` | Configure provider |
 
 ---
 
@@ -762,10 +816,6 @@ OAuth 2.0 Client Credentials Grant.
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `get_config()` | `OAuthConfig` | OAuth settings |
-| `enable()` | `bool` | Enable OAuth |
-| `disable()` | `bool` | Disable OAuth |
-| `create_client(config)` | `str` | Create client |
-| `delete_client(id)` | `bool` | Delete client |
 
 ---
 

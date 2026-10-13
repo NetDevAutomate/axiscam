@@ -89,8 +89,8 @@ Options available for most commands that interact with devices.
 | `--host` | `-H` | `str` | - | Direct IP/hostname (overrides --device) |
 | `--username` | `-u` | `str` | Config value | Authentication username |
 | `--password` | `-p` | `str` | Config value | Authentication password |
-| `--port` | `-P` | `int` | `443` | HTTPS port number |
-| `--digest/--no-digest` | - | `bool` | `True` | Use Digest auth (default) or Basic |
+| `--port` | `-P` | `int` | config port, else `443` | TCP port. An explicit value always overrides the device's configured port |
+| `--auth` | - | `auto\|basic\|digest` | `auto` | Follow the device's challenge, or force a scheme |
 | `--json` | `-j` | `bool` | `False` | Output as JSON |
 
 ### Option Precedence
@@ -110,16 +110,24 @@ flowchart TD
 
 ## Authentication
 
-### Digest vs Basic Authentication
+### Basic vs Digest Authentication
 
-Most AXIS devices require **Digest authentication** (the default). Use `--no-digest` only for older devices that require Basic auth.
+Axis's guidance is Basic over HTTPS and Digest over HTTP, and devices differ: an
+AXIS OS 12 camera with `Network.HTTP.AuthenticationPolicy=recommended` offers
+*only* Basic on HTTPS and rejects Digest; an AXIS OS 11 speaker offers only
+Digest. `--auth auto` (the default) starts with the scheme Axis recommends for
+the transport and, if the device answers 401 offering only the other scheme,
+switches once and remembers for the session. A 401 that offers the same scheme
+is a genuine credential failure. Basic over plain HTTP is never chosen
+automatically.
 
 ```bash
-# Default: Digest authentication
+# Default: follow the device
 axiscam info --device front_camera
 
-# Force Basic authentication (rare)
-axiscam info --device legacy_camera --no-digest
+# Force a scheme (diagnosis)
+axiscam info --device front_camera --auth digest
+axiscam info --device front_camera --auth basic
 ```
 
 ### Environment Variables
@@ -228,7 +236,7 @@ axiscam params [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--group` | Parameter group (e.g., "Network") |
-| `--export` | Export all parameters |
+| `--export` | Export every parameter as `{"root.Group.Name": "value"}` (JSON) |
 | `--output, -o` | Output file path |
 
 **Example:**
@@ -275,35 +283,49 @@ axiscam report [OPTIONS]
 |--------|-------|-------------|
 | `--output` | `-o` | Output file path |
 | `--format` | `-f` | Format: `json`, `yaml`, `text` |
-| `--full` | - | Include all configurations |
+| `--full` | - | Include every resource the device advertises |
 
 **Example:**
 ```bash
-# Basic report
+# Summary report
 $ axiscam report --device front_camera --format json --output report.json
 
-# Full report with all configurations
+# Everything the device advertises
 $ axiscam report --device front_camera --full --output full_report.json
 ```
 
-**Full Report Includes:**
-- Basic device info
-- Time configuration
-- LLDP neighbors
-- Stream settings
-- Firewall rules
-- SSH configuration
-- SNMP settings
-- Certificates
-- NTP configuration
-- MQTT bridge
-- Action rules
-- Recording profiles
-- Storage destinations
-- Geolocation
-- Analytics
-- OIDC/OAuth
-- Crypto policy
+**What is included.** The report is driven by the API module registry: it asks the
+device which APIs it advertises (`/config/discover/apis.json`) and reads each
+matching module. The summary report covers `device_info`, `time`, `network`,
+`lldp`, `stream`, `firewall` and `ntp`; `--full` reads every available resource
+(additionally `ssh`, `snmp`, `cert`, `action`, `mqtt`, `recording`, `storage`,
+`geolocation`, `analytics`, `snapshot`, `analytics_mqtt`, `audio_multicast`,
+`oidc`, `oauth`, `virtualhost`, `crypto_policy`, `networkpairing`). A module
+added to the registry appears in `--full` automatically.
+
+**Output shape** (`json` / `yaml`):
+
+```json
+{
+  "device": "front_camera",
+  "generated_at": "2026-10-13T09:00:00+00:00",
+  "sections": {
+    "device_info": { "product_number": "M3216-LVE", "serial_number": "...", "firmware_version": "12.1.60" },
+    "ssh": { "enabled": false, "port": 22, "..." : "..." }
+  },
+  "errors": { "ntp": "Device error: 500" },
+  "skipped": ["stream"]
+}
+```
+
+- `sections` — one entry per module read, keyed by module name, holding the full
+  model (`model_dump(mode="json")`).
+- `errors` — modules the device advertises but that failed to read. Authentication
+  and connection failures are not per-module errors: the command exits 1.
+- `skipped` — requested modules the device does not advertise (not an error).
+
+`--format text` prints a short summary (model, serial, firmware, IP, MAC, LLDP
+neighbour) followed by any errors and skipped modules.
 
 ---
 
@@ -332,7 +354,12 @@ Geolocation:
 
 ### logs
 
-Retrieve device logs.
+Retrieve device logs. Each type is read from its dedicated CGI
+(`systemlog.cgi`, `accesslog.cgi`, `auditlog.cgi`); the server-report tarball
+is used only when a device lacks the CGI (older firmware; audit log needs
+AXIS OS 12.7+) and for `logs all`. The header line names the source that
+answered. For the audit log, `--lines N` is passed to the device as `tail=N` so
+only that many entries are transferred.
 
 ```mermaid
 flowchart LR
@@ -532,12 +559,14 @@ Options:
 
 ### download
 
-Download diagnostic reports and debug archives.
+Download the server report and the crash report. Every file is written with
+`0600` permissions (`axis_cam.files.write_private`).
 
 ```mermaid
 flowchart LR
     DOWNLOAD[axiscam download] --> REPORT[report]
-    DOWNLOAD --> DEBUG[debug]
+    DOWNLOAD --> CRASH[crash-report]
+    CRASH -.hidden alias.-> DEBUG[debug]
 ```
 
 #### download report
@@ -552,7 +581,7 @@ Options:
   --output, -o    Output file path
   --format, -f    Report format (zip_with_image, zip, text)
   --timeout, -t   Download timeout in seconds (default: 60)
-  --digest/--no-digest    Authentication mode
+  --auth auto|basic|digest    Authentication scheme (default: auto)
 ```
 
 **Formats:**
@@ -562,18 +591,22 @@ Options:
 | `zip` | ZIP without image |
 | `text` | Plain text report |
 
-#### download debug
+#### download crash-report
 
-Download debug archive (debug.tgz).
+Download the crash report (`/axis-cgi/debug/debug.tgz`): what the web interface
+calls "Download the crash report" — the server report plus detailed debug data
+such as core dumps and network traces. The command prints Axis's privacy notice
+first (the archive can include user IDs, passwords, video images and network
+traffic) and writes the file `0600`. `axiscam download debug` is a hidden alias.
 
 ```bash
-axiscam download debug [OPTIONS]
+axiscam download crash-report [OPTIONS]
 
 Options:
   --device, -d    Device name
-  --output, -o    Output file path
-  --timeout, -t   Download timeout in seconds (default: 120)
-  --digest/--no-digest    Authentication mode
+  --output, -o    Output file path (default: crash_report_<device>.tgz)
+  --timeout, -t   Download timeout in seconds (default: 300; the device builds the archive on demand)
+  --auth auto|basic|digest    Authentication scheme (default: auto)
 ```
 
 **Examples:**
@@ -584,8 +617,8 @@ $ axiscam download report --device front_camera --output ~/report.zip
 # Download server report as text
 $ axiscam download report --device front_camera --format text --output ~/report.txt
 
-# Download debug archive (large, takes time)
-$ axiscam download debug --device front_camera --output ~/debug.tgz --timeout 180
+# Download the crash report (large; the device takes minutes to build it)
+$ axiscam download crash-report --device front_camera --output ~/crash.tgz --timeout 600
 ```
 
 ---
@@ -649,6 +682,141 @@ Media configuration commands.
 flowchart LR
     MEDIA[axiscam media] --> RECORDING[recording]
     MEDIA --> STORAGE[storage]
+```
+
+---
+
+### accounts
+
+User accounts via `pwdgrp.cgi`. These are the first commands that write to a
+device, and they all follow the same write-safety pattern:
+
+```mermaid
+flowchart LR
+    READ[read current accounts] --> PLAN[show Planned change]
+    PLAN -->|--dry-run| STOP[exit 0, nothing changed]
+    PLAN -->|--yes| APPLY
+    PLAN -->|prompt: Apply this change?| Q{y?}
+    Q -->|n| ABORT[Aborted, exit 1]
+    Q -->|y| APPLY[apply]
+    APPLY --> VERIFY[re-read and verify] --> OUT[print verified result]
+```
+
+```bash
+axiscam accounts list [--json] [OPTIONS]
+axiscam accounts add ACCOUNT --role viewer|operator|admin [--ptz] [--comment TEXT]
+                              [--password-stdin] [--no-strict] [--yes] [--dry-run] [OPTIONS]
+axiscam accounts set-password ACCOUNT [--password-stdin] [--no-strict] [--yes] [--dry-run] [OPTIONS]
+axiscam accounts set-role ACCOUNT --role ROLE [--ptz] [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+axiscam accounts remove ACCOUNT [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--role`, `-r` | `viewer`, `operator` or `admin` (VAPIX roles are cumulative) |
+| `--ptz/--no-ptz` | Grant PTZ control (default: no) |
+| `--password-stdin` | Read the **new account's** password from standard input (one line). Without it, the password is prompted for, hidden, after the plan is accepted. It is never a command-line argument. |
+| `--no-strict` | Do not send `strict_pwd=1`; the device will not enforce its passphrase policy |
+| `--allow-lockout` | Permit removing or de-admining the account you are logged in as |
+| `--yes`, `-y` | Apply without the confirmation prompt |
+| `--dry-run` | Show the planned change and exit 0 |
+
+**Rules the library enforces** (the plan warns about them in advance):
+
+- The device reports failures with HTTP 200 and an `Error:` body; these become one-line errors (`invalid password` → passphrase policy, `account user name` → character rules).
+- `add`, `set-role` and `remove` are verified by re-reading the account list; `set-password` cannot be verified by reading, so the device's acknowledgement is the result — test by logging in.
+- Removing or de-admining the authenticated account is refused without `--allow-lockout`.
+- Removing or de-admining the **only** administrator is refused outright.
+- Account names: 1–14 characters, `A-Z a-z 0-9`. Passwords: 1–64 characters, printable ASCII under `strict_pwd`.
+
+**Examples:**
+```bash
+$ axiscam accounts list --device front_camera
+$ axiscam accounts add ops --role operator --device front_camera          # prompts for the password
+$ echo "$PW" | axiscam accounts set-password ops --password-stdin -y --device front_camera
+$ axiscam accounts remove ops --dry-run --device front_camera
+```
+
+---
+
+### backup
+
+Configuration backups. `create` reads the device and never writes to it; `show`
+and `verify` need only the directory.
+
+```mermaid
+flowchart LR
+    CREATE[axiscam backup create] --> DIR["backup-&lt;device&gt;-&lt;UTC ts&gt;/"]
+    DIR --> M[manifest.json]
+    DIR --> R["&lt;module&gt;.json × N"]
+    DIR --> P[params.json]
+    DIR -.--with-server-report.-> S[server-report.zip]
+    M --> SHOW[axiscam backup show]
+    M --> VERIFY[axiscam backup verify]
+```
+
+```bash
+axiscam backup create [-o PARENT_DIR] [--with-server-report] [OPTIONS]
+axiscam backup show BACKUP_DIR [--json]
+axiscam backup verify BACKUP_DIR
+axiscam backup restore BACKUP_DIR [--include-network] [-v] [--yes] [--dry-run] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--output`, `-o` | Parent directory; the backup directory is created inside it (default: current directory) |
+| `--with-server-report` | Also download the server report (zip with image) into the backup |
+
+**What a backup holds.** One `<module>.json` per resource the device advertises
+(the same modules `report --full` reads), `params.json` with the whole parameter
+tree as `{"root.Group.Name": "value"}`, and `manifest.json` with the tool
+version, device identity, a SHA-256 and source per file, per-module errors, the
+modules the device does not advertise, and two explicit lists:
+
+- **not included by design** — VAPIX gives no client a way to read these: account
+  passwords and hashes, certificate private keys, ACAP binaries and licence keys,
+  recordings and edge-storage content, the device's own TLS/SSH host keys;
+- **not implemented** — readable in principle, not read by this version: ONVIF
+  users, the installed ACAP list, stream profiles beyond the stream module, view
+  areas / PTZ presets / guard tours, overlays.
+
+The directory is created `0700` and every file `0600`. `verify` re-hashes each
+file and exits 1 on a mismatch, a missing file or a file the manifest does not
+list.
+
+**Restore** is deliberately narrow: it restores `params.json` through
+`param.cgi?action=update`, the one write path VAPIX documents for the parameter
+tree. The per-module REST APIs are not written. The flow is the same write-safety
+pattern as `accounts`:
+
+```mermaid
+flowchart LR
+    HASH[verify params.json hash] --> READ[export current params + definitions]
+    READ --> DIFF[diff against params.json]
+    DIFF -->|serial differs| REFUSE[refuse: other device]
+    DIFF --> PLAN[Planned change: N differ, skipped by reason]
+    PLAN -->|--dry-run| STOP[exit 0]
+    PLAN -->|confirm / --yes| APPLY[set one parameter] --> VERIFY[read it back] --> NEXT{more?}
+    NEXT -->|yes| APPLY
+    NEXT -->|no| TABLE[per-parameter results; exit 1 if any failed]
+```
+
+- Skipped with a reason: unchanged; read-only on this device (the plan asks
+  `param.cgi?action=listdefinitions` which parameters the device lets anyone
+  write — `Brand.*`, most of `Properties.*`, `*.NbrOfConfigs`, …); `Network`
+  unless `--include-network` (a wrong address cuts this connection); parameters
+  the device no longer has.
+- `params.json` is checked against the manifest's hash before anything is read
+  from it; a damaged or hand-edited file is refused with exit 1.
+- The device's refusal of a parameter (`# Error: Error setting …`) is recorded
+  for that parameter and the run continues; a 401 or a connection failure aborts.
+- `-v` lists every change as `name: 'current' -> 'target'`.
+
+**Examples:**
+```bash
+$ axiscam backup create --device front_camera -o ~/backups
+$ axiscam backup show ~/backups/backup-front_camera-20261013T110000Z
+$ axiscam backup verify ~/backups/backup-front_camera-20261013T110000Z
 ```
 
 ---
@@ -739,11 +907,14 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    START[Start] --> REPORT[axiscam report --full]
-    REPORT --> PARAMS[axiscam params --export]
-    PARAMS --> DOWNLOAD[axiscam download report]
-    DOWNLOAD --> DEBUG[axiscam download debug]
+    START[Start] --> BACKUP["axiscam backup create --with-server-report"]
+    BACKUP --> VERIFY[axiscam backup verify]
+    START -.ad hoc.-> REPORT[axiscam report --full]
+    START -.support case.-> CRASH[axiscam download crash-report]
 ```
+
+`backup create` supersedes chaining `report --full`, `params --export` and
+`download report` by hand: one directory, one manifest, verifiable later.
 
 ---
 

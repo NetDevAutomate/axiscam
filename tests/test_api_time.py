@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from axis_cam.api.time import TimeAPI
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import NtpStatus, TimeInfo, TimeZoneSource
 
 
@@ -77,16 +78,10 @@ class TestTimeAPI:
             "dstEnabled": "yes",
         }
 
-        call_count = 0
-
-        async def mock_get(path, params=None):
-            nonlocal call_count
-            call_count += 1
-            if "rest" in path:
-                raise Exception("REST API not available")
-            return cgi_response
-
-        time_api._get = mock_get
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("REST API not available"))
+        time_api._post = AsyncMock(
+            return_value={"apiVersion": "1.0", "method": "getDateTimeInfo", "data": cgi_response}
+        )
 
         result = await time_api.get_info()
 
@@ -125,9 +120,14 @@ class TestTimeAPI:
             "timeZone": "Europe/Stockholm",
             "dstEnabled": "yes",
         }
-        time_api._get = AsyncMock(return_value=response)
+        time_api._post = AsyncMock(
+            return_value={"apiVersion": "1.0", "method": "getDateTimeInfo", "data": response}
+        )
 
         result = await time_api._get_cgi_time_info()
+        time_api._post.assert_awaited_once_with(
+            "/axis-cgi/time.cgi", json_data={"apiVersion": "1.0", "method": "getDateTimeInfo"}
+        )
 
         assert isinstance(result, TimeInfo)
         assert result.timezone == "Europe/Stockholm"
@@ -247,14 +247,12 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_utc_time(self, time_api):
         """Test get_utc_time convenience method."""
-        cgi_response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC"}
+        cgi_response = {"dateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC"}
 
-        async def mock_get(path, params=None):
-            if "rest" in path:
-                raise Exception("REST not available")
-            return cgi_response
-
-        time_api._get = mock_get
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("REST API not available"))
+        time_api._post = AsyncMock(
+            return_value={"apiVersion": "1.0", "method": "getDateTimeInfo", "data": cgi_response}
+        )
 
         result = await time_api.get_utc_time()
 
@@ -269,12 +267,10 @@ class TestTimeAPI:
             "timeZone": "Europe/Stockholm",
         }
 
-        async def mock_get(path, params=None):
-            if "rest" in path:
-                raise Exception("REST not available")
-            return cgi_response
-
-        time_api._get = mock_get
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("REST API not available"))
+        time_api._post = AsyncMock(
+            return_value={"apiVersion": "1.0", "method": "getDateTimeInfo", "data": cgi_response}
+        )
 
         result = await time_api.get_local_time()
 
@@ -283,14 +279,12 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_local_time_none(self, time_api):
         """Test get_local_time returns None when not available."""
-        cgi_response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC"}
+        cgi_response = {"dateTime": "2024-01-15T12:00:00Z", "timeZone": "UTC"}
 
-        async def mock_get(path, params=None):
-            if "rest" in path:
-                raise Exception("REST not available")
-            return cgi_response
-
-        time_api._get = mock_get
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("REST API not available"))
+        time_api._post = AsyncMock(
+            return_value={"apiVersion": "1.0", "method": "getDateTimeInfo", "data": cgi_response}
+        )
 
         result = await time_api.get_local_time()
 
@@ -301,12 +295,10 @@ class TestTimeAPI:
         """Test get_timezone convenience method."""
         cgi_response = {"utcDateTime": "2024-01-15T12:00:00Z", "timeZone": "America/New_York"}
 
-        async def mock_get(path, params=None):
-            if "rest" in path:
-                raise Exception("REST not available")
-            return cgi_response
-
-        time_api._get = mock_get
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("REST API not available"))
+        time_api._post = AsyncMock(
+            return_value={"apiVersion": "1.0", "method": "getDateTimeInfo", "data": cgi_response}
+        )
 
         result = await time_api.get_timezone()
 
@@ -332,7 +324,7 @@ class TestTimeAPI:
 
         async def mock_get(path, params=None):
             if "network-time-sync" in path:
-                raise Exception("REST not available")
+                raise AxisDeviceError("REST not available")
             return param_response
 
         time_api._get = mock_get
@@ -368,7 +360,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_ntp_from_params_exception(self, time_api):
         """Test _get_ntp_from_params returns default on exception."""
-        time_api._get = AsyncMock(side_effect=Exception("API error"))
+        time_api._get = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await time_api._get_ntp_from_params()
 
@@ -392,7 +384,7 @@ class TestTimeAPI:
     @pytest.mark.asyncio
     async def test_get_available_timezones_exception(self, time_api):
         """Test get_available_timezones returns empty list on exception."""
-        time_api._post = AsyncMock(side_effect=Exception("API error"))
+        time_api._post = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         result = await time_api.get_available_timezones()
 

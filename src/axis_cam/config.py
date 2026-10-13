@@ -177,7 +177,8 @@ class DeviceConfig(BaseModel):
         host: Device IP address or hostname (alias: address).
         username: Authentication username.
         password: Authentication password.
-        port: HTTPS port number.
+        port: TCP port number.
+        https: Whether to use HTTPS (default True). Never inferred from the port.
         ssl_verify: Whether to verify SSL certificates.
         device_type: Type of device (camera, recorder, intercom, speaker).
         name: Optional friendly name for the device.
@@ -194,7 +195,8 @@ class DeviceConfig(BaseModel):
     )
     username: str = Field(..., description="Authentication username")
     password: SecretStr = Field(..., description="Authentication password")
-    port: int = Field(default=443, ge=1, le=65535, description="HTTPS port")
+    port: int = Field(default=443, ge=1, le=65535, description="TCP port")
+    https: bool = Field(default=True, description="Use HTTPS (set false only for plain HTTP)")
     ssl_verify: bool = Field(default=False, description="Verify SSL certificates")
     device_type: str = Field(
         default="camera",
@@ -368,6 +370,8 @@ def load_env_config() -> dict[str, Any]:
     - AXIS_USERNAME: Username
     - AXIS_PASSWORD: Password
     - AXIS_PORT: Port number
+    - AXIS_HTTPS: Use HTTPS (true/false, default true)
+    - AXIS_SSL_VERIFY: Verify TLS certificates (true/false)
 
     Returns:
         Configuration dictionary from environment.
@@ -380,17 +384,19 @@ def load_env_config() -> dict[str, Any]:
         "AXIS_USERNAME": "username",
         "AXIS_PASSWORD": "password",
         "AXIS_PORT": "port",
+        "AXIS_HTTPS": "https",
         "AXIS_SSL_VERIFY": "ssl_verify",
         "AXIS_ADMIN_USERNAME": "username",
         "AXIS_ADMIN_PASSWORD": "password",
     }
+    bool_keys = {"https", "ssl_verify"}
 
     for env_var, config_key in env_mapping.items():
         value = os.environ.get(env_var)
         if value:
             if config_key == "port":
                 config[config_key] = int(value)
-            elif config_key == "ssl_verify":
+            elif config_key in bool_keys:
                 config[config_key] = value.lower() in ("true", "1", "yes")
             else:
                 config[config_key] = value
@@ -443,6 +449,7 @@ def load_config(config_path: Path | None = None) -> AppConfig:
             "username": env_config.get("username", ""),
             "password": env_config.get("password", ""),
             "port": env_config.get("port", 443),
+            "https": env_config.get("https", True),
             "ssl_verify": env_config.get("ssl_verify", False),
         }
         config_data.setdefault("default_device", "default")

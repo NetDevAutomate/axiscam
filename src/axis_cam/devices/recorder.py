@@ -7,6 +7,7 @@ AXIS network video recorders (NVR devices like S-series).
 from typing import Any
 
 from axis_cam.devices.base import AxisDevice
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceType
 
 
@@ -60,7 +61,7 @@ class AxisRecorder(AxisDevice):
         try:
             storage = await self.get_storage_info()
             result["storage"] = storage
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             result["storage"] = None
 
         return result
@@ -74,7 +75,7 @@ class AxisRecorder(AxisDevice):
         try:
             response = await self._client.get_json(self.RECORDING_GROUP_PATH)
             return response.get("data", {}).get("recordingGroups", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []
 
     async def get_recording_group(self, group_id: str) -> dict[str, Any] | None:
@@ -89,7 +90,7 @@ class AxisRecorder(AxisDevice):
         try:
             response = await self._client.get_json(f"{self.RECORDING_GROUP_PATH}/{group_id}")
             return response.get("data")
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return None
 
     async def get_storage_info(self) -> dict[str, Any]:
@@ -104,7 +105,7 @@ class AxisRecorder(AxisDevice):
                 {"action": "list"},
             )
             return response
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_disk_status(self) -> list[dict[str, Any]]:
@@ -116,7 +117,7 @@ class AxisRecorder(AxisDevice):
         try:
             response = await self._client.get_json("/axis-cgi/disks/list.cgi")
             return response.get("disks", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []
 
     async def get_remote_storage_config(self) -> dict[str, Any] | None:
@@ -128,7 +129,7 @@ class AxisRecorder(AxisDevice):
         try:
             response = await self._client.get_json(self.REMOTE_STORAGE_PATH)
             return response.get("data")
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return None
 
     async def get_connected_cameras(self) -> list[dict[str, Any]]:
@@ -144,7 +145,7 @@ class AxisRecorder(AxisDevice):
                 {"action": "list", "group": "root.Network.AxisDevices"},
             )
             return response.get("root", {}).get("Network", {}).get("AxisDevices", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []
 
     async def has_remote_storage(self) -> bool:

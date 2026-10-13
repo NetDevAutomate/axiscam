@@ -20,6 +20,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 
 # =============================================================================
 # Stream Diagnostics Models
@@ -135,6 +137,7 @@ class StreamDiagnostics(BaseModel):
 # =============================================================================
 
 
+@register
 class StreamAPI(BaseAPI):
     """API module for stream diagnostics.
 
@@ -153,8 +156,15 @@ class StreamAPI(BaseAPI):
         ...         print(f"Profile {profile.name}: {profile.resolution}")
     """
 
+    name = "stream"
+    api_id = "param"
+
     # REST API endpoint for param v2beta
     REST_PATH = "/config/rest/param/v2beta"
+
+    async def read(self) -> StreamDiagnostics:
+        """Read the current stream diagnostics (``ResourceModule`` protocol)."""
+        return await self.get_diagnostics()
 
     async def _get_param_json(self, path: str = "") -> dict[str, Any]:
         """Get JSON data from param API.
@@ -165,7 +175,8 @@ class StreamAPI(BaseAPI):
         Returns:
             JSON response data.
         """
-        url = f"{self.REST_PATH}/{path}" if path else self.REST_PATH
+        base = await self._rest_path()
+        url = f"{base}/{path}" if path else base
 
         try:
             response = await self._get(url, params={})
@@ -175,7 +186,7 @@ class StreamAPI(BaseAPI):
                     return response.get("data", {})
                 return response
             return {}
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_rtsp_config(self) -> RTSPConfig:
@@ -292,7 +303,7 @@ class StreamAPI(BaseAPI):
         """
         try:
             return await self._get_param_json("Network/QoS")
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_diagnostics(self, device_name: str = "") -> StreamDiagnostics:
@@ -313,30 +324,30 @@ class StreamAPI(BaseAPI):
             ...     print(f"Warnings: {diagnostics.errors}")
             >>> print(f"RTSP enabled: {diagnostics.rtsp.enabled}")
         """
-        diagnostics = StreamDiagnostics(device_name=device_name)
+        diagnostics = StreamDiagnostics(device_name=device_name or self._client.host)
 
         # Collect RTSP config
         try:
             diagnostics.rtsp = await self.get_rtsp_config()
-        except Exception as e:
+        except (AxisDeviceError, AxisApiNotSupportedError) as e:
             diagnostics.errors.append(f"RTSP config: {e}")
 
         # Collect RTP config
         try:
             diagnostics.rtp = await self.get_rtp_config()
-        except Exception as e:
+        except (AxisDeviceError, AxisApiNotSupportedError) as e:
             diagnostics.errors.append(f"RTP config: {e}")
 
         # Collect stream profiles
         try:
             diagnostics.profiles = await self.get_stream_profiles()
-        except Exception as e:
+        except (AxisDeviceError, AxisApiNotSupportedError) as e:
             diagnostics.errors.append(f"Stream profiles: {e}")
 
         # Collect network config
         try:
             diagnostics.network = await self.get_network_config()
-        except Exception as e:
+        except (AxisDeviceError, AxisApiNotSupportedError) as e:
             diagnostics.errors.append(f"Network config: {e}")
 
         return diagnostics

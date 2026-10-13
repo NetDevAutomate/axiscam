@@ -1,0 +1,87 @@
+# CI gate for axiscam.
+#
+# Mirrors the `python-uv` profile of the central ci-standards tool
+# (~/code/personal/tools/github_ci_pipeline) plus the checks declared in
+# .ci-standards.yaml, so a local `ci-standards check --target .` and this
+# workflow answer the same question. The tool is not yet published anywhere a
+# GitHub runner can fetch it from; when it is, the `standard` job collapses to
+# `uvx ci-standards check --target .`. Until then, keep the two in step by hand:
+# tool versions below are pinned to the same values as the profile.
+#
+# Actions are pinned by commit SHA (tag in the comment) so a moved tag cannot
+# change what runs here.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUFF_VERSION: "0.14.5"
+  BANDIT_VERSION: "1.8.6"
+  PIP_AUDIT_VERSION: "2.9.0"
+
+jobs:
+  standard:
+    name: standard (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+
+      - name: Sync (project + dev extra)
+        run: uv sync --all-extras
+
+      # --- profile: python-uv -------------------------------------------------
+      - name: lint-format
+        run: uvx ruff@${RUFF_VERSION} format --check .
+
+      - name: lint
+        run: uvx ruff@${RUFF_VERSION} check .
+
+      - name: sast (warn-only)
+        continue-on-error: true
+        run: >-
+          uvx bandit@${BANDIT_VERSION} --quiet --recursive
+          --exclude ./.venv,./venv,./.git,./build,./dist,./node_modules
+          --skip B101,B104,B105,B106,B107,B404,B603,B607 .
+
+      - name: test (with coverage floor from pyproject.toml)
+        run: uv run pytest -q --cov=src/axis_cam --cov-report=term:skip-covered
+
+      - name: audit (warn-only)
+        continue-on-error: true
+        run: >-
+          uv --quiet export --no-emit-workspace -o /dev/stdout
+          | uvx pip-audit@${PIP_AUDIT_VERSION} --requirement /dev/stdin
+
+      - name: repo hygiene
+        run: |
+          test -f LICENSE
+          test -f README.md
+          test -f CHANGELOG.md
+          test -f CONTRIBUTING.md
+
+      # --- this repository's additions (.ci-standards.yaml) --------------------
+      - name: typecheck
+        run: uv run pyright
+
+      - name: docs-match-code
+        run: uv run pytest -q tests/test_docs.py tests/test_registry.py

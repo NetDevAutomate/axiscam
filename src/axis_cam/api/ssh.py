@@ -11,9 +11,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import SshConfig, SshKey
 
 
+@register
 class SshAPI(BaseAPI):
     """API module for SSH configuration.
 
@@ -30,8 +33,15 @@ class SshAPI(BaseAPI):
         ...     print(f"SSH port: {config.port}")
     """
 
+    name = "ssh"
+    api_id = "ssh"
+
     REST_PATH = "/config/rest/ssh/v2"
     REST_PATH_BETA = "/config/rest/ssh/v1beta"
+
+    async def read(self) -> SshConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> SshConfig:
         """Get SSH configuration.
@@ -40,16 +50,16 @@ class SshAPI(BaseAPI):
             SshConfig model with SSH settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             # Try beta API
             try:
                 response = await self._get(self.REST_PATH_BETA, params={"recursive": "true"})
                 data = response.get("data", {})
                 return self._parse_config(data)
-            except Exception:
+            except (AxisDeviceError, AxisApiNotSupportedError):
                 return SshConfig()
 
     async def is_enabled(self) -> bool:

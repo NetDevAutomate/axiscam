@@ -6,7 +6,7 @@ interacting with specific device types.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from axis_cam.api.action import ActionAPI
 from axis_cam.api.analytics import VideoAnalyticsAPI
@@ -27,47 +27,28 @@ from axis_cam.api.oauth import OAuthAPI
 from axis_cam.api.oidc import OidcAPI
 from axis_cam.api.param import ParamAPI
 from axis_cam.api.recording import RecordingAPI
+from axis_cam.api.registry import ResourceModule, build_modules
 from axis_cam.api.serverreport import ServerReportAPI
 from axis_cam.api.snapshot import BestSnapshotAPI
 from axis_cam.api.snmp import SnmpAPI
 from axis_cam.api.ssh import SshAPI
 from axis_cam.api.storage import RemoteStorageAPI
-from axis_cam.api.stream import StreamAPI, StreamDiagnostics
+from axis_cam.api.stream import StreamAPI
 from axis_cam.api.time import TimeAPI
+from axis_cam.api.users import UsersAPI
 from axis_cam.api.virtualhost import VirtualHostAPI
+from axis_cam.auth import AuthMode
 from axis_cam.client import VapixClient
+from axis_cam.exceptions import AxisConfigError
 from axis_cam.models import (
-    ActionConfig,
-    AnalyticsConfig,
-    AnalyticsMqttConfig,
-    AudioMulticastConfig,
     BasicDeviceInfo,
-    BestSnapshotConfig,
-    CertConfig,
-    CryptoPolicyConfig,
     DeviceCapabilities,
     DeviceStatus,
     DeviceType,
-    FirewallConfig,
-    GeolocationConfig,
-    LldpInfo,
-    LogReport,
-    LogType,
-    MqttBridgeConfig,
-    NetworkConfig,
-    NetworkPairingConfig,
-    NtpConfig,
-    OAuthConfig,
-    OidcConfig,
-    RecordingConfig,
-    RemoteStorageConfig,
-    ServerReport,
-    ServerReportFormat,
-    SnmpConfig,
-    SshConfig,
-    TimeInfo,
-    VirtualHostConfig,
 )
+
+if TYPE_CHECKING:
+    from axis_cam.api.base import BaseAPI
 
 
 class AxisDevice(ABC):
@@ -120,6 +101,39 @@ class AxisDevice(ABC):
     # Device type identifier - must be set by subclasses
     device_type: DeviceType = DeviceType.UNKNOWN
 
+    # API modules. Instances are built from the registry in __init__; these
+    # declarations keep attribute access statically typed. One line per module
+    # is the whole cost of adding one here; tests/test_registry.py fails if the
+    # declarations and the registry drift apart.
+    device_info: BasicDeviceInfoAPI
+    params: ParamAPI
+    time: TimeAPI
+    logs: LogsAPI
+    lldp: LldpAPI
+    network: NetworkSettingsAPI
+    firewall: FirewallAPI
+    ssh: SshAPI
+    snmp: SnmpAPI
+    cert: CertAPI
+    ntp: NtpAPI
+    action: ActionAPI
+    mqtt: MqttBridgeAPI
+    recording: RecordingAPI
+    storage: RemoteStorageAPI
+    geolocation: GeolocationAPI
+    analytics: VideoAnalyticsAPI
+    snapshot: BestSnapshotAPI
+    analytics_mqtt: AnalyticsMqttAPI
+    audio_multicast: AudioMulticastAPI
+    serverreport: ServerReportAPI
+    oidc: OidcAPI
+    oauth: OAuthAPI
+    virtualhost: VirtualHostAPI
+    crypto_policy: CryptoPolicyAPI
+    networkpairing: NetworkPairingAPI
+    stream: StreamAPI
+    users: UsersAPI
+
     def __init__(
         self,
         host: str,
@@ -128,71 +142,61 @@ class AxisDevice(ABC):
         port: int = 443,
         ssl_verify: bool = False,
         timeout: float = 30.0,
-        use_digest_auth: bool = False,
+        auth_mode: AuthMode | str = AuthMode.AUTO,
+        *,
+        https: bool = True,
+        allow_insecure_basic: bool = False,
     ) -> None:
         """Initialize the AXIS device.
+
+        The transport scheme is never inferred from the port: HTTPS is used
+        unless ``https=False`` is passed explicitly. The authentication scheme
+        follows the device's challenge by default (Basic over HTTPS, Digest
+        over HTTP). Forcing Basic over plain HTTP sends credentials in
+        cleartext and is refused unless ``allow_insecure_basic=True`` is passed
+        as well.
 
         Args:
             host: Device IP address or hostname.
             username: Authentication username.
             password: Authentication password.
-            port: HTTPS port number.
+            port: TCP port (default 443).
             ssl_verify: Whether to verify SSL certificates.
             timeout: Request timeout in seconds.
-            use_digest_auth: Use Digest auth instead of Basic.
+            auth_mode: ``auto`` (default), ``basic`` or ``digest``.
+            https: Use HTTPS (default True). Set False only for plain-HTTP devices.
+            allow_insecure_basic: Permit Basic auth over plain HTTP.
+
+        Raises:
+            AxisConfigError: If Basic auth over plain HTTP is forced without
+                ``allow_insecure_basic``.
         """
+        auth_mode = AuthMode(auth_mode)
+        if not https and auth_mode is AuthMode.BASIC and not allow_insecure_basic:
+            raise AxisConfigError(
+                f"Refusing Basic authentication over plain HTTP to {host}:{port}: "
+                "credentials would be sent in cleartext. Use https=True, "
+                "auth_mode='digest' (or 'auto'), or pass allow_insecure_basic=True explicitly."
+            )
+
         self._host = host
-        # Auto-detect HTTPS based on port (443 = HTTPS, otherwise HTTP)
-        use_https = port == 443
         self._client = VapixClient(
             host=host,
             username=username,
             password=password,
             port=port,
-            use_https=use_https,
+            use_https=https,
             verify_ssl=ssl_verify,
             timeout=timeout,
-            use_digest_auth=use_digest_auth,
+            auth_mode=auth_mode,
+            allow_insecure_basic=allow_insecure_basic,
         )
 
-        # Initialize common API modules
-        self.device_info = BasicDeviceInfoAPI(self._client)
-        self.params = ParamAPI(self._client)
-        self.time = TimeAPI(self._client)
-        self.logs = LogsAPI(self._client, device_name=host)
-        self.lldp = LldpAPI(self._client)
-
-        # Initialize high-priority API modules
-        self.network = NetworkSettingsAPI(self._client)
-        self.firewall = FirewallAPI(self._client)
-        self.ssh = SshAPI(self._client)
-        self.snmp = SnmpAPI(self._client)
-        self.cert = CertAPI(self._client)
-        self.ntp = NtpAPI(self._client)
-
-        # Initialize medium-priority API modules
-        self.action = ActionAPI(self._client)
-        self.mqtt = MqttBridgeAPI(self._client)
-        self.recording = RecordingAPI(self._client)
-        self.storage = RemoteStorageAPI(self._client)
-        self.geolocation = GeolocationAPI(self._client)
-
-        # Initialize device-specific API modules
-        self.analytics = VideoAnalyticsAPI(self._client)
-        self.snapshot = BestSnapshotAPI(self._client)
-        self.analytics_mqtt = AnalyticsMqttAPI(self._client)
-        self.audio_multicast = AudioMulticastAPI(self._client)
-        self.serverreport = ServerReportAPI(self._client)
-
-        # Initialize lower-priority API modules
-        self.oidc = OidcAPI(self._client)
-        self.oauth = OAuthAPI(self._client)
-        self.virtualhost = VirtualHostAPI(self._client)
-        self.crypto_policy = CryptoPolicyAPI(self._client)
-        self.networkpairing = NetworkPairingAPI(self._client)
-
-        # Initialize stream diagnostics API
-        self.stream = StreamAPI(self._client)
+        # Build every registered API module against this client and expose
+        # each under its registered name (device.ssh, device.firewall, ...).
+        self.modules: dict[str, BaseAPI] = build_modules(self._client)
+        for name, module in self.modules.items():
+            setattr(self, name, module)
 
         # Track discovered capabilities
         self._capabilities: DeviceCapabilities | None = None
@@ -280,6 +284,38 @@ class AxisDevice(ABC):
             )
         return self._capabilities
 
+    @property
+    def resources(self) -> dict[str, ResourceModule]:
+        """API modules that can read their state into one model.
+
+        Structural check against :class:`ResourceModule`; download-only
+        modules (``logs``, ``serverreport``) and ``params`` are excluded.
+        """
+        return {
+            name: module
+            for name, module in self.modules.items()
+            if isinstance(module, ResourceModule)
+        }
+
+    async def available_resources(self) -> dict[str, ResourceModule]:
+        """Resources this device advertises via API discovery.
+
+        A module with ``api_id`` set is included only if the device lists that
+        id in ``/config/discover/apis.json``. Modules with ``api_id = None``
+        (legacy CGI) are always included, and when discovery returns nothing
+        (older firmware) every resource is included rather than none.
+
+        Returns:
+            Resources keyed by module name, in registration order.
+        """
+        capabilities = await self.get_capabilities()
+        advertised = set(capabilities.supported_apis)
+        return {
+            name: module
+            for name, module in self.resources.items()
+            if module.api_id is None or not advertised or module.api_id in advertised
+        }
+
     async def check_connectivity(self) -> bool:
         """Check if the device is reachable.
 
@@ -287,284 +323,6 @@ class AxisDevice(ABC):
             True if device responds, False otherwise.
         """
         return await self._client.check_connectivity()
-
-    async def get_time_info(self) -> TimeInfo:
-        """Get device time information.
-
-        Returns:
-            TimeInfo model with time settings.
-        """
-        return await self.time.get_info()
-
-    async def get_logs(
-        self,
-        log_type: LogType = LogType.SYSTEM,
-        max_entries: int | None = None,
-    ) -> LogReport:
-        """Get device logs.
-
-        Args:
-            log_type: Type of logs to retrieve.
-            max_entries: Maximum number of entries.
-
-        Returns:
-            LogReport with parsed log entries.
-        """
-        return await self.logs.get_logs(log_type, max_entries)
-
-    async def get_friendly_name(self) -> str:
-        """Get the device's user-assigned name.
-
-        Returns:
-            Friendly name or empty string.
-        """
-        return await self.params.get_friendly_name()
-
-    async def get_location(self) -> str:
-        """Get the device's location description.
-
-        Returns:
-            Location string or empty string.
-        """
-        return await self.params.get_location()
-
-    async def get_lldp_info(self) -> LldpInfo:
-        """Get LLDP neighbor information.
-
-        Returns:
-            LldpInfo with LLDP status and discovered neighbors.
-        """
-        return await self.lldp.get_info()
-
-    async def get_network_config(self) -> NetworkConfig:
-        """Get extended network configuration.
-
-        Returns:
-            NetworkConfig model with network settings.
-        """
-        return await self.network.get_config()
-
-    async def get_firewall_config(self) -> FirewallConfig:
-        """Get firewall configuration.
-
-        Returns:
-            FirewallConfig model with firewall rules and settings.
-        """
-        return await self.firewall.get_config()
-
-    async def get_ssh_config(self) -> SshConfig:
-        """Get SSH configuration.
-
-        Returns:
-            SshConfig model with SSH settings.
-        """
-        return await self.ssh.get_config()
-
-    async def get_snmp_config(self) -> SnmpConfig:
-        """Get SNMP configuration.
-
-        Returns:
-            SnmpConfig model with SNMP settings.
-        """
-        return await self.snmp.get_config()
-
-    async def get_cert_config(self) -> CertConfig:
-        """Get certificate configuration.
-
-        Returns:
-            CertConfig model with certificate information.
-        """
-        return await self.cert.get_config()
-
-    async def get_ntp_config(self) -> NtpConfig:
-        """Get NTP configuration.
-
-        Returns:
-            NtpConfig model with NTP settings.
-        """
-        return await self.ntp.get_config()
-
-    async def get_action_config(self) -> ActionConfig:
-        """Get action rules configuration.
-
-        Returns:
-            ActionConfig model with action rules and templates.
-        """
-        return await self.action.get_config()
-
-    async def get_mqtt_config(self) -> MqttBridgeConfig:
-        """Get MQTT event bridge configuration.
-
-        Returns:
-            MqttBridgeConfig model with MQTT settings.
-        """
-        return await self.mqtt.get_config()
-
-    async def get_recording_config(self) -> RecordingConfig:
-        """Get recording configuration.
-
-        Returns:
-            RecordingConfig model with recording groups and profiles.
-        """
-        return await self.recording.get_config()
-
-    async def get_storage_config(self) -> RemoteStorageConfig:
-        """Get remote storage configuration.
-
-        Returns:
-            RemoteStorageConfig model with storage destinations.
-        """
-        return await self.storage.get_config()
-
-    async def get_geolocation_config(self) -> GeolocationConfig:
-        """Get device geolocation configuration.
-
-        Returns:
-            GeolocationConfig model with GPS coordinates and settings.
-        """
-        return await self.geolocation.get_config()
-
-    async def get_analytics_config(self) -> AnalyticsConfig:
-        """Get video analytics configuration.
-
-        Returns:
-            AnalyticsConfig model with analytics profiles and scenarios.
-        """
-        return await self.analytics.get_config()
-
-    async def get_snapshot_config(self) -> BestSnapshotConfig:
-        """Get best snapshot configuration.
-
-        Returns:
-            BestSnapshotConfig model with snapshot profiles and triggers.
-        """
-        return await self.snapshot.get_config()
-
-    async def get_analytics_mqtt_config(self) -> AnalyticsMqttConfig:
-        """Get analytics MQTT configuration.
-
-        Returns:
-            AnalyticsMqttConfig model with analytics publishing settings.
-        """
-        return await self.analytics_mqtt.get_config()
-
-    async def get_audio_multicast_config(self) -> AudioMulticastConfig:
-        """Get audio multicast configuration.
-
-        Returns:
-            AudioMulticastConfig model with multicast groups and streams.
-        """
-        return await self.audio_multicast.get_config()
-
-    async def capture_snapshot(
-        self,
-        resolution: str | None = None,
-        compression: int | None = None,
-        camera: int = 1,
-    ) -> bytes:
-        """Capture a snapshot image.
-
-        Args:
-            resolution: Image resolution (e.g., "1920x1080").
-            compression: JPEG compression level (0-100).
-            camera: Camera/channel number.
-
-        Returns:
-            JPEG image data as bytes.
-        """
-        return await self.snapshot.capture(
-            resolution=resolution,
-            compression=compression,
-            camera=camera,
-        )
-
-    async def download_server_report(
-        self,
-        format: ServerReportFormat = ServerReportFormat.ZIP_WITH_IMAGE,
-        timeout: float | None = None,
-    ) -> ServerReport:
-        """Download a server report from the device.
-
-        Args:
-            format: Report format (zip_with_image, zip, text).
-            timeout: Optional custom timeout for download (default: 60s).
-
-        Returns:
-            ServerReport model with report content and metadata.
-        """
-        return await self.serverreport.download_report(format=format, timeout=timeout)
-
-    async def download_debug_archive(
-        self,
-        timeout: float | None = None,
-    ) -> ServerReport:
-        """Download the debug archive (debug.tgz) from the device.
-
-        This retrieves a comprehensive debug archive that includes
-        system logs, configuration, and diagnostic information.
-
-        Args:
-            timeout: Optional custom timeout for download (default: 120s).
-
-        Returns:
-            ServerReport model with debug archive content.
-        """
-        return await self.serverreport.get_debug_archive(timeout=timeout)
-
-    async def get_oidc_config(self) -> OidcConfig:
-        """Get OpenID Connect configuration.
-
-        Returns:
-            OidcConfig model with OIDC settings.
-        """
-        return await self.oidc.get_config()
-
-    async def get_oauth_config(self) -> OAuthConfig:
-        """Get OAuth 2.0 Client Credentials Grant configuration.
-
-        Returns:
-            OAuthConfig model with OAuth settings.
-        """
-        return await self.oauth.get_config()
-
-    async def get_virtualhost_config(self) -> VirtualHostConfig:
-        """Get virtual host configuration.
-
-        Returns:
-            VirtualHostConfig model with virtual host settings.
-        """
-        return await self.virtualhost.get_config()
-
-    async def get_crypto_policy_config(self) -> CryptoPolicyConfig:
-        """Get cryptographic policy configuration.
-
-        Returns:
-            CryptoPolicyConfig model with crypto settings.
-        """
-        return await self.crypto_policy.get_config()
-
-    async def get_networkpairing_config(self) -> NetworkPairingConfig:
-        """Get network pairing configuration.
-
-        Returns:
-            NetworkPairingConfig model with pairing settings.
-        """
-        return await self.networkpairing.get_config()
-
-    async def get_stream_diagnostics(self, device_name: str | None = None) -> StreamDiagnostics:
-        """Get stream diagnostics including RTSP, RTP, and profile settings.
-
-        This method retrieves comprehensive streaming configuration useful
-        for troubleshooting connectivity issues with third-party systems.
-
-        Args:
-            device_name: Optional device name for the report.
-
-        Returns:
-            StreamDiagnostics model with RTSP, RTP, profiles, and network info.
-        """
-        name = device_name or self._host
-        return await self.stream.get_diagnostics(name)
 
     @abstractmethod
     async def get_device_specific_info(self) -> dict[str, Any]:

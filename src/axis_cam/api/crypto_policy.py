@@ -10,9 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import CipherSuite, CryptoPolicyConfig, TlsVersion
 
 
+@register
 class CryptoPolicyAPI(BaseAPI):
     """API module for cryptographic policy configuration.
 
@@ -29,7 +32,14 @@ class CryptoPolicyAPI(BaseAPI):
         ...     print(f"Weak ciphers: {config.weak_ciphers_enabled}")
     """
 
+    name = "crypto_policy"
+    api_id = "crypto-policy"
+
     REST_PATH = "/config/rest/crypto-policy/v1"
+
+    async def read(self) -> CryptoPolicyConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> CryptoPolicyConfig:
         """Get cryptographic policy configuration.
@@ -38,10 +48,10 @@ class CryptoPolicyAPI(BaseAPI):
             CryptoPolicyConfig model with crypto settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return CryptoPolicyConfig()
 
     async def get_tls_version_range(self) -> tuple[TlsVersion, TlsVersion]:

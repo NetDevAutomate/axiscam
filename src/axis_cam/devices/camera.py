@@ -7,6 +7,7 @@ AXIS network cameras (dome, bullet, PTZ, etc.).
 from typing import Any
 
 from axis_cam.devices.base import AxisDevice
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceType
 
 
@@ -150,7 +151,7 @@ class AxisCamera(AxisDevice):
                 {"action": "list"},
             )
             return response.get("videoSources", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []
 
     async def get_stream_profiles(self) -> list[dict[str, Any]]:
@@ -165,5 +166,5 @@ class AxisCamera(AxisDevice):
                 {"action": "list"},
             )
             return response.get("streamProfile", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []

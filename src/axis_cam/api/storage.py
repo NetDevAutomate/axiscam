@@ -10,9 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import RemoteStorageConfig, StorageDestination, StorageType
 
 
+@register
 class RemoteStorageAPI(BaseAPI):
     """API module for remote object storage configuration.
 
@@ -28,7 +31,14 @@ class RemoteStorageAPI(BaseAPI):
         ...         print(f"Storage: {dest.name} ({dest.storage_type.value})")
     """
 
+    name = "storage"
+    api_id = "remote-object-storage"
+
     REST_PATH = "/config/rest/remote-object-storage/v1"
+
+    async def read(self) -> RemoteStorageConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> RemoteStorageConfig:
         """Get complete remote storage configuration.
@@ -37,10 +47,10 @@ class RemoteStorageAPI(BaseAPI):
             RemoteStorageConfig model with storage settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return RemoteStorageConfig()
 
     async def get_destinations(self) -> list[StorageDestination]:
@@ -78,10 +88,8 @@ class RemoteStorageAPI(BaseAPI):
         """
         # Parse destinations
         destinations = []
-        dest_data = data.get("destinations", {})
-        for dest_id, dest_info in dest_data.items():
-            if isinstance(dest_info, dict):
-                destinations.append(self._parse_destination(dest_id, dest_info))
+        for dest_id, dest_info in self._items(data.get("destinations")):
+            destinations.append(self._parse_destination(dest_id, dest_info))
 
         return RemoteStorageConfig(
             destinations=destinations,

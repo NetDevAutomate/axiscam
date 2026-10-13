@@ -10,9 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import SnmpConfig, SnmpTrapReceiver, SnmpVersion
 
 
+@register
 class SnmpAPI(BaseAPI):
     """API module for SNMP configuration.
 
@@ -30,7 +33,14 @@ class SnmpAPI(BaseAPI):
         ...     print(f"SNMP version: {config.version}")
     """
 
+    name = "snmp"
+    api_id = "snmp"
+
     REST_PATH = "/config/rest/snmp/v1"
+
+    async def read(self) -> SnmpConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> SnmpConfig:
         """Get SNMP configuration.
@@ -39,10 +49,10 @@ class SnmpAPI(BaseAPI):
             SnmpConfig model with SNMP settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return SnmpConfig()
 
     async def is_enabled(self) -> bool:

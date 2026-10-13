@@ -10,9 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import RecordingConfig, RecordingGroup, RecordingProfile
 
 
+@register
 class RecordingAPI(BaseAPI):
     """API module for recording group configuration.
 
@@ -28,7 +31,14 @@ class RecordingAPI(BaseAPI):
         ...         print(f"Group: {group.name} - Storage: {group.storage_id}")
     """
 
+    name = "recording"
+    api_id = "recording-group"
+
     REST_PATH = "/config/rest/recording-group/v1"
+
+    async def read(self) -> RecordingConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> RecordingConfig:
         """Get complete recording configuration.
@@ -37,10 +47,10 @@ class RecordingAPI(BaseAPI):
             RecordingConfig model with recording settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return RecordingConfig()
 
     async def get_groups(self) -> list[RecordingGroup]:
@@ -87,8 +97,9 @@ class RecordingAPI(BaseAPI):
         """
         # Parse groups
         groups = []
-        groups_data = data.get("groups", {})
-        for group_id, group_info in groups_data.items():
+        # v1 used "groups"; the live recording-group v2 API uses "recordingGroups".
+        groups_data = data.get("recordingGroups", data.get("groups"))
+        for group_id, group_info in self._items(groups_data):
             if isinstance(group_info, dict):
                 groups.append(self._parse_group(group_id, group_info))
 

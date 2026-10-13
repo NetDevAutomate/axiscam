@@ -1,11 +1,13 @@
 """Tests for CLI module."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
-from axis_cam.cli import app, get_device_class, resolve_device_config
+from axis_cam.auth import AuthMode
+from axis_cam.cli import DeviceContext, app, get_device_class, resolve_device_config
+from axis_cam.config import AppConfig, DeviceConfig
 
 runner = CliRunner()
 
@@ -75,91 +77,169 @@ class TestGetDeviceClass:
 
 
 class TestResolveDeviceConfig:
-    """Tests for resolve_device_config function."""
+    """Tests for resolve_device_config.
+
+    load_config is patched so these never read the developer's real config.
+    """
+
+    @staticmethod
+    def _config(**devices: DeviceConfig) -> AppConfig:
+        return AppConfig(timeout=12.5, devices=devices)
 
     def test_resolve_with_host(self):
-        """Test resolve_device_config with host override."""
-        host, username, password, _port, _device_type = resolve_device_config(
-            device=None,
+        """--host is ad hoc: HTTPS, port 443, app timeout."""
+        with patch("axis_cam.cli.context.load_config", return_value=self._config()):
+            target = resolve_device_config(
+                device=None, host="192.168.1.10", username="admin", password="pass123"
+            )
+        assert target == DeviceContext(
             host="192.168.1.10",
             username="admin",
             password="pass123",
+            port=443,
+            device_type="camera",
+            https=True,
+            ssl_verify=False,
+            timeout=12.5,
         )
-        assert host == "192.168.1.10"
-        assert username == "admin"
-        assert password == "pass123"
 
     def test_resolve_host_overrides_device(self):
-        """Test that host parameter overrides device name."""
-        host, _username, _password, _port, _device_type = resolve_device_config(
-            device="some_device",
-            host="192.168.1.50",
-            username="user",
-            password="secret",
-        )
-        assert host == "192.168.1.50"
+        """--host wins over --device."""
+        with patch("axis_cam.cli.context.load_config", return_value=self._config()):
+            target = resolve_device_config(
+                device="some_device", host="192.168.1.50", username="user", password="secret"
+            )
+        assert target.host == "192.168.1.50"
 
     def test_resolve_missing_credentials(self):
-        """Test resolve_device_config with missing credentials raises error."""
+        """--host without credentials exits."""
         import typer
 
-        with pytest.raises(typer.Exit):
-            resolve_device_config(
-                device=None,
-                host="192.168.1.10",
-                username=None,
-                password=None,
+        with (
+            patch("axis_cam.cli.context.load_config", return_value=self._config()),
+            pytest.raises(typer.Exit),
+        ):
+            resolve_device_config(device=None, host="192.168.1.10", username=None, password=None)
+
+    def test_resolve_with_device_name_carries_transport_settings(self):
+        """Regression: ssl_verify, https and timeout from config must reach the device.
+
+        Before this test existed the CLI dropped ssl_verify on the floor, so a
+        device configured with ssl_verify: true was contacted without TLS
+        verification.
+        """
+        cfg = self._config(
+            test_camera=DeviceConfig(
+                host="192.168.1.100",
+                username="admin",
+                password="test123",
+                port=8443,
+                https=True,
+                ssl_verify=True,
+                type="recorder",
             )
-
-    @patch("axis_cam.cli.get_device_config")
-    def test_resolve_with_device_name(self, mock_get_config):
-        """Test resolve_device_config with device name from config."""
-        from pydantic import SecretStr
-
-        mock_config = MagicMock()
-        mock_config.host = "192.168.1.100"
-        mock_config.username = "admin"
-        mock_config.password = SecretStr("test123")
-        mock_config.port = 443
-        mock_config.device_type = "camera"
-        mock_get_config.return_value = mock_config
-
-        host, username, _password, _port, _device_type = resolve_device_config(
-            device="test_camera",
-            host=None,
-            username=None,
-            password=None,
         )
-        assert host == "192.168.1.100"
-        assert username == "admin"
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
+            target = resolve_device_config(
+                device="test_camera", host=None, username=None, password=None
+            )
+        assert target.host == "192.168.1.100"
+        assert target.username == "admin"
+        assert target.password == "test123"
+        assert target.port == 8443
+        assert target.device_type == "recorder"
+        assert target.https is True
+        assert target.ssl_verify is True
+        assert target.timeout == 12.5
 
-    @patch("axis_cam.cli.get_device_config")
-    def test_resolve_device_as_host(self, mock_get_config):
-        """Test resolve_device_config when device looks like IP address."""
-        mock_get_config.return_value = None  # No config found
-
-        host, _username, _password, _port, _device_type = resolve_device_config(
-            device="192.168.1.200",
-            host=None,
-            username="admin",
-            password="secret",
+    def test_resolve_uses_default_device_when_none_given(self):
+        cfg = AppConfig(
+            default_device="main",
+            devices={
+                "main": DeviceConfig(host="10.0.0.5", username="u", password="p", https=False)
+            },
         )
-        assert host == "192.168.1.200"
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
+            target = resolve_device_config(device=None, host=None, username=None, password=None)
+        assert target.host == "10.0.0.5"
+        assert target.https is False
 
-    @patch("axis_cam.cli.get_device_config")
-    def test_resolve_no_device_or_host(self, mock_get_config):
-        """Test resolve_device_config raises error when nothing provided."""
+    def test_explicit_port_443_overrides_config_port(self):
+        """--port 443 is a real override, not a sentinel for 'unset'."""
+        cfg = self._config(cam=DeviceConfig(host="10.0.0.9", username="u", password="p", port=8443))
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
+            explicit = resolve_device_config(
+                device="cam", host=None, username=None, password=None, port=443
+            )
+            unset = resolve_device_config(device="cam", host=None, username=None, password=None)
+        assert explicit.port == 443
+        assert unset.port == 8443
+
+    def test_resolve_device_as_host_found_in_config(self):
+        """--device that is an address resolves the matching config entry."""
+        cfg = self._config(
+            cam=DeviceConfig(host="192.168.1.200", username="cfg", password="p", ssl_verify=True)
+        )
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
+            target = resolve_device_config(
+                device="192.168.1.200", host=None, username=None, password=None
+            )
+        assert target.username == "cfg"
+        assert target.ssl_verify is True
+
+    def test_resolve_device_as_host_ad_hoc(self):
+        """--device that is an address but not in config needs credentials."""
+        with patch("axis_cam.cli.context.load_config", return_value=self._config()):
+            target = resolve_device_config(
+                device="192.168.1.200", host=None, username="admin", password="secret"
+            )
+        assert target.host == "192.168.1.200"
+        assert target.https is True
+
+    def test_resolve_no_device_or_host(self):
+        """Nothing provided exits."""
         import typer
 
-        mock_get_config.return_value = None
+        with (
+            patch("axis_cam.cli.context.load_config", return_value=self._config()),
+            pytest.raises(typer.Exit),
+        ):
+            resolve_device_config(device=None, host=None, username=None, password=None)
 
-        with pytest.raises(typer.Exit):
-            resolve_device_config(
-                device=None,
-                host=None,
-                username=None,
-                password=None,
-            )
+
+class TestDeviceContextOpen:
+    """DeviceContext.open passes every transport setting to the device class."""
+
+    def test_open_passes_transport_settings(self):
+        target = DeviceContext(
+            host="10.0.0.5",
+            username="u",
+            password="p",
+            port=8080,
+            device_type="speaker",
+            https=False,
+            ssl_verify=True,
+            timeout=5.0,
+            auth_mode=AuthMode.DIGEST,
+        )
+        dev = target.open()
+        assert type(dev).__name__ == "AxisSpeaker"
+        assert dev.client.base_url == "http://10.0.0.5:8080"
+        assert dev.client.verify_ssl is True
+        assert dev.client.timeout == 5.0
+        assert dev.client.auth_mode is AuthMode.DIGEST
+
+    def test_open_defaults_to_https_and_verified_flag_from_config(self):
+        target = DeviceContext(
+            host="10.0.0.5",
+            username="u",
+            password="p",
+            port=8443,
+            device_type="camera",
+        )
+        dev = target.open()
+        assert dev.client.auth_mode is AuthMode.AUTO  # default: follow the device
+        assert dev.client.base_url == "https://10.0.0.5:8443"
 
 
 class TestInfoCommand:

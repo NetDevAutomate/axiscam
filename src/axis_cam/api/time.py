@@ -15,9 +15,12 @@ from datetime import datetime
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import NtpStatus, TimeInfo, TimeZoneSource
 
 
+@register
 class TimeAPI(BaseAPI):
     """API module for device time and timezone settings.
 
@@ -34,11 +37,20 @@ class TimeAPI(BaseAPI):
         ...     print(f"Timezone: {time_info.timezone}")
     """
 
+    name = "time"
+    api_id = None
+
     # REST API endpoint (AXIS OS 11.x+)
     REST_PATH = "/config/rest/time/v2"
 
     # Legacy CGI endpoint
-    CGI_PATH = "/axis-cgi/date.cgi"
+    # Time API (VAPIX "Time API"): JSON-RPC over POST. The old date.cgi is a 404
+    # on AXIS OS 11.11 (C1410, verified 2026-10-13).
+    CGI_PATH = "/axis-cgi/time.cgi"
+
+    async def read(self) -> TimeInfo:
+        """Read the current state (``ResourceModule`` protocol)."""
+        return await self.get_info()
 
     async def get_info(self) -> TimeInfo:
         """Get complete time information.
@@ -52,7 +64,7 @@ class TimeAPI(BaseAPI):
         try:
             # Try REST API first
             return await self._get_rest_time_info()
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             # Fall back to legacy CGI
             return await self._get_cgi_time_info()
 
@@ -63,7 +75,7 @@ class TimeAPI(BaseAPI):
             TimeInfo model from REST API response.
         """
         # Get main time entity
-        response = await self._get(self.REST_PATH)
+        response = await self._get(await self._rest_path())
         data = response.get("data", {})
 
         # Check if combined response (some devices return time+timezone together)
@@ -72,11 +84,11 @@ class TimeAPI(BaseAPI):
             tz_data = data.get("timeZone", {})
         else:
             # Get time settings separately
-            time_response = await self._get(f"{self.REST_PATH}/time")
+            time_response = await self._get(f"{await self._rest_path()}/time")
             time_data = time_response.get("data", {})
 
             # Get timezone settings separately
-            tz_response = await self._get(f"{self.REST_PATH}/timeZone")
+            tz_response = await self._get(f"{await self._rest_path()}/timeZone")
             tz_data = tz_response.get("data", {})
 
         return self._parse_rest_response(data, time_data, tz_data)
@@ -87,9 +99,12 @@ class TimeAPI(BaseAPI):
         Returns:
             TimeInfo model from CGI response.
         """
-        params = {"action": "get"}
-        response = await self._get(self.CGI_PATH, params)
-        return self._parse_cgi_response(response)
+        response = await self._post(
+            self.CGI_PATH, json_data={"apiVersion": "1.0", "method": "getDateTimeInfo"}
+        )
+        if "error" in response:
+            raise AxisDeviceError(f"time.cgi getDateTimeInfo: {response['error']}")
+        return self._parse_cgi_response(response.get("data", {}))
 
     def _parse_rest_response(
         self,
@@ -154,8 +169,8 @@ class TimeAPI(BaseAPI):
         Returns:
             TimeInfo model instance.
         """
-        # CGI returns simpler format
-        utc_str = response.get("utcDateTime", "")
+        # getDateTimeInfo data: dateTime (UTC), localDateTime, timeZone, posixTimeZone, dstEnabled
+        utc_str = response.get("dateTime") or response.get("utcDateTime", "")
         local_str = response.get("localDateTime", "")
         timezone = response.get("timeZone", "")
         posix_tz = response.get("posixTimeZone", "")
@@ -238,7 +253,7 @@ class TimeAPI(BaseAPI):
                 server=data.get("server", ""),
                 synchronized=data.get("synchronized", False),
             )
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             # Fall back to param.cgi
             return await self._get_ntp_from_params()
 
@@ -259,7 +274,7 @@ class TimeAPI(BaseAPI):
                 server=ntp_data.get("Server", ""),
                 synchronized=False,  # Not available via param.cgi
             )
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return NtpStatus()
 
     async def get_available_timezones(self) -> list[str]:
@@ -274,5 +289,5 @@ class TimeAPI(BaseAPI):
                 json_data={},
             )
             return response.get("data", {}).get("timeZones", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []

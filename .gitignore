@@ -16,13 +16,6 @@ htmlcov/
 .tox/
 .nox/
 
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-
 # Distribution
 dist/
 build/
@@ -31,20 +24,16 @@ build/
 # macOS
 .DS_Store
 
-# Project Spcficic
-specs/
-
-# Documentation - Working Files
-docs/brainstorms/
-docs/plans/
-
-# Secrets
+# Local secrets — read by axis_cam.config.load_env_file, must never be committed
 .env
+.env.*
+!.env.example
 
-# Playwright MCP
+# Project specific
+specs/
 .playwright-mcp/
 
-# Agentic Agent Files
+# Agentic agent files
 .claude/
 CLAUDE.md
 .kiro/
@@ -58,8 +47,14 @@ CLAUDE.md
 .speckit/
 .openspec/
 
-# IDE Files
-.vscode/
+# IDE files
 .idea/
+.vscode/
+*.swp
+*.swo
+*~
 *.code-workspace
 .zed/
+
+# Documentation - working files (plans are tracked: docs/plans/ holds the programme record)
+docs/brainstorms/

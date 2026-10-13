@@ -144,6 +144,9 @@ def __init__(
     ssl_verify: bool = False,
     timeout: float = 30.0,
     use_digest_auth: bool = False,
+    *,
+    https: bool = True,
+    allow_insecure_basic: bool = False,
 ) -> None
 ```
 
@@ -152,10 +155,12 @@ def __init__(
 | `host` | `str` | Required | Device IP address or hostname |
 | `username` | `str` | Required | Authentication username |
 | `password` | `str` | Required | Authentication password |
-| `port` | `int` | `443` | HTTPS port (443 = HTTPS, other = HTTP) |
+| `port` | `int` | `443` | TCP port |
 | `ssl_verify` | `bool` | `False` | Verify SSL certificates |
 | `timeout` | `float` | `30.0` | Request timeout in seconds |
 | `use_digest_auth` | `bool` | `False` | Use Digest auth instead of Basic |
+| `https` | `bool` | `True` | Use HTTPS. Never inferred from the port |
+| `allow_insecure_basic` | `bool` | `False` | Permit Basic auth over plain HTTP. Without it, `https=False` with Basic auth raises `AxisConfigError` |
 
 ### Composed API Modules
 
@@ -203,35 +208,67 @@ mindmap
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_info()` | `BasicDeviceInfo` | Device identification |
+| `get_info()` | `BasicDeviceInfo` | Device identification (cached) |
 | `get_status()` | `DeviceStatus` | Connectivity and health |
-| `get_capabilities()` | `DeviceCapabilities` | Available APIs |
+| `get_capabilities()` | `DeviceCapabilities` | APIs the device advertises |
 | `check_connectivity()` | `bool` | Ping device |
-| `get_time_info()` | `TimeInfo` | Time settings |
-| `get_logs(type, max)` | `LogReport` | Retrieve logs |
-| `get_friendly_name()` | `str` | Device display name |
-| `get_location()` | `str` | Physical location |
-| `get_lldp_info()` | `LldpInfo` | Switch port mapping |
-| `get_network_config()` | `NetworkConfig` | Network settings |
-| `get_firewall_config()` | `FirewallConfig` | Firewall rules |
-| `get_ssh_config()` | `SshConfig` | SSH settings |
-| `get_snmp_config()` | `SnmpConfig` | SNMP settings |
-| `get_cert_config()` | `CertConfig` | Certificate info |
-| `get_ntp_config()` | `NtpConfig` | NTP settings |
-| `get_action_config()` | `ActionConfig` | Action rules |
-| `get_mqtt_config()` | `MqttBridgeConfig` | MQTT bridge |
-| `get_recording_config()` | `RecordingConfig` | Recording groups |
-| `get_storage_config()` | `RemoteStorageConfig` | Storage destinations |
-| `get_geolocation_config()` | `GeolocationConfig` | GPS coordinates |
-| `get_analytics_config()` | `AnalyticsConfig` | Video analytics |
-| `get_snapshot_config()` | `BestSnapshotConfig` | Snapshot profiles |
-| `capture_snapshot()` | `bytes` | Capture JPEG image |
-| `download_server_report()` | `ServerReport` | Download report |
-| `download_debug_archive()` | `ServerReport` | Download debug.tgz |
-| `get_oidc_config()` | `OidcConfig` | OIDC settings |
-| `get_oauth_config()` | `OAuthConfig` | OAuth settings |
-| `get_crypto_policy_config()` | `CryptoPolicyConfig` | TLS settings |
-| `get_stream_diagnostics()` | `StreamDiagnostics` | RTSP/RTP config |
+| `available_resources()` | `dict[str, ResourceModule]` | Resources the device advertises (see below) |
+
+### API Modules
+
+Everything else is reached through the API module attributes, which are built
+from the module registry (`axis_cam.api.registry`) when the device is created.
+The attribute name is the module's registered `name`:
+
+| Attribute | Module | Read with |
+|-----------|--------|-----------|
+| `device.device_info` | `BasicDeviceInfoAPI` | `get_info()` → `BasicDeviceInfo` |
+| `device.params` | `ParamAPI` | `get_all()`, `get_friendly_name()`, `get_location()` |
+| `device.time` | `TimeAPI` | `get_info()` → `TimeInfo` |
+| `device.logs` | `LogsAPI` | `get_logs(type, max)` → `LogReport` |
+| `device.lldp` | `LldpAPI` | `get_info()` → `LldpInfo` |
+| `device.network` | `NetworkSettingsAPI` | `get_config()` → `NetworkConfig` |
+| `device.firewall` | `FirewallAPI` | `get_config()` → `FirewallConfig` |
+| `device.ssh` | `SshAPI` | `get_config()` → `SshConfig` |
+| `device.snmp` | `SnmpAPI` | `get_config()` → `SnmpConfig` |
+| `device.cert` | `CertAPI` | `get_config()` → `CertConfig` |
+| `device.ntp` | `NtpAPI` | `get_config()` → `NtpConfig` |
+| `device.action` | `ActionAPI` | `get_config()` → `ActionConfig` |
+| `device.mqtt` | `MqttBridgeAPI` | `get_config()` → `MqttBridgeConfig` |
+| `device.recording` | `RecordingAPI` | `get_config()` → `RecordingConfig` |
+| `device.storage` | `RemoteStorageAPI` | `get_config()` → `RemoteStorageConfig` |
+| `device.geolocation` | `GeolocationAPI` | `get_config()` → `GeolocationConfig` |
+| `device.analytics` | `VideoAnalyticsAPI` | `get_config()` → `AnalyticsConfig` |
+| `device.snapshot` | `BestSnapshotAPI` | `get_config()` → `BestSnapshotConfig`; `capture()` → `bytes` |
+| `device.analytics_mqtt` | `AnalyticsMqttAPI` | `get_config()` → `AnalyticsMqttConfig` |
+| `device.audio_multicast` | `AudioMulticastAPI` | `get_config()` → `AudioMulticastConfig` |
+| `device.serverreport` | `ServerReportAPI` | `download_report()`, `get_debug_archive()` → `ServerReport` |
+| `device.oidc` | `OidcAPI` | `get_config()` → `OidcConfig` |
+| `device.oauth` | `OAuthAPI` | `get_config()` → `OAuthConfig` |
+| `device.virtualhost` | `VirtualHostAPI` | `get_config()` → `VirtualHostConfig` |
+| `device.crypto_policy` | `CryptoPolicyAPI` | `get_config()` → `CryptoPolicyConfig` |
+| `device.networkpairing` | `NetworkPairingAPI` | `get_config()` → `NetworkPairingConfig` |
+| `device.stream` | `StreamAPI` | `get_diagnostics()` → `StreamDiagnostics` |
+| `device.users` | `UsersAPI` | `list()` → `UserAccounts`; **writes:** `add()`, `set_password()`, `set_role()`, `remove()` |
+
+Two views over the same modules exist for generic code:
+
+- `device.modules` — every module, keyed by name.
+- `device.resources` — the modules that implement `read()` (every one above except
+  `params`, `logs` and `serverreport`). `device.available_resources()` filters them
+  by the APIs the device advertises in `/config/discover/apis.json`; modules that
+  work over legacy CGI (`device_info`, `time`) are never filtered out, and when
+  discovery returns nothing every resource is kept.
+
+```python
+async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
+    ssh = await camera.ssh.get_config()
+    for name, module in (await camera.available_resources()).items():
+        print(name, (await module.read()).model_dump())
+```
+
+> Before Phase 1 the device carried one-line wrappers such as
+> `device.get_ssh_config()`. They were removed in 0.1.0; call the module.
 
 ### Async Context Manager
 
@@ -310,7 +347,7 @@ async with AxisCamera(
     print(f"RTSP: {rtsp_url}")
 
     # Get stream diagnostics
-    diagnostics = await camera.get_stream_diagnostics("front_camera")
+    diagnostics = await camera.stream.get_diagnostics("front_camera")
     print(f"RTSP Port: {diagnostics.rtsp.port}")
 ```
 

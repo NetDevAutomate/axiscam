@@ -77,14 +77,28 @@ flowchart TB
 ```
 axis_cam/
 ├── __init__.py          # Package exports
-├── cli.py               # Typer CLI (~2600 lines)
+├── cli/                 # Typer CLI package
+│   ├── app.py           # Typer app, command groups, run_async, main
+│   ├── context.py       # DeviceContext + resolve_device_config
+│   ├── options.py       # Shared option aliases
+│   ├── device.py        # info, status, apis, lldp, params, location, report
+│   ├── confirm.py       # Write safety: plan → dry-run / confirm → apply
+│   ├── accounts.py      # accounts list/add/set-password/set-role/remove
+│   ├── backup.py        # backup create/show/verify
+│   ├── config.py        # config, init, migrate, devices, version
+│   └── <group>.py       # logs, network, security, services, automation, media, stream, download
+├── report.py            # Registry-driven device report
+├── files.py             # write_private(): diagnostics reach disk as 0600
+├── backup.py            # create_backup/verify_backup: snapshot directory + manifest
+├── restore.py           # plan_param_restore/apply_param_restore: params-only restore
 ├── client.py            # VapixClient HTTP client
 ├── config.py            # Configuration management
 ├── models.py            # Pydantic models (~2000 lines)
 ├── exceptions.py        # Exception hierarchy
 ├── api/                 # VAPIX API modules (29 modules)
 │   ├── __init__.py
-│   ├── base.py          # BaseAPI abstract class
+│   ├── base.py          # BaseAPI (request helpers, name/api_id)
+│   ├── registry.py      # @register, ResourceModule protocol, build_modules
 │   ├── device_info.py   # Basic device information
 │   ├── param.py         # Device parameters
 │   ├── stream.py        # Stream diagnostics
@@ -107,10 +121,11 @@ axis_cam/
 │   ├── oauth.py         # OAuth 2.0
 │   ├── virtualhost.py   # Virtual hosts
 │   ├── crypto_policy.py # TLS/cipher settings
-│   └── networkpairing.py # Device pairing
+│   ├── networkpairing.py # Device pairing
+│   └── users.py         # User accounts (pwdgrp.cgi) — write-capable
 └── devices/             # Device type implementations
     ├── __init__.py
-    ├── base.py          # AxisDevice abstract base
+    ├── base.py          # AxisDevice (modules built from the registry)
     ├── camera.py        # AxisCamera
     ├── recorder.py      # AxisRecorder
     ├── intercom.py      # AxisIntercom
@@ -138,7 +153,8 @@ classDiagram
         +use_https: bool
         +timeout: float
         +verify_ssl: bool
-        +use_digest_auth: bool
+        +auth_mode: AuthMode
+        +allow_insecure_basic: bool
         -_client: httpx.AsyncClient
         +base_url: str
         +__aenter__() VapixClient
@@ -160,14 +176,25 @@ classDiagram
 - Support for both JSON and binary responses
 - Custom timeout support for long-running operations
 
-### 2. BaseAPI (`api/base.py`)
+### 2. BaseAPI and the registry (`api/base.py`, `api/registry.py`)
 
-Abstract base class providing common functionality for all API modules.
+`BaseAPI` is a plain base class providing the request helpers; every module
+declares `name` and `api_id` and is added to the registry with `@register`.
+Modules that implement `read() -> BaseModel` satisfy the structural
+`ResourceModule` protocol, which is what generic services iterate.
 
 ```mermaid
 classDiagram
+    class ResourceModule {
+        <<protocol>>
+        +name: str
+        +api_id: str | None
+        +read() BaseModel
+    }
+
     class BaseAPI {
-        <<abstract>>
+        +name: str
+        +api_id: str | None
         -_client: VapixClient
         +__init__(client: VapixClient)
         #_get(path, params) Any
@@ -204,11 +231,27 @@ classDiagram
     BaseAPI <|-- BasicDeviceInfoAPI
     BaseAPI <|-- ParamAPI
     BaseAPI <|-- StreamAPI
+    ResourceModule <.. BasicDeviceInfoAPI : read()
+    ResourceModule <.. StreamAPI : read()
+```
+
+```mermaid
+flowchart LR
+    M["api/&lt;module&gt;.py<br/>@register"] --> REG[(registry)]
+    REG -->|build_modules| DEV[AxisDevice.modules]
+    DEV -->|has read| RES[device.resources]
+    RES -->|gated by /config/discover/apis.json| AV[available_resources]
+    AV --> R[report]
+    AV -.-> B[backup — Phase 4]
+    AV -.-> A[security audit — Phase 7]
 ```
 
 ### 3. AxisDevice (`devices/base.py`)
 
-Abstract base class that composes API modules to provide a unified device interface.
+Abstract base class that builds its API modules from the registry and exposes
+each under its registered name. The typed declarations in the class body keep
+`device.ssh.get_config()` statically typed; `tests/test_registry.py` fails if they
+drift from the registry.
 
 ```mermaid
 classDiagram
@@ -249,6 +292,9 @@ classDiagram
         +get_info() BasicDeviceInfo
         +get_status() DeviceStatus
         +get_capabilities() DeviceCapabilities
+        +modules: dict~str, BaseAPI~
+        +resources: dict~str, ResourceModule~
+        +available_resources() dict~str, ResourceModule~
         +get_device_specific_info()* dict
     }
 
@@ -417,10 +463,12 @@ Authentication method selection:
 
 ```mermaid
 flowchart LR
-    CLIENT[VapixClient] --> |use_digest_auth=true| DIGEST[Digest Auth]
-    CLIENT --> |use_digest_auth=false| BASIC[Basic Auth]
-    DIGEST --> HTTPX[httpx.DigestAuth]
-    BASIC --> HTTPX2[httpx.BasicAuth]
+    CLIENT[VapixClient] --> AUTH[VapixAuth - auth.py]
+    AUTH -->|auto + HTTPS| BASIC[httpx.BasicAuth first]
+    AUTH -->|auto + HTTP| DIGEST[httpx.DigestAuth first]
+    BASIC -->|401 offers Digest| DIGEST
+    DIGEST -->|401 offers only Basic, HTTPS| BASIC
+    AUTH -->|basic / digest| FORCED[forced scheme, no switching]
 ```
 
 ### 5. Template Method Pattern
@@ -481,35 +529,34 @@ sequenceDiagram
     Config->>Config: interpolate_env_vars()
     Config->>Config: normalize_devices_format()
     Config-->>CLI: AppConfig
-    CLI->>CLI: get_device_config("front_camera")
-    CLI->>CLI: Create device instance
+    CLI->>CLI: resolve_device_config(...) -> DeviceContext
+    CLI->>CLI: DeviceContext.open()
 ```
 
 ### Report Generation Flow
 
 ```mermaid
 sequenceDiagram
-    participant CLI as CLI
+    participant CLI as cli/device.py
+    participant Report as report.collect_report
     participant Device as AxisDevice
-    participant APIs as API Modules
-    participant Model as Pydantic Models
-    participant Output as JSON/YAML
+    participant Mod as ResourceModule
 
-    CLI->>Device: Generate Report
-
-    par Parallel API Calls
-        Device->>APIs: get_info()
-        Device->>APIs: get_time_info()
-        Device->>APIs: get_lldp_info()
-        Device->>APIs: get_stream_diagnostics()
-        Device->>APIs: get_security_config()
-        Device->>APIs: get_ntp_config()
+    CLI->>Report: collect_report(device, full=...)
+    Report->>Device: available_resources()
+    Device->>Device: get_capabilities() (API discovery)
+    Device-->>Report: resources the device advertises
+    loop each requested resource
+        Report->>Mod: read()
+        alt device/API error
+            Mod-->>Report: AxisDeviceError -> errors[name]
+        else
+            Mod-->>Report: model -> sections[name] = model_dump(mode="json")
+        end
     end
-
-    APIs-->>Device: Individual results
-    Device->>Model: Combine into report
-    Model->>Output: Serialize
-    Output-->>CLI: JSON/YAML string
+    Note over Report: auth / connection errors propagate
+    Report-->>CLI: DeviceReport (sections, errors, skipped)
+    CLI->>CLI: JSON / YAML / text
 ```
 
 ## Module Relationships
@@ -585,7 +632,8 @@ flowchart BT
     end
 
     subgraph "CLI"
-        cli[cli.py]
+        cli[cli/ package]
+        report[report.py]
     end
 
     client --> httpx

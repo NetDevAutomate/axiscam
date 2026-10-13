@@ -1,26 +1,38 @@
 """Logs API module.
 
-This module provides access to device logs via the VAPIX log API
-and the server report CGI endpoint.
+Each log type has a dedicated CGI that returns just that log as text:
 
-API Endpoints:
-    - /config/rest/log/v1beta (REST API)
-    - /axis-cgi/serverreport.cgi (Legacy CGI for full reports)
+    - /axis-cgi/systemlog.cgi   system log (AXIS OS 5.00+)
+    - /axis-cgi/accesslog.cgi   client access log
+    - /axis-cgi/auditlog.cgi    audit log (AXIS OS 12.7+), ``?tail=N`` for the
+                                most recent N entries
 
-The module supports retrieving system logs, parsing log entries,
-and streaming log content.
+These are tried first. When a device does not have the CGI (older firmware,
+or audit log before 12.7) the module falls back to the full server report
+tarball (``/axis-cgi/serverreport.cgi?mode=tar_all``) and picks the matching
+files out of it; ``LogReport.source`` says which path answered. ``LogType.ALL``
+always uses the tarball. Authentication and connection errors propagate from
+either path.
+
+Also:
+    - /config/rest/log/v1beta   persistent-logging setting (REST)
 """
 
 import io
 import re
 import tarfile
 from collections.abc import AsyncIterator
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, ClassVar
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import LogEntry, LogLevel, LogReport, LogType
+
+if TYPE_CHECKING:
+    from axis_cam.client import VapixClient
 
 
 class ServerReportMode(str, Enum):
@@ -55,11 +67,27 @@ SIMPLE_LOG_PATTERN = re.compile(
 )
 
 
-def parse_log_line(line: str) -> LogEntry | None:
+def _as_utc(timestamp: datetime) -> datetime:
+    """Return a timezone-aware timestamp.
+
+    AXIS devices emit ISO-8601 timestamps with an offset (``+00:00``), which
+    parse as aware datetimes. Lines in older or simpler formats carry no
+    offset; those are assumed to be UTC so that every entry is comparable.
+    Mixing aware and naive datetimes makes ``sort`` raise ``TypeError``.
+    """
+    if timestamp.tzinfo is None:
+        return timestamp.replace(tzinfo=UTC)
+    return timestamp
+
+
+def parse_log_line(line: str, fallback_timestamp: datetime | None = None) -> LogEntry | None:
     """Parse a single log line into a LogEntry.
 
     Args:
         line: Raw log line string.
+        fallback_timestamp: Timestamp to use when the line carries none, for
+            example a continuation line of a multi-line message. Defaults to
+            the current time (UTC).
 
     Returns:
         LogEntry if parsing successful, None otherwise.
@@ -73,9 +101,9 @@ def parse_log_line(line: str) -> LogEntry | None:
     if match:
         groups = match.groupdict()
         try:
-            timestamp = datetime.fromisoformat(groups["timestamp"])
+            timestamp = _as_utc(datetime.fromisoformat(groups["timestamp"]))
         except ValueError:
-            timestamp = datetime.now()
+            timestamp = fallback_timestamp or datetime.now(UTC)
 
         return LogEntry(
             timestamp=timestamp,
@@ -92,9 +120,9 @@ def parse_log_line(line: str) -> LogEntry | None:
     if match:
         groups = match.groupdict()
         try:
-            timestamp = datetime.strptime(groups["timestamp"], "%Y-%m-%d %H:%M:%S")
+            timestamp = _as_utc(datetime.strptime(groups["timestamp"], "%Y-%m-%d %H:%M:%S"))
         except ValueError:
-            timestamp = datetime.now()
+            timestamp = fallback_timestamp or datetime.now(UTC)
 
         return LogEntry(
             timestamp=timestamp,
@@ -104,9 +132,10 @@ def parse_log_line(line: str) -> LogEntry | None:
             raw=line,
         )
 
-    # Return as unparsed entry
+    # Return as unparsed entry, anchored to the previous entry when known so
+    # that continuation lines sort next to the message they belong to.
     return LogEntry(
-        timestamp=datetime.now(),
+        timestamp=fallback_timestamp or datetime.now(UTC),
         hostname="unknown",
         level=LogLevel.INFO,
         message=line,
@@ -125,22 +154,26 @@ def parse_log_content(content: str, _log_type: LogType = LogType.SYSTEM) -> list
         List of parsed LogEntry objects.
     """
     entries: list[LogEntry] = []
+    last_timestamp: datetime | None = None
     for line in content.splitlines():
-        entry = parse_log_line(line)
+        entry = parse_log_line(line, fallback_timestamp=last_timestamp)
         if entry:
             entries.append(entry)
+            last_timestamp = entry.timestamp
     return entries
 
 
+@register
 class LogsAPI(BaseAPI):
     """API module for retrieving device logs.
 
     This module provides methods to retrieve various log types:
     - System logs (syslog)
     - Access logs (HTTP access)
-    - Audit logs (security events)
+    - Audit logs (security events, AXIS OS 12.7+)
 
-    The module uses the server report CGI for comprehensive log retrieval.
+    Each type is read from its dedicated CGI; the server report tarball is
+    the fallback (and the only source for ``LogType.ALL``).
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
@@ -154,21 +187,37 @@ class LogsAPI(BaseAPI):
         ...         print(entry.message)
     """
 
-    # Server report CGI endpoint
+    name = "logs"
+    api_id = None
+
+    # Server report CGI endpoint (fallback and LogType.ALL)
     CGI_PATH = "/axis-cgi/serverreport.cgi"
+
+    # Dedicated per-type CGIs, tried first
+    SYSTEMLOG_PATH = "/axis-cgi/systemlog.cgi"
+    ACCESSLOG_PATH = "/axis-cgi/accesslog.cgi"
+    AUDITLOG_PATH = "/axis-cgi/auditlog.cgi"
+    DEDICATED_PATHS: ClassVar[dict[LogType, str]] = {
+        LogType.SYSTEM: SYSTEMLOG_PATH,
+        LogType.ACCESS: ACCESSLOG_PATH,
+        LogType.AUDIT: AUDITLOG_PATH,
+    }
+    TARBALL_SOURCE = "serverreport.cgi?mode=tar_all"
 
     # REST API endpoint (AXIS OS 11.x+)
     REST_PATH = "/config/rest/log/v1beta"
 
-    def __init__(self, client: Any, device_name: str = "unknown") -> None:
+    def __init__(self, client: "VapixClient", device_name: str | None = None) -> None:
         """Initialize the logs API.
 
         Args:
             client: VapixClient instance.
-            device_name: Device name for report metadata.
+            device_name: Device name for report metadata. Defaults to the
+                client's host so the registry can build this module like any
+                other.
         """
         super().__init__(client)
-        self._device_name = device_name
+        self._device_name = device_name or client.host
 
     async def get_server_report(
         self,
@@ -207,7 +256,7 @@ class LogsAPI(BaseAPI):
                             try:
                                 file_content = file_obj.read().decode("utf-8", errors="replace")
                                 log_files[member.name] = file_content
-                            except Exception:
+                            except (OSError, tarfile.TarError):
                                 pass
         except tarfile.TarError:
             # If not a valid tar, try to parse as plain text
@@ -244,6 +293,43 @@ class LogsAPI(BaseAPI):
 
         return "\n".join(matching_content)
 
+    async def _fetch_dedicated(
+        self, log_type: LogType, max_entries: int | None
+    ) -> tuple[str, str] | None:
+        """Read one log type from its dedicated CGI.
+
+        Returns:
+            ``(content, source)``, or ``None`` when the device has no such CGI
+            (a device-level error such as 404). Authentication and connection
+            errors propagate.
+        """
+        path = self.DEDICATED_PATHS.get(log_type)
+        if path is None:
+            return None
+        params: dict[str, str] | None = None
+        if log_type is LogType.AUDIT and max_entries:
+            params = {"tail": str(max_entries)}
+        try:
+            content = await self._get_text(path, params)
+        except (AxisDeviceError, AxisApiNotSupportedError):
+            return None
+        return content, path.rsplit("/", 1)[-1]
+
+    async def _fetch_content(
+        self, log_type: LogType, max_entries: int | None = None
+    ) -> tuple[str, str]:
+        """Return ``(raw log text, source)`` for a log type.
+
+        Dedicated CGI first; the server-report tarball for ``LogType.ALL`` and
+        as the fallback when the CGI is unavailable.
+        """
+        if log_type is not LogType.ALL:
+            dedicated = await self._fetch_dedicated(log_type, max_entries)
+            if dedicated is not None:
+                return dedicated
+        log_files = await self.get_log_files()
+        return self._find_log_content(log_files, log_type), self.TARBALL_SOURCE
+
     async def get_logs(
         self,
         log_type: LogType = LogType.SYSTEM,
@@ -253,13 +339,15 @@ class LogsAPI(BaseAPI):
 
         Args:
             log_type: Type of logs to retrieve.
-            max_entries: Maximum number of entries to return.
+            max_entries: Maximum number of entries to return (newest first).
+                For the audit log this is also passed to the device as
+                ``tail=N`` so only that many entries are transferred.
 
         Returns:
-            LogReport containing parsed log entries.
+            LogReport containing parsed log entries; ``source`` names the
+            endpoint that supplied them.
         """
-        log_files = await self.get_log_files()
-        content = self._find_log_content(log_files, log_type)
+        content, source = await self._fetch_content(log_type, max_entries)
         entries = parse_log_content(content, log_type)
 
         # Sort by timestamp, newest first
@@ -273,6 +361,7 @@ class LogsAPI(BaseAPI):
             device_address=self._client.host,
             log_type=log_type,
             entries=entries,
+            source=source,
         )
 
     async def get_system_logs(self, max_entries: int | None = None) -> LogReport:
@@ -331,12 +420,13 @@ class LogsAPI(BaseAPI):
         Yields:
             LogEntry objects as they are parsed.
         """
-        log_files = await self.get_log_files()
-        content = self._find_log_content(log_files, log_type)
+        content, _source = await self._fetch_content(log_type)
 
+        last_timestamp: datetime | None = None
         for line in content.splitlines():
-            entry = parse_log_line(line)
+            entry = parse_log_line(line, fallback_timestamp=last_timestamp)
             if entry:
+                last_timestamp = entry.timestamp
                 yield entry
 
     async def get_persistent_logging_enabled(self) -> bool:
@@ -346,9 +436,9 @@ class LogsAPI(BaseAPI):
             True if persistent logging is enabled.
         """
         try:
-            response = await self._get(f"{self.REST_PATH}/persistent/enabled")
+            response = await self._get(f"{await self._rest_path()}/persistent/enabled")
             return response.get("data", {}).get("enabled", False)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return False
 
     async def search_logs(
@@ -384,6 +474,7 @@ class LogsAPI(BaseAPI):
             device_address=logs.device_address,
             log_type=log_type,
             entries=matching,
+            source=logs.source,
         )
 
     async def get_log_summary(

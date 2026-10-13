@@ -54,7 +54,9 @@ repos:
     pass_filenames: false
   - id: pytest
     name: pytest
-    entry: uv run pytest --cov-fail-under=90
+    # --cov is what turns coverage on; without it --cov-fail-under is a no-op.
+    # The threshold is [tool.coverage.report].fail_under in pyproject.toml.
+    entry: uv run pytest -q --cov=src/axis_cam --cov-report=term:skip-covered
     language: system
     types:
     - python

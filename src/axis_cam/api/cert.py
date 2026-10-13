@@ -10,9 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import CertConfig, Certificate, CertificateType
 
 
+@register
 class CertAPI(BaseAPI):
     """API module for certificate management.
 
@@ -29,7 +32,14 @@ class CertAPI(BaseAPI):
         ...         print(f"  {cert.subject}: expires {cert.not_after}")
     """
 
+    name = "cert"
+    api_id = "cert"
+
     REST_PATH = "/config/rest/cert/v1"
+
+    async def read(self) -> CertConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> CertConfig:
         """Get certificate configuration.
@@ -38,10 +48,10 @@ class CertAPI(BaseAPI):
             CertConfig model with certificate settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return CertConfig()
 
     async def get_certificates(self) -> list[Certificate]:
@@ -142,5 +152,5 @@ class CertAPI(BaseAPI):
                 key_type=data.get("keyType", ""),
                 self_signed=data.get("selfSigned", False),
             )
-        except Exception:
+        except ValueError:
             return None

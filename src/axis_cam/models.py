@@ -11,7 +11,7 @@ Models are organized by domain:
     - Parameters: DeviceParameter, ParameterGroup
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import Annotated, Any
 
@@ -327,14 +327,17 @@ class LogReport(BaseModel):
         entries: List of log entries.
         retrieved_at: When the logs were retrieved.
         total_entries: Total number of entries.
+        source: Which device endpoint supplied the entries (for example
+            ``systemlog.cgi`` or ``serverreport.cgi?mode=tar_all``).
     """
 
     device_name: str
     device_address: str
     log_type: LogType
     entries: list[LogEntry] = Field(default_factory=list)
-    retrieved_at: datetime = Field(default_factory=datetime.now)
+    retrieved_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     total_entries: int = 0
+    source: str = ""
 
     def model_post_init(self, __context: Any) -> None:
         """Update total_entries after initialization."""
@@ -2021,3 +2024,84 @@ class NetworkPairingConfig(BaseModel):
     pending_requests: list[PairingRequest] = Field(default_factory=list)
     max_paired_devices: int = Field(default=10, ge=1)
     auto_approve_same_network: bool = False
+
+
+# =============================================================================
+# User accounts (pwdgrp.cgi)
+# =============================================================================
+
+
+class UserRole(str, Enum):
+    """Access role of a VAPIX user account.
+
+    VAPIX expresses roles as cumulative secondary groups (``admin`` implies
+    ``operator`` and ``viewer``); this enum names the highest one.
+    """
+
+    VIEWER = "viewer"
+    OPERATOR = "operator"
+    ADMIN = "admin"
+
+
+class UserAccount(BaseModel):
+    """One VAPIX user account.
+
+    Attributes:
+        username: Account name (1-14 characters, ``A-Z a-z 0-9``).
+        role: Highest access role, or ``None`` if the account is in no
+            access group (listed under ``digusers`` only).
+        ptz: Whether the account may control PTZ.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    username: str
+    role: UserRole | None = None
+    ptz: bool = False
+
+    @property
+    def sgrp(self) -> str:
+        """The ``sgrp`` secondary-group string VAPIX expects for this account."""
+        return role_to_sgrp(self.role, self.ptz)
+
+
+class UserAccounts(BaseModel):
+    """All user accounts on a device, as reported by ``pwdgrp.cgi?action=get``.
+
+    Attributes:
+        accounts: Accounts in the order the device listed them.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    accounts: list[UserAccount] = Field(default_factory=list)
+
+    def get(self, username: str) -> UserAccount | None:
+        """Return the account named ``username``, or ``None``."""
+        return next((a for a in self.accounts if a.username == username), None)
+
+    @property
+    def admins(self) -> list[UserAccount]:
+        """Accounts with the administrator role."""
+        return [a for a in self.accounts if a.role is UserRole.ADMIN]
+
+
+_SGRP_BY_ROLE: dict[UserRole | None, str] = {
+    None: "",
+    UserRole.VIEWER: "viewer",
+    UserRole.OPERATOR: "operator:viewer",
+    UserRole.ADMIN: "admin:operator:viewer",
+}
+
+
+def role_to_sgrp(role: UserRole | None, ptz: bool) -> str:
+    """Build the ``sgrp`` argument for a role.
+
+    The six values VAPIX documents are ``viewer``, ``viewer:ptz``,
+    ``operator:viewer``, ``operator:viewer:ptz``, ``admin:operator:viewer`` and
+    ``admin:operator:viewer:ptz``.
+    """
+    groups = _SGRP_BY_ROLE[role]
+    if ptz:
+        groups = f"{groups}:ptz" if groups else "ptz"
+    return groups

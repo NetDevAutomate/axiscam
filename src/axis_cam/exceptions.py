@@ -61,6 +61,18 @@ class AxisAuthenticationError(AxisError):
     pass
 
 
+class AxisPermissionError(AxisAuthenticationError):
+    """Raised when the device answers 403: this account may not use this API.
+
+    Distinct from a 401 (credentials rejected): the session is authenticated
+    but a specific API refuses the account. Seen on AXIS OS 12.11, where an
+    administrator still gets 403 on ``/config/rest/oauth-ccgrant``. Report and
+    backup record it per module and carry on; a 401 aborts the run.
+    """
+
+    pass
+
+
 class AxisDeviceError(AxisError):
     """Raised when device returns an error.
 
@@ -105,6 +117,34 @@ class AxisApiNotSupportedError(AxisError):
         ...     await camera.ptz.move()
         ... except AxisApiNotSupportedError as e:
         ...     print(f"PTZ not supported: {e}")
+    """
+
+    pass
+
+
+class AxisUserError(AxisDeviceError):
+    """Raised when the device rejects an account operation.
+
+    ``pwdgrp.cgi`` reports failures with HTTP 200 and a body starting
+    ``Error:`` (invalid password, bad user name, unknown action), so the
+    HTTP layer cannot see them; the users module raises this instead.
+
+    Example:
+        >>> try:
+        ...     await camera.users.add("joe", "weak", UserRole.VIEWER)
+        ... except AxisUserError as e:
+        ...     print(f"Device refused: {e}")
+    """
+
+    pass
+
+
+class AxisLockoutError(AxisConfigError):
+    """Raised when an account change would lock the caller out of the device.
+
+    Removing or de-admining the account the client is authenticated as, or
+    removing the last administrator, is refused unless the caller passes
+    ``allow_lockout=True`` explicitly.
     """
 
     pass

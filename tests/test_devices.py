@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from axis_cam.auth import AuthMode
 from axis_cam.devices import (
     AxisCamera,
     AxisIntercom,
     AxisRecorder,
     AxisSpeaker,
 )
+from axis_cam.exceptions import AxisDeviceError
 from axis_cam.models import (
     BasicDeviceInfo,
     DeviceStatus,
@@ -29,6 +31,7 @@ class TestAxisDevice:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -149,36 +152,37 @@ class TestAxisDevice:
 
         mock_client.get_json = AsyncMock(side_effect=mock_get_json)
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            time_info = await camera.get_time_info()
+            time_info = await camera.time.get_info()
             assert isinstance(time_info, TimeInfo)
 
     @pytest.mark.asyncio
     async def test_get_logs(self, mock_client):
         """Test get_logs method."""
-        mock_client.get_text = AsyncMock(return_value="Jan 15 10:30:00 axis syslog: Test message")
-        mock_client.get_raw = AsyncMock(return_value=b"Jan 15 10:30:00 axis syslog: Test message")
+        mock_client.get = AsyncMock(
+            return_value=MagicMock(text="Jan 15 10:30:00 axis syslog: Test message")
+        )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            logs = await camera.get_logs(LogType.SYSTEM, max_entries=10)
+            logs = await camera.logs.get_logs(LogType.SYSTEM, max_entries=10)
             assert isinstance(logs, LogReport)
 
     @pytest.mark.asyncio
     async def test_get_friendly_name(self, mock_client):
         """Test get_friendly_name method."""
-        mock_client.get_json = AsyncMock(
-            return_value={"root": {"Properties": {"FriendlyName": "Front Door Camera"}}}
+        mock_client.get = AsyncMock(
+            return_value=MagicMock(text="root.Properties.FriendlyName=Front Door Camera\n")
         )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            name = await camera.get_friendly_name()
+            name = await camera.params.get_friendly_name()
             assert name == "Front Door Camera"
 
     @pytest.mark.asyncio
     async def test_get_location(self, mock_client):
         """Test get_location method."""
-        mock_client.get_json = AsyncMock(
-            return_value={"root": {"Properties": {"Location": "Building A, Entrance"}}}
+        mock_client.get = AsyncMock(
+            return_value=MagicMock(text="root.Properties.Location=Building A, Entrance\n")
         )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            location = await camera.get_location()
+            location = await camera.params.get_location()
             assert location == "Building A, Entrance"
 
 
@@ -190,6 +194,7 @@ class TestAxisCamera:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -328,7 +333,7 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_get_video_sources_error(self, mock_client):
         """Test get_video_sources handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.get_video_sources()
             assert result == []
@@ -348,7 +353,7 @@ class TestAxisCamera:
     @pytest.mark.asyncio
     async def test_get_stream_profiles_error(self, mock_client):
         """Test get_stream_profiles handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             result = await camera.get_stream_profiles()
             assert result == []
@@ -362,6 +367,7 @@ class TestAxisRecorder:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.100"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -428,7 +434,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_recording_groups_error(self, mock_client):
         """Test get_recording_groups handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_groups()
@@ -452,7 +458,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_recording_group_not_found(self, mock_client):
         """Test get_recording_group returns None on error."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("Not found"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("Not found"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_recording_group("invalid")
@@ -479,7 +485,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_storage_info_error(self, mock_client):
         """Test get_storage_info handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_storage_info()
@@ -507,7 +513,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_disk_status_error(self, mock_client):
         """Test get_disk_status handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_disk_status()
@@ -531,7 +537,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_remote_storage_config_not_available(self, mock_client):
         """Test get_remote_storage_config returns None on error."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("Not available"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("Not available"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_remote_storage_config()
@@ -562,7 +568,7 @@ class TestAxisRecorder:
     @pytest.mark.asyncio
     async def test_get_connected_cameras_error(self, mock_client):
         """Test get_connected_cameras handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisRecorder("192.168.1.100", "admin", "password") as recorder:
             result = await recorder.get_connected_cameras()
@@ -602,6 +608,7 @@ class TestAxisIntercom:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.11"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -666,7 +673,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_status_error(self, mock_client):
         """Test get_audio_status handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_status()
@@ -690,7 +697,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_audio_device_info_error(self, mock_client):
         """Test get_audio_device_info handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_audio_device_info()
@@ -731,7 +738,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_get_sip_config_error(self, mock_client):
         """Test get_sip_config handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.get_sip_config()
@@ -775,7 +782,7 @@ class TestAxisIntercom:
     @pytest.mark.asyncio
     async def test_has_sip_false(self, mock_client):
         """Test has_sip returns False when SIP not configured."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("Not available"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("Not available"))
 
         async with AxisIntercom("192.168.1.11", "admin", "password") as intercom:
             result = await intercom.has_sip()
@@ -825,6 +832,7 @@ class TestAxisSpeaker:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.125.45"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -890,7 +898,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_config_error(self, mock_client):
         """Test get_audio_config handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_config()
@@ -913,7 +921,7 @@ class TestAxisSpeaker:
         """Test get_audio_multicast_config returns default on error."""
         from axis_cam.models import AudioMulticastConfig
 
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_multicast_config()
@@ -940,7 +948,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_status_error(self, mock_client):
         """Test get_audio_status handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_status()
@@ -964,7 +972,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_device_info_error(self, mock_client):
         """Test get_audio_device_info handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_device_info()
@@ -1048,7 +1056,7 @@ class TestAxisSpeaker:
     @pytest.mark.asyncio
     async def test_get_audio_clips_error(self, mock_client):
         """Test get_audio_clips handles errors."""
-        mock_client.get_json = AsyncMock(side_effect=Exception("API error"))
+        mock_client.get_json = AsyncMock(side_effect=AxisDeviceError("API error"))
 
         async with AxisSpeaker("192.168.125.45", "admin", "password") as speaker:
             result = await speaker.get_audio_clips()
@@ -1064,6 +1072,7 @@ class TestDeviceInfo:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -1095,6 +1104,7 @@ class TestDeviceCapabilities:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -1129,3 +1139,57 @@ class TestDeviceCapabilities:
 
             # Should only be called once due to caching
             assert mock_client.discover_apis.call_count == 1
+
+
+class TestAxisDeviceTransport:
+    """The scheme is explicit and never inferred from the port.
+
+    Regression tests for the review finding where ``use_https = port == 443``
+    sent credentials over plain HTTP to any device on a non-443 port.
+    """
+
+    def test_https_is_default_on_non_443_port(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", port=8443)
+        assert camera.client.base_url == "https://192.168.1.10:8443"
+
+    def test_https_is_default_on_port_80(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", port=80)
+        assert camera.client.base_url == "https://192.168.1.10:80"
+
+    def test_plain_http_is_an_explicit_opt_in(self):
+        camera = AxisCamera(
+            "192.168.1.10", "admin", "password", port=80, auth_mode="digest", https=False
+        )
+        assert camera.client.base_url == "http://192.168.1.10:80"
+
+    def test_basic_auth_over_plain_http_is_refused(self):
+        from axis_cam.exceptions import AxisConfigError
+
+        with pytest.raises(AxisConfigError, match="cleartext"):
+            AxisCamera("192.168.1.10", "admin", "password", https=False, auth_mode="basic")
+
+    def test_auto_auth_over_plain_http_is_allowed_and_never_falls_back_to_basic(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", https=False)
+        assert camera.client.auth_mode is AuthMode.AUTO
+        assert camera.client.allow_insecure_basic is False
+
+    def test_basic_auth_over_plain_http_needs_explicit_allow(self):
+        camera = AxisCamera(
+            "192.168.1.10",
+            "admin",
+            "password",
+            https=False,
+            auth_mode="basic",
+            allow_insecure_basic=True,
+        )
+        assert camera.client.base_url.startswith("http://")
+        assert camera.client.auth_mode is AuthMode.BASIC
+
+    def test_digest_over_plain_http_is_allowed(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", https=False, auth_mode="digest")
+        assert camera.client.base_url.startswith("http://")
+
+    def test_ssl_verify_and_timeout_reach_the_client(self):
+        camera = AxisCamera("192.168.1.10", "admin", "password", ssl_verify=True, timeout=7.5)
+        assert camera.client.verify_ssl is True
+        assert camera.client.timeout == 7.5

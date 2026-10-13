@@ -8,12 +8,14 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Comprehensive Device Info**: Serial numbers, firmware, capabilities
 - **Stream Diagnostics**: RTSP/RTP configuration, stream profiles - essential for third-party integration
 - **Network Discovery**: LLDP neighbor discovery for switch port mapping
-- **Log Retrieval**: System, access, and audit logs with severity filtering
+- **Log Retrieval**: System, access and audit logs from their dedicated CGIs (audit log on AXIS OS 12.7+), with the server report as fallback
 - **Device Reports**: Generate comprehensive JSON/YAML configuration reports
-- **Diagnostic Downloads**: Server reports and debug archives for AXIS support
+- **Backups**: Registry-driven configuration snapshots with a hash-verified manifest that says what is and is not included
+- **Diagnostic Downloads**: Server report and crash report for AXIS support, written `0600`
 - **Security Configuration**: Firewall, SSH, certificates, SNMP, NTP
+- **Account Management**: list, add, rotate passwords, change roles, remove — with plan/confirm/verify and a lockout guard
 - **Authentication**: Digest (default) and Basic authentication support
-- **Async Operations**: Efficient parallel communication with multiple devices
+- **Async**: httpx-based async client; one device per command today (fleet fan-out is planned)
 - **Configuration Management**: YAML config with environment variable interpolation
 - **Legacy Support**: Automatic migration from `~/.config/axis/` to `~/.config/axiscam/`
 
@@ -84,6 +86,7 @@ devices:
     type: camera
     address: 192.168.1.10
     port: 443
+    https: true          # default; never inferred from the port. Set false only for plain-HTTP devices
     username: ${AXIS_ROOT_USER_NAME}
     password: ${AXIS_ROOT_USER_PASSWORD}
     ssl_verify: false
@@ -184,10 +187,10 @@ axiscam info --device front_camera
 | `--username` | `-u` | Authentication username |
 | `--password` | `-p` | Authentication password |
 | `--port` | `-P` | Port number (default: 443) |
-| `--digest/--no-digest` | | Authentication mode (default: digest) |
+| `--auth` | | `auto` (default), `basic` or `digest`; auto follows the device's challenge |
 | `--json` | `-j` | Output as JSON |
 
-**Note**: Digest authentication is enabled by default as most AXIS devices require it. Use `--no-digest` for devices that only support Basic authentication.
+**Note**: `--auth auto` does what Axis documents: Basic over HTTPS, Digest over HTTP, and if the device's `WWW-Authenticate` offers only the other scheme it switches once and remembers. A fleet mixes both — an AXIS OS 12 camera with `Network.HTTP.AuthenticationPolicy=recommended` offers only Basic on HTTPS, an 11.x speaker only Digest — so a fixed choice fails on part of any real fleet. Basic over plain HTTP is never chosen automatically.
 
 ### Core Commands
 
@@ -224,11 +227,12 @@ axiscam report --device camera1 --full --output full_report.json
 | `--device` | `-d` | Device name or IP address |
 | `--output` | `-o` | Output file path |
 | `--format` | `-f` | Output format: `json` (default), `yaml`, `text` |
-| `--full` | | Include all configurations (SSH, SNMP, certs, MQTT, actions, recording, storage, geolocation, analytics, OIDC, OAuth, crypto policy) |
+| `--full` | | Include every resource the device advertises (SSH, SNMP, certs, MQTT, actions, recording, storage, geolocation, analytics, OIDC, OAuth, crypto policy, virtual hosts, pairing) |
 
 ### Download Commands
 
-Download diagnostic reports and debug archives from AXIS devices.
+Download the server report and the crash report. Both describe the device in
+detail, so every file is written with `0600` permissions.
 
 ```bash
 # Download server report (ZIP with snapshot image)
@@ -240,12 +244,15 @@ axiscam download report --device camera1 --format text --output ~/report.txt
 # Download server report as ZIP without image
 axiscam download report --device camera1 --format zip --output ~/report.zip
 
-# Download debug archive (comprehensive diagnostics for AXIS support)
-axiscam download debug --device camera1 --output ~/debug.tgz
+# Download the crash report (what the web UI calls "Download the crash report";
+# the server report plus debug data - can include passwords, images, network traffic)
+axiscam download crash-report --device camera1 --output ~/crash.tgz
 
-# With extended timeout for large archives
-axiscam download debug --device camera1 --output ~/debug.tgz --timeout 300
+# The device may take minutes to build it; default timeout is 300 s
+axiscam download crash-report --device camera1 --timeout 600
 ```
+
+`axiscam download debug` still works as a hidden alias of `crash-report`.
 
 #### Server Report Options (`axiscam download report`)
 
@@ -255,18 +262,18 @@ axiscam download debug --device camera1 --output ~/debug.tgz --timeout 300
 | `--output` | `-o` | Output file (auto-generates if not specified) |
 | `--format` | `-f` | Report format: `zip_with_image` (default), `zip`, `text` |
 | `--timeout` | `-t` | Download timeout in seconds (default: 60) |
-| `--digest/--no-digest` | | Authentication mode (default: digest) |
+| `--auth` | | `auto` (default), `basic` or `digest`; auto follows the device's challenge |
 
-#### Debug Archive Options (`axiscam download debug`)
+#### Crash Report Options (`axiscam download crash-report`)
 
 | Option | Short | Description |
 |--------|-------|-------------|
 | `--device` | `-d` | Device name or IP address |
-| `--output` | `-o` | Output file (auto-generates if not specified) |
-| `--timeout` | `-t` | Download timeout in seconds (default: 120) |
-| `--digest/--no-digest` | | Authentication mode (default: digest) |
+| `--output` | `-o` | Output file (auto-generates `crash_report_<device>.tgz`) |
+| `--timeout` | `-t` | Download timeout in seconds (default: 300) |
+| `--auth` | | `auto` (default), `basic` or `digest`; auto follows the device's challenge |
 
-**Note**: Debug archives can be large (10+ MB) and take time to generate. Use extended timeouts for slower devices or large configurations.
+**Note**: The crash report is large (10+ MB) and the device builds it on demand. Axis's privacy statement says it can include user IDs, passwords, video images and network traffic — the command prints that notice and writes the file `0600`.
 
 ### Stream Diagnostics
 
@@ -327,6 +334,31 @@ axiscam security ssh --device camera1
 axiscam security cert --device camera1
 ```
 
+### Account Commands
+
+The first commands that **change** a device. Every write shows a *Planned change*
+panel first; `--dry-run` stops there, otherwise you confirm (`--yes` skips the
+prompt), the change is applied and verified by re-reading the device.
+
+```bash
+# List accounts with roles
+axiscam accounts list --device camera1
+
+# Create an operator (the new password is prompted for, hidden; never on the command line)
+axiscam accounts add ops --role operator --device camera1
+
+# Rotate a password non-interactively (one line on stdin)
+echo "$NEW_PW" | axiscam accounts set-password ops --password-stdin --yes --device camera1
+
+# Change a role, remove an account, preview first
+axiscam accounts set-role ops --role viewer --ptz --dry-run --device camera1
+axiscam accounts remove ops --device camera1
+```
+
+Guard rails: removing or de-admining the account you are logged in as needs
+`--allow-lockout`; removing the only administrator is refused (a device with no
+administrator accepts an unauthenticated request to create one).
+
 ### Service Commands
 
 ```bash
@@ -336,6 +368,37 @@ axiscam services snmp --device camera1
 # NTP configuration
 axiscam services ntp --device camera1
 ```
+
+### Backup Commands
+
+A backup is a directory with a manifest: one JSON file per configuration module
+the device advertises, the full parameter tree, and optionally the server
+report. It is read-only on the device. The manifest records a SHA-256 per file
+and lists what a VAPIX backup **cannot** contain (passwords, private keys, ACAP
+binaries and licences, recordings) separately from what this version does not
+read yet — so nobody mistakes it for a full image. Restore covers the parameter tree.
+
+```bash
+# Create backup-<device>-<timestamp>/ in the current directory (0700, files 0600)
+axiscam backup create --device camera1
+
+# Elsewhere, and with the server report included
+axiscam backup create --device camera1 -o ~/backups --with-server-report
+
+# Inspect and verify
+axiscam backup show ~/backups/backup-camera1-20261013T110000Z
+axiscam backup verify ~/backups/backup-camera1-20261013T110000Z
+
+# Restore the parameter tree: plan first, then apply one parameter at a time
+axiscam backup restore ~/backups/backup-camera1-20261013T110000Z --device camera1 --dry-run -v
+axiscam backup restore ~/backups/backup-camera1-20261013T110000Z --device camera1
+```
+
+Restore covers `params.json` only (`param.cgi?action=update`, the one documented
+write path). It refuses a backup whose `params.json` no longer matches the
+manifest or that was taken from a different serial number, skips what the
+device itself declares read-only (`listdefinitions`), excludes the `Network`
+group unless `--include-network`, and verifies every write by reading it back.
 
 ### Configuration Commands
 
@@ -402,15 +465,15 @@ axiscam status --device camera1
 # Check if HTTPS is required
 axiscam status --host 192.168.1.10 --port 80 -u admin -p pass
 
-# Try Basic auth if Digest fails (rare)
-axiscam info --device camera1 --no-digest
+# Force a scheme if a device misbehaves with auto
+axiscam info --device camera1 --auth digest
 ```
 
 ### Authentication Errors
 
 1. Verify credentials are correct
 2. Check if account is locked (too many failed attempts)
-3. Digest authentication is default; try `--no-digest` for older devices
+3. `--auth auto` follows the device's challenge; force `--auth basic` or `--auth digest` only to diagnose
 4. Verify user has admin privileges
 
 ### SSL Certificate Errors
@@ -427,15 +490,29 @@ devices:
 
 ### Port 80 vs 443
 
-- **Port 443 (HTTPS)**: Default, recommended for security
-- **Port 80 (HTTP)**: Legacy, sends credentials in clear text
+The scheme is **never inferred from the port**: `https` defaults to `true`, so a
+device entry with `port: 80` and nothing else sends TLS to a plain-HTTP port and
+fails with:
+
+```
+Error: 192.168.1.10:80 answered plain HTTP to an HTTPS request. If this device is
+meant to use HTTP, set `https: false` for it in the config (library: https=False);
+otherwise set `port: 443`.
+```
+
+Prefer moving the device to 443. Only if the device really must speak HTTP:
 
 ```yaml
 devices:
   legacy_camera:
     address: 192.168.1.10
-    port: 80  # HTTP - not recommended
+    port: 80
+    https: false   # explicit; Digest auth is still used, but config and data travel in clear
 ```
+
+The reverse mistake (`https: false` against a TLS port) is reported as
+"expects HTTPS but was sent plain HTTP". Basic authentication over plain HTTP is
+refused outright.
 
 ### Config Migration
 
@@ -504,8 +581,15 @@ This tool covers the following AXIS VAPIX APIs:
 | virtualhost | Virtual host configuration | Full |
 | crypto-policy | TLS/cipher configuration | Full |
 | network-pairing | Device pairing | Full |
+| pwdgrp.cgi (user-management) | User accounts: list, add, set password, set role, remove | Full (write) |
 
 ## Development
+
+[![CI](https://github.com/NetDevAutomate/axiscam/actions/workflows/ci.yml/badge.svg)](https://github.com/NetDevAutomate/axiscam/actions/workflows/ci.yml)
+
+CI mirrors the central `ci-standards` `python-uv` profile (ruff format/check,
+bandit, pytest with the coverage floor, pip-audit, repo hygiene) plus pyright and
+the docs-match-code tests; see `.ci-standards.yaml` and `CONTRIBUTING.md`.
 
 ### Setup
 
@@ -550,13 +634,15 @@ uv run mypy src/
 axis/
 ├── src/axis_cam/
 │   ├── __init__.py          # Package exports
-│   ├── cli.py               # Typer CLI (~2200 lines)
+│   ├── cli/                 # Typer CLI package (one module per command group)
+│   ├── report.py            # Registry-driven device report
 │   ├── client.py            # VapixClient HTTP client
 │   ├── config.py            # Configuration management
 │   ├── models.py            # Pydantic models (~2000 lines)
 │   ├── exceptions.py        # Exception hierarchy
 │   ├── api/                  # VAPIX API modules
-│   │   ├── base.py          # BaseAPI abstract class
+│   │   ├── base.py          # BaseAPI (request helpers, name/api_id)
+│   │   ├── registry.py      # @register, ResourceModule protocol
 │   │   ├── device_info.py   # Basic device info
 │   │   ├── param.py         # Parameters
 │   │   ├── stream.py        # Stream diagnostics
@@ -564,7 +650,7 @@ axis/
 │   │   ├── network.py       # Network settings
 │   │   └── ... (30 modules)
 │   └── devices/
-│       ├── base.py          # AxisDevice abstract base
+│       ├── base.py          # AxisDevice (modules built from the registry)
 │       ├── camera.py        # AxisCamera
 │       ├── recorder.py      # AxisRecorder
 │       ├── intercom.py      # AxisIntercom

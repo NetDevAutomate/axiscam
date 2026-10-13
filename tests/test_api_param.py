@@ -1,355 +1,276 @@
-"""Tests for Param API module."""
+"""Tests for ParamAPI against the documented param.cgi text contract.
+
+VAPIX Parameter management: ``action=list`` answers ``text/plain`` with one
+``<parameter>=<value>`` line per parameter; an invalid request answers HTTP 200
+with ``# Error: <description>``. Until 2026-10-13 this module parsed JSON and
+every real device therefore produced empty results.
+"""
 
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
-from axis_cam.api.param import ParamAPI
+from axis_cam.api.param import (
+    ParamAPI,
+    full_name,
+    group_parameters,
+    parse_param_list,
+    short_name,
+)
+from axis_cam.client import VapixClient
+from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
 
+# From the VAPIX page, example 3 ("only a small part of the response is shown").
+DOC_EXAMPLE = """root.Network.Media=auto
+root.Network.Autoneg=normal
+root.Network.Enabled=yes
+"""
 
-class TestParamAPI:
-    """Tests for ParamAPI class."""
+LISTING = """root.Properties.FriendlyName=Front Door
+root.Properties.Location=Building A, Entrance
+root.Network.eth0.IPAddress=192.168.1.10
+root.Network.eth0.MACAddress=AC:CC:8E:00:00:01
+root.Network.Media=auto
+root.Audio.MaxListeners=10
+root.System.URL=https://example.com/a?b=c=d
+"""
 
-    @pytest.fixture
-    def mock_client(self):
-        """Create a mock VapixClient."""
-        client = MagicMock()
-        client.host = "192.168.1.10"
-        return client
 
-    @pytest.fixture
-    def param_api(self, mock_client):
-        """Create ParamAPI instance with mock client."""
-        return ParamAPI(mock_client)
+def _api(*bodies: str | Exception) -> tuple[ParamAPI, MagicMock]:
+    client = MagicMock()
+    client.host = "192.168.1.10"
+    client.get = AsyncMock(
+        side_effect=[b if isinstance(b, Exception) else MagicMock(text=b) for b in bodies]
+    )
+    return ParamAPI(client), client
 
-    def test_init(self, param_api):
-        """Test ParamAPI initialization."""
-        assert param_api._client is not None
 
-    @pytest.mark.asyncio
-    async def test_get_single_param(self, param_api):
-        """Test get single parameter."""
-        response = {"root": {"Properties": {"FriendlyName": "Test Camera"}}}
-        param_api._get = AsyncMock(return_value=response)
+def _requested(client) -> list[dict]:
+    return [call.args[1] for call in client.get.await_args_list]
 
-        result = await param_api.get("root.Properties.FriendlyName")
 
-        assert result == "Test Camera"
-
-    @pytest.mark.asyncio
-    async def test_get_param_not_found(self, param_api):
-        """Test get parameter returns None when not found."""
-        response = {}
-        param_api._get = AsyncMock(return_value=response)
-
-        result = await param_api.get("root.NonExistent.Param")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_param_exception(self, param_api):
-        """Test get parameter returns None on exception."""
-        param_api._get = AsyncMock(side_effect=Exception("API error"))
-
-        result = await param_api.get("root.Properties.FriendlyName")
-
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_get_group(self, param_api):
-        """Test get parameter group."""
-        response = {
-            "root": {
-                "Network": {
-                    "eth0": {"IPAddress": "192.168.1.10", "MACAddress": "AA:BB:CC:DD:EE:FF"}
-                }
-            }
-        }
-        param_api._get = AsyncMock(return_value=response)
-
-        result = await param_api.get_group("Network")
-
-        assert isinstance(result, ParameterGroup)
-        assert result.name == "Network"
-
-    @pytest.mark.asyncio
-    async def test_get_group_with_root_prefix(self, param_api):
-        """Test get group already has root prefix."""
-        response = {"root": {"Network": {"eth0": {"IPAddress": "192.168.1.10"}}}}
-        param_api._get = AsyncMock(return_value=response)
-
-        result = await param_api.get_group("root.Network")
-
-        assert result.name == "Network"
-
-    @pytest.mark.asyncio
-    async def test_get_group_exception(self, param_api):
-        """Test get group returns empty group on exception."""
-        param_api._get = AsyncMock(side_effect=Exception("API error"))
-
-        result = await param_api.get_group("Network")
-
-        assert isinstance(result, ParameterGroup)
-        assert result.name == "Network"
-        assert len(result.parameters) == 0
-
-    @pytest.mark.asyncio
-    async def test_get_all(self, param_api):
-        """Test get all parameters."""
-        # Response doesn't have root wrapper - _parse_all_params adds "root" prefix
-        response = {
-            "Properties": {"FriendlyName": "Test", "Location": "Lab"},
-            "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
-        }
-        param_api._get = AsyncMock(return_value=response)
-
-        result = await param_api.get_all()
-
-        assert isinstance(result, list)
-        assert len(result) >= 1
-        group_names = [g.name for g in result]
-        assert "Network" in group_names or "Properties" in group_names
-
-    @pytest.mark.asyncio
-    async def test_get_all_exception(self, param_api):
-        """Test get all returns empty list on exception."""
-        param_api._get = AsyncMock(side_effect=Exception("API error"))
-
-        result = await param_api.get_all()
-
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_get_many(self, param_api):
-        """Test get multiple parameters."""
-        responses = {
-            "root.Properties.FriendlyName": "Test Camera",
-            "root.Properties.Location": "Lab",
+class TestParseParamList:
+    def test_documented_example(self):
+        assert parse_param_list(DOC_EXAMPLE) == {
+            "root.Network.Media": "auto",
+            "root.Network.Autoneg": "normal",
+            "root.Network.Enabled": "yes",
         }
 
-        async def mock_get(path, params=None):
-            group = params.get("group", "")
-            parts = group.split(".")
-            result = {"root": {}}
-            current = result["root"]
-            for i, part in enumerate(parts[1:]):
-                if i == len(parts) - 2:
-                    current[part] = responses.get(group, "")
-                else:
-                    current[part] = {}
-                    current = current[part]
-            return result
+    def test_value_may_contain_equals_signs(self):
+        assert parse_param_list(LISTING)["root.System.URL"] == "https://example.com/a?b=c=d"
 
-        param_api._get = mock_get
+    def test_empty_value_and_blank_and_comment_lines(self):
+        assert parse_param_list("root.A.B=\n\n# a comment\nroot.A.C=x\n") == {
+            "root.A.B": "",
+            "root.A.C": "x",
+        }
 
-        result = await param_api.get_many(
-            [
-                "root.Properties.FriendlyName",
-                "root.Properties.Location",
-            ]
+    def test_empty_body_is_no_parameters(self):
+        assert parse_param_list("") == {}
+
+    def test_error_body_raises(self):
+        with pytest.raises(AxisDeviceError, match=r"param\.cgi: Error: No such group"):
+            parse_param_list("# Error: No such group\n")
+
+    def test_keys_are_normalised_to_full_names(self):
+        # group=Image.I0.Name answers without the root. prefix; a group answers with it.
+        assert parse_param_list("Image.I0.Name=View Area 1\n") == {
+            "root.Image.I0.Name": "View Area 1"
+        }
+        assert parse_param_list("root.Image.I0.Name=View Area 1\n") == {
+            "root.Image.I0.Name": "View Area 1"
+        }
+
+    def test_crlf_lines(self):
+        assert parse_param_list("root.A.B=1\r\nroot.A.C=2\r\n") == {
+            "root.A.B": "1",
+            "root.A.C": "2",
+        }
+
+
+class TestNames:
+    def test_full_and_short(self):
+        assert full_name("Network.eth0.IPAddress") == "root.Network.eth0.IPAddress"
+        assert full_name("root.Network.eth0.IPAddress") == "root.Network.eth0.IPAddress"
+        assert short_name("root.Network.eth0.IPAddress") == "Network.eth0.IPAddress"
+        assert short_name("Network") == "Network"
+
+    def test_group_parameters(self):
+        groups = group_parameters(parse_param_list(LISTING))
+
+        assert [g.name for g in groups] == ["Audio", "Network", "Properties", "System"]
+        network = next(g for g in groups if g.name == "Network")
+        assert network.parameters[0] == DeviceParameter(
+            name="Network.eth0.IPAddress", value="192.168.1.10", group="Network"
         )
 
-        assert isinstance(result, dict)
-        assert len(result) == 2
 
-    @pytest.mark.asyncio
-    async def test_search(self, param_api):
-        """Test search parameters."""
-        response = {
-            "root": {
-                "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
-                "Properties": {"FriendlyName": "Test"},
-            }
-        }
-        param_api._get = AsyncMock(return_value=response)
+class TestList:
+    async def test_get_all_requests_everything_with_rfc_format(self):
+        api, client = _api(LISTING)
 
-        result = await param_api.search("Network")
+        groups = await api.get_all()
 
-        assert isinstance(result, list)
-        # Should find parameters containing "Network"
-        for param in result:
-            assert isinstance(param, DeviceParameter)
+        assert _requested(client) == [{"action": "list", "responseformat": "rfc"}]
+        assert [g.name for g in groups] == ["Audio", "Network", "Properties", "System"]
+        assert sum(len(g.parameters) for g in groups) == 7
 
-    @pytest.mark.asyncio
-    async def test_export_rest_api(self, param_api):
-        """Test export using REST API."""
-        response = {
-            "data": {
-                "Properties": {"FriendlyName": "Test"},
-                "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
-            }
-        }
-        param_api._get = AsyncMock(return_value=response)
+    async def test_get_all_propagates_errors(self):
+        api, _ = _api(AxisDeviceError("500"))
 
-        result = await param_api.export()
+        with pytest.raises(AxisDeviceError):
+            await api.get_all()
 
-        assert isinstance(result, dict)
-        assert "Properties" in result or len(result) >= 0
+    async def test_get_group_strips_root_and_names_the_top_level_group(self):
+        api, client = _api(
+            "root.Network.eth0.IPAddress=192.168.1.10\nroot.Network.eth0.MACAddress=AC\n"
+        )
 
-    @pytest.mark.asyncio
-    async def test_export_fallback(self, param_api):
-        """Test export falls back to get_all on exception."""
-        all_response = {"root": {"Properties": {"FriendlyName": "Test"}}}
+        group = await api.get_group("root.Network.eth0")
 
-        call_count = 0
+        assert _requested(client) == [
+            {"action": "list", "responseformat": "rfc", "group": "Network.eth0"}
+        ]
+        assert group.name == "Network"
+        assert [p.name for p in group.parameters] == [
+            "Network.eth0.IPAddress",
+            "Network.eth0.MACAddress",
+        ]
 
-        async def mock_get(path, params=None):
-            nonlocal call_count
-            call_count += 1
-            if "$export" in path:
-                raise Exception("REST not available")
-            return all_response
+    async def test_get_group_unknown_is_empty(self):
+        api, _ = _api("# Error: Error -1 getting param in group Nope\n")
 
-        param_api._get = mock_get
+        assert await api.get_group("Nope") == ParameterGroup(name="Nope")
 
-        result = await param_api.export()
+    async def test_get_single_parameter(self):
+        # A single-parameter group is echoed as requested: no root. prefix
+        # (observed live on AXIS OS 12.11; the prefix is only there for groups).
+        api, client = _api("Properties.FriendlyName=Front Door\n")
 
-        assert isinstance(result, dict)
+        value = await api.get("Properties.FriendlyName")
 
-    def test_extract_param_value(self, param_api):
-        """Test _extract_param_value method."""
-        response = {"root": {"Properties": {"FriendlyName": "Test Camera"}}}
+        assert value == "Front Door"
+        assert _requested(client)[0]["group"] == "Properties.FriendlyName"
 
-        result = param_api._extract_param_value(response, "root.Properties.FriendlyName")
+    async def test_get_accepts_full_name_too(self):
+        api, _ = _api("root.Properties.FriendlyName=Front Door\n")
+        assert await api.get("root.Properties.FriendlyName") == "Front Door"
 
-        assert result == "Test Camera"
+    async def test_get_missing_parameter_is_none(self):
+        api, _ = _api("# Error: Error -1 getting param in group Properties.Nope\n")
+        assert await api.get("Properties.Nope") is None
 
-    def test_extract_param_value_not_found(self, param_api):
-        """Test _extract_param_value returns None when not found."""
-        response = {"root": {}}
+    async def test_get_auth_error_propagates(self):
+        api, _ = _api(AxisAuthenticationError("401"))
+        with pytest.raises(AxisAuthenticationError):
+            await api.get("Properties.FriendlyName")
 
-        result = param_api._extract_param_value(response, "root.Properties.FriendlyName")
+    async def test_get_many_is_one_request(self):
+        api, client = _api(
+            "root.Properties.FriendlyName=Front Door\nroot.Properties.Location=Lab\n"
+        )
 
-        assert result is None
+        values = await api.get_many(
+            ["root.Properties.FriendlyName", "Properties.Location", "Properties.Nope"]
+        )
 
-    def test_extract_param_value_non_string(self, param_api):
-        """Test _extract_param_value returns None for non-string values."""
-        response = {"root": {"Properties": {"Count": 42}}}
-
-        result = param_api._extract_param_value(response, "root.Properties.Count")
-
-        assert result is None
-
-    def test_parse_group_response(self, param_api):
-        """Test _parse_group_response method."""
-        response = {"eth0": {"IPAddress": "192.168.1.10", "MACAddress": "AA:BB:CC:DD:EE:FF"}}
-
-        result = param_api._parse_group_response("root.Network", response)
-
-        assert isinstance(result, ParameterGroup)
-        assert result.name == "Network"
-
-    def test_parse_all_params(self, param_api):
-        """Test _parse_all_params method."""
-        response = {
-            "root": {
-                "Properties": {"FriendlyName": "Test"},
-                "Network": {"eth0": {"IPAddress": "192.168.1.10"}},
-            }
+        assert len(client.get.await_args_list) == 1
+        assert _requested(client)[0]["group"] == (
+            "Properties.FriendlyName,Properties.Location,Properties.Nope"
+        )
+        assert values == {
+            "root.Properties.FriendlyName": "Front Door",
+            "Properties.Location": "Lab",
+            "Properties.Nope": None,
         }
 
-        result = param_api._parse_all_params(response)
+    async def test_get_many_empty(self):
+        api, client = _api()
+        assert await api.get_many([]) == {}
+        client.get.assert_not_awaited()
 
-        assert isinstance(result, list)
-        group_names = [g.name for g in result]
-        # Should have groups organized
-        assert len(group_names) >= 1
+    async def test_search_is_case_insensitive_on_the_short_name(self):
+        api, _ = _api(LISTING)
 
-    def test_extract_params_recursive(self, param_api):
-        """Test _extract_params_recursive method."""
-        data = {"Network": {"eth0": {"IPAddress": "192.168.1.10"}}}
-        results = []
+        found = await api.search("ETH0")
 
-        param_api._extract_params_recursive(data, "root", results)
+        assert [p.name for p in found] == ["Network.eth0.IPAddress", "Network.eth0.MACAddress"]
 
-        assert len(results) >= 1
-        param_names = [p.name for p in results]
-        assert any("IPAddress" in name for name in param_names)
 
-    def test_extract_params_recursive_string(self, param_api):
-        """Test _extract_params_recursive with string value."""
-        results = []
+class TestExport:
+    async def test_export_is_the_flat_listing_with_full_names(self):
+        api, client = _api(LISTING)
 
-        param_api._extract_params_recursive("test_value", "root.Test", results)
+        exported = await api.export()
 
-        assert len(results) == 1
-        assert results[0].value == "test_value"
+        assert _requested(client) == [{"action": "list", "responseformat": "rfc"}]
+        assert exported == parse_param_list(LISTING)
+        assert all(k.startswith("root.") for k in exported)
 
-    @pytest.mark.asyncio
-    async def test_get_friendly_name(self, param_api):
-        """Test get_friendly_name convenience method."""
-        response = {"root": {"Properties": {"FriendlyName": "Front Door Camera"}}}
-        param_api._get = AsyncMock(return_value=response)
+    async def test_export_propagates_errors_instead_of_changing_shape(self):
+        api, _ = _api(AxisDeviceError("500"))
+        with pytest.raises(AxisDeviceError):
+            await api.export()
 
-        result = await param_api.get_friendly_name()
 
-        assert result == "Front Door Camera"
+class TestConvenience:
+    async def test_friendly_name_and_location(self):
+        api, _ = _api("root.Properties.FriendlyName=Front Door\n", "root.Properties.Location=Lab\n")
+        assert await api.get_friendly_name() == "Front Door"
+        assert await api.get_location() == "Lab"
 
-    @pytest.mark.asyncio
-    async def test_get_friendly_name_empty(self, param_api):
-        """Test get_friendly_name returns empty string when not found."""
-        param_api._get = AsyncMock(return_value={})
+    async def test_friendly_name_missing_is_empty_string(self):
+        api, _ = _api("# Error: nope\n")
+        assert await api.get_friendly_name() == ""
 
-        result = await param_api.get_friendly_name()
+    async def test_ip_address_first_candidate_wins(self):
+        api, client = _api("root.Network.eth0.IPAddress=10.0.0.5\n")
 
-        assert result == ""
+        assert await api.get_ip_address() == "10.0.0.5"
+        assert len(client.get.await_args_list) == 1  # one request for all candidates
 
-    @pytest.mark.asyncio
-    async def test_get_location(self, param_api):
-        """Test get_location convenience method."""
-        response = {"root": {"Properties": {"Location": "Main Entrance"}}}
-        param_api._get = AsyncMock(return_value=response)
+    async def test_ip_address_falls_through_to_alternatives(self):
+        api, _ = _api("root.Network.IPv4.Address=10.0.0.9\n")
+        assert await api.get_ip_address() == "10.0.0.9"
 
-        result = await param_api.get_location()
+    async def test_mac_address(self):
+        api, _ = _api("root.Network.eth0.MACAddress=AC:CC:8E:00:00:01\n")
+        assert await api.get_mac_address() == "AC:CC:8E:00:00:01"
 
-        assert result == "Main Entrance"
 
-    @pytest.mark.asyncio
-    async def test_get_ip_address(self, param_api):
-        """Test get_ip_address convenience method."""
-        response = {"root": {"Network": {"eth0": {"IPAddress": "192.168.1.10"}}}}
-        param_api._get = AsyncMock(return_value=response)
+class TestWire:
+    """Through the real client: the request line and the text body, end to end."""
 
-        result = await param_api.get_ip_address()
+    @respx.mock
+    async def test_list_sends_rfc_format_and_parses_text_plain(self):
+        route = respx.get("https://192.168.1.10:443/axis-cgi/param.cgi").mock(
+            return_value=httpx.Response(
+                200, text=DOC_EXAMPLE, headers={"content-type": "text/plain"}
+            )
+        )
 
-        assert result == "192.168.1.10"
+        async with VapixClient(
+            "192.168.1.10", "root", "pw", port=443, use_https=True, auth_mode="basic"
+        ) as client:
+            groups = await ParamAPI(client).get_all()
 
-    @pytest.mark.asyncio
-    async def test_get_ip_address_alternative(self, param_api):
-        """Test get_ip_address tries alternative parameter names."""
-        call_count = 0
+        assert route.calls[0].request.url.params["action"] == "list"
+        assert route.calls[0].request.url.params["responseformat"] == "rfc"
+        assert [g.name for g in groups] == ["Network"]
+        assert len(groups[0].parameters) == 3
 
-        async def mock_get(path, params=None):
-            nonlocal call_count
-            call_count += 1
-            group = params.get("group", "")
-            if "VolatileHostName" in group:
-                return {"root": {"Network": {"VolatileHostName": {"IPv4Address": "10.0.0.50"}}}}
-            return {}
-
-        param_api._get = mock_get
-
-        await param_api.get_ip_address()
-
-        # Should try alternatives and return if found
-        assert call_count >= 1
-
-    @pytest.mark.asyncio
-    async def test_get_mac_address(self, param_api):
-        """Test get_mac_address convenience method."""
-        response = {"root": {"Network": {"eth0": {"MACAddress": "AA:BB:CC:DD:EE:FF"}}}}
-        param_api._get = AsyncMock(return_value=response)
-
-        result = await param_api.get_mac_address()
-
-        assert result == "AA:BB:CC:DD:EE:FF"
-
-    @pytest.mark.asyncio
-    async def test_get_mac_address_empty(self, param_api):
-        """Test get_mac_address returns empty string when not found."""
-        param_api._get = AsyncMock(return_value={})
-
-        result = await param_api.get_mac_address()
-
-        assert result == ""
+    @respx.mock
+    async def test_the_old_json_parse_would_have_hidden_everything(self):
+        # Documenting the regression: text/plain is not JSON.
+        respx.get("https://192.168.1.10:443/axis-cgi/param.cgi").mock(
+            return_value=httpx.Response(200, text=DOC_EXAMPLE)
+        )
+        async with VapixClient(
+            "192.168.1.10", "root", "pw", port=443, use_https=True, auth_mode="basic"
+        ) as client:
+            with pytest.raises(AxisDeviceError, match="Invalid JSON"):
+                await client.get_json("/axis-cgi/param.cgi", {"action": "list"})

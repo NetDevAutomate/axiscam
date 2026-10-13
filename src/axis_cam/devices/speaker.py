@@ -7,6 +7,7 @@ AXIS network speakers and audio devices (C-series).
 from typing import Any
 
 from axis_cam.devices.base import AxisDevice
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import AudioMulticastConfig, DeviceType
 
 
@@ -66,7 +67,7 @@ class AxisSpeaker(AxisDevice):
                 {"action": "list", "group": "root.Audio"},
             )
             return response.get("root", {}).get("Audio", {})
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_audio_multicast_config(self) -> AudioMulticastConfig:
@@ -87,7 +88,7 @@ class AxisSpeaker(AxisDevice):
         try:
             response = await self._client.get_json("/axis-cgi/audio/audiostatus.cgi")
             return response
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_audio_device_info(self) -> dict[str, Any]:
@@ -99,7 +100,7 @@ class AxisSpeaker(AxisDevice):
         try:
             response = await self._client.get_json("/axis-cgi/audio/getaudiodevices.cgi")
             return response
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return {}
 
     async def get_volume(self) -> int | None:
@@ -138,5 +139,5 @@ class AxisSpeaker(AxisDevice):
                 {"action": "list"},
             )
             return response.get("clips", [])
-        except Exception:
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return []

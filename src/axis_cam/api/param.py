@@ -1,320 +1,329 @@
-"""Parameter API module.
+"""Parameter API module (``/axis-cgi/param.cgi``).
 
-This module provides access to device parameters via the VAPIX param API.
-Parameters are organized in groups and control various device settings.
+Device parameters are organised in dotted groups (``root.Network.eth0.IPAddress``)
+and control most legacy settings. ``param.cgi?action=list`` answers
+``text/plain`` with one ``<parameter>=<value>`` line per parameter; an invalid
+request answers HTTP 200 with ``# Error: <description>``. This module parses
+exactly that format (VAPIX Parameter management, fetched 2026-10-13) and always
+sends ``responseformat=rfc`` as the documentation asks.
 
-API Endpoints:
-    - /config/rest/param/v2beta (REST API)
-    - /axis-cgi/param.cgi (Legacy CGI)
-
-Parameters are read-only in this implementation for safety. Write operations
-would require explicit confirmation due to potential device impact.
+Parameters are read with ``action=list`` and written one at a time with
+``action=update`` (:meth:`ParamAPI.set`), which is the only write the module
+offers; the restore path in :mod:`axis_cam.restore` drives it through the
+plan → confirm → apply → verify pattern.
 """
 
+from dataclasses import dataclass
 from typing import Any
 
+from defusedxml import ElementTree as DefusedElementTree
+
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
 
+ROOT_PREFIX = "root."
 
+
+def parse_param_list(text: str) -> dict[str, str]:
+    """Parse ``action=list`` output into ``{full name: value}``.
+
+    Keys are normalised to full names (``root.Group.Name``). The device echoes
+    a *single-parameter* group the way the request spelled it — ``group=
+    Image.I0.Name`` answers ``Image.I0.Name=...`` with no ``root.`` — while a
+    real group always lists ``root.``-prefixed lines (AXIS OS 12.11, live).
+    Values keep every character after the first ``=``, so a value containing
+    ``=`` (a URL, a key) survives. Comment lines (``#``) and blanks are ignored.
+
+    Raises:
+        AxisDeviceError: The body is the CGI's ``# Error: <description>``.
+    """
+    stripped = text.strip()
+    if stripped.startswith("# Error"):
+        raise AxisDeviceError(f"param.cgi: {stripped.lstrip('# ')}")
+    values: dict[str, str] = {}
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        name, separator, value = line.partition("=")
+        if separator:
+            values[full_name(name.strip())] = value
+    return values
+
+
+def full_name(name: str) -> str:
+    """``Network.eth0.IPAddress`` → ``root.Network.eth0.IPAddress``."""
+    return name if name.startswith(ROOT_PREFIX) else f"{ROOT_PREFIX}{name}"
+
+
+def short_name(name: str) -> str:
+    """``root.Network.eth0.IPAddress`` → ``Network.eth0.IPAddress``."""
+    return name.removeprefix(ROOT_PREFIX)
+
+
+def group_parameters(values: dict[str, str]) -> list[ParameterGroup]:
+    """Organise a flat listing into top-level groups, sorted by group name.
+
+    ``DeviceParameter.name`` is the name without ``root.``; ``group`` is the
+    first component (``Network`` for ``root.Network.eth0.IPAddress``).
+    """
+    grouped: dict[str, list[DeviceParameter]] = {}
+    for name, value in values.items():
+        short = short_name(name)
+        group = short.split(".", 1)[0] if short else "Other"
+        grouped.setdefault(group, []).append(DeviceParameter(name=short, value=value, group=group))
+    return [
+        ParameterGroup(name=group, parameters=params) for group, params in sorted(grouped.items())
+    ]
+
+
+#: Privilege needed for an operation, as encoded in ``securityLevel`` digits.
+#: 0 anonymous, 1 viewer, 4 operator, 6 admin, 7 root — i.e. nobody over VAPIX.
+ACCESS_LEVELS: dict[str, str] = {
+    "0": "anonymous",
+    "1": "viewer",
+    "4": "operator",
+    "6": "admin",
+    "7": "none",
+}
+
+
+@dataclass(frozen=True)
+class ParamDefinition:
+    """What ``listdefinitions`` says about one parameter.
+
+    ``security_level`` is the raw four-digit code; the digits are the privilege
+    needed to *add*, *remove*, *read* and *write* (``7`` = nobody). Evidence,
+    AXIS OS 12.11 (M3216-LVE): ``Brand.Brand`` is ``7707`` (anyone reads, nobody
+    writes); ``HTTPS.Enabled`` is ``7706``, which the Param API page documents
+    as readable by viewer/operator/admin and writable; the 1200 parameters the
+    beta Param API ``$export`` marks as writable are exactly the 1200 whose
+    fourth digit is not ``7`` and the beta API drops.
+    """
+
+    name: str  # full name, root.Group.Name
+    value: str
+    security_level: str
+
+    @property
+    def writable(self) -> bool:
+        """True unless the write digit says nobody may write."""
+        return len(self.security_level) == 4 and self.security_level[3] != "7"
+
+    @property
+    def write_access(self) -> str:
+        """Who may write: ``anonymous``/``viewer``/``operator``/``admin``/``none``."""
+        if len(self.security_level) != 4:
+            return "unknown"
+        return ACCESS_LEVELS.get(self.security_level[3], "unknown")
+
+
+def parse_param_definitions(xml: str) -> dict[str, ParamDefinition]:
+    """Parse ``listdefinitions&listformat=xmlschema`` into ``{full name: definition}``.
+
+    The document is ``<parameterDefinitions><group name="root"><group ...>
+    <parameter name= value= securityLevel=/>``; names are rebuilt from the
+    nesting. Parsed with defusedxml: the body comes from the network.
+
+    Raises:
+        AxisDeviceError: The body is not that document (``# Error`` or HTML).
+    """
+    stripped = xml.strip()
+    if stripped.startswith("# Error"):
+        raise AxisDeviceError(f"param.cgi: {stripped.lstrip('# ')}")
+    try:
+        root = DefusedElementTree.fromstring(stripped)
+    except (DefusedElementTree.ParseError, ValueError) as exc:
+        raise AxisDeviceError(f"param.cgi: listdefinitions did not return XML: {exc}") from exc
+
+    definitions: dict[str, ParamDefinition] = {}
+
+    def walk(element: Any, path: tuple[str, ...]) -> None:
+        for child in element:
+            tag = child.tag.rsplit("}", 1)[-1]
+            name = child.get("name")
+            if name is None:
+                continue
+            if tag == "group":
+                walk(child, (*path, name))
+            elif tag == "parameter":
+                full = full_name(".".join((*path, name)))
+                definitions[full] = ParamDefinition(
+                    name=full,
+                    value=child.get("value", ""),
+                    security_level=child.get("securityLevel", ""),
+                )
+
+    walk(root, ())
+    return definitions
+
+
+@register
 class ParamAPI(BaseAPI):
-    """API module for reading device parameters.
-
-    Device parameters control various settings organized in groups like:
-    - Audio: Audio settings
-    - Image: Image/video settings
-    - Network: Network configuration
-    - PTZ: Pan-tilt-zoom settings
-    - System: System configuration
+    """Read device parameters via ``param.cgi``.
 
     Example:
         >>> async with AxisCamera("192.168.1.10", "admin", "pass") as camera:
-        ...     # Get all parameters
-        ...     params = await camera.params.get_all()
-        ...     for group in params:
-        ...         print(f"Group: {group.name}")
-        ...
-        ...     # Get specific parameter
-        ...     value = await camera.params.get("root.Network.eth0.IPAddress")
-        ...     print(f"IP Address: {value}")
+        ...     ip = await camera.params.get("Network.eth0.IPAddress")
+        ...     network = await camera.params.get_group("Network")
+        ...     everything = await camera.params.export()   # {"root.X.Y": "value", ...}
     """
 
-    # Legacy CGI endpoint
+    name = "params"
+    api_id = None  # legacy CGI; always available
+
     CGI_PATH = "/axis-cgi/param.cgi"
 
-    # REST API endpoint (AXIS OS 11.x+)
-    REST_PATH = "/config/rest/param/v2beta"
+    async def _list(self, group: str | None = None) -> dict[str, str]:
+        """``action=list`` for one group (or everything), parsed.
+
+        Raises:
+            AxisDeviceError: Invalid group (``# Error`` body) or HTTP error.
+            AxisAuthenticationError / AxisConnectionError: Propagate.
+        """
+        params: dict[str, Any] = {"action": "list", "responseformat": "rfc"}
+        if group:
+            params["group"] = short_name(group)
+        return parse_param_list(await self._get_text(self.CGI_PATH, params))
 
     async def get(self, param_name: str) -> str | None:
         """Get a single parameter value.
 
         Args:
-            param_name: Full parameter name (e.g., "root.Network.eth0.IPAddress").
+            param_name: Full or short name (``root.Network.eth0.IPAddress`` or
+                ``Network.eth0.IPAddress``).
 
         Returns:
-            Parameter value as string, or None if not found.
-
-        Example:
-            >>> value = await camera.params.get("root.Properties.FriendlyName")
-            >>> print(f"Device name: {value}")
+            The value, or ``None`` if the device has no such parameter.
         """
-        # Use legacy CGI for single parameter lookup
-        params = {"action": "list", "group": param_name}
-
         try:
-            response = await self._get(self.CGI_PATH, params)
-            return self._extract_param_value(response, param_name)
-        except Exception:
+            values = await self._list(param_name)
+        except (AxisDeviceError, AxisApiNotSupportedError):
             return None
+        return values.get(full_name(param_name))
 
     async def get_group(self, group_name: str) -> ParameterGroup:
         """Get all parameters in a group.
 
         Args:
-            group_name: Group name (e.g., "root.Network" or "Network").
+            group_name: ``Network`` or ``root.Network`` (nested groups such as
+                ``Network.eth0`` work too).
 
         Returns:
-            ParameterGroup with all parameters in the group.
-
-        Example:
-            >>> network_params = await camera.params.get_group("Network")
-            >>> for param in network_params.parameters:
-            ...     print(f"{param.name}: {param.value}")
+            ParameterGroup named after the top-level group; empty if the group
+            does not exist.
         """
-        # Normalize group name
-        if not group_name.startswith("root."):
-            group_name = f"root.{group_name}"
-
-        params = {"action": "list", "group": group_name}
-
+        top_level = short_name(group_name).split(".", 1)[0]
         try:
-            response = await self._get(self.CGI_PATH, params)
-            return self._parse_group_response(group_name, response)
-        except Exception:
-            return ParameterGroup(name=group_name.replace("root.", ""))
+            values = await self._list(group_name)
+        except (AxisDeviceError, AxisApiNotSupportedError):
+            return ParameterGroup(name=top_level)
+        return ParameterGroup(
+            name=top_level,
+            parameters=[p for group in group_parameters(values) for p in group.parameters],
+        )
 
     async def get_all(self) -> list[ParameterGroup]:
-        """Get all device parameters organized by group.
+        """Get every parameter the account may read, organised by top-level group.
 
-        Returns:
-            List of ParameterGroup objects containing all parameters.
-
-        Warning:
-            This can return a large amount of data on complex devices.
+        Errors propagate: an empty list means the device listed nothing, not
+        that the request failed.
         """
-        params = {"action": "list"}
-
-        try:
-            response = await self._get(self.CGI_PATH, params)
-            return self._parse_all_params(response)
-        except Exception:
-            return []
+        return group_parameters(await self._list())
 
     async def get_many(self, param_names: list[str]) -> dict[str, str | None]:
-        """Get multiple parameter values.
-
-        Args:
-            param_names: List of parameter names to retrieve.
+        """Get several parameters in one request.
 
         Returns:
-            Dictionary mapping parameter names to values.
-
-        Example:
-            >>> values = await camera.params.get_many([
-            ...     "root.Properties.FriendlyName",
-            ...     "root.Network.eth0.IPAddress",
-            ... ])
-            >>> print(values)
+            Mapping of the names as given to their values (``None`` if absent).
         """
-        results: dict[str, str | None] = {}
-
-        for name in param_names:
-            results[name] = await self.get(name)
-
-        return results
+        if not param_names:
+            return {}
+        try:
+            values = await self._list(",".join(short_name(n) for n in param_names))
+        except (AxisDeviceError, AxisApiNotSupportedError):
+            return dict.fromkeys(param_names)
+        return {name: values.get(full_name(name)) for name in param_names}
 
     async def search(self, pattern: str) -> list[DeviceParameter]:
-        """Search parameters by name pattern.
-
-        Args:
-            pattern: Search pattern (case-insensitive substring match).
-
-        Returns:
-            List of matching DeviceParameter objects.
-
-        Example:
-            >>> network_params = await camera.params.search("Network")
-            >>> print(f"Found {len(network_params)} network parameters")
-        """
-        all_params = await self.get_all()
-        pattern_lower = pattern.lower()
-        results: list[DeviceParameter] = []
-
-        for group in all_params:
-            for param in group.parameters:
-                if pattern_lower in param.name.lower():
-                    results.append(param)
-
-        return results
-
-    async def export(self) -> dict[str, Any]:
-        """Export all writable parameters.
-
-        Uses the REST API export endpoint to get all parameters
-        that can be imported on another device.
-
-        Returns:
-            Dictionary of exportable parameters.
-        """
-        try:
-            response = await self._get(f"{self.REST_PATH}/$export")
-            return response.get("data", {})
-        except Exception:
-            # Fall back to getting all params
-            params = await self.get_all()
-            return {group.name: {p.name: p.value for p in group.parameters} for group in params}
-
-    def _extract_param_value(self, response: dict[str, Any], param_name: str) -> str | None:
-        """Extract a single parameter value from response.
-
-        Args:
-            response: Raw API response.
-            param_name: Parameter name to extract.
-
-        Returns:
-            Parameter value or None.
-        """
-        # The response format varies - handle different structures
-        if isinstance(response, dict):
-            # Check for direct value
-            parts = param_name.split(".")
-            current = response
-
-            for part in parts:
-                if isinstance(current, dict):
-                    current = current.get(part)
-                else:
-                    return None
-
-            if isinstance(current, str):
-                return current
-
-        return None
-
-    def _parse_group_response(self, group_name: str, response: dict[str, Any]) -> ParameterGroup:
-        """Parse group response into ParameterGroup model.
-
-        Args:
-            group_name: Name of the parameter group.
-            response: Raw API response.
-
-        Returns:
-            ParameterGroup with parsed parameters.
-        """
-        parameters: list[DeviceParameter] = []
-        clean_name = group_name.replace("root.", "")
-
-        self._extract_params_recursive(response, "", parameters)
-
-        return ParameterGroup(name=clean_name, parameters=parameters)
-
-    def _parse_all_params(self, response: dict[str, Any]) -> list[ParameterGroup]:
-        """Parse response containing all parameters.
-
-        Args:
-            response: Raw API response.
-
-        Returns:
-            List of ParameterGroup objects.
-        """
-        groups: dict[str, list[DeviceParameter]] = {}
-        parameters: list[DeviceParameter] = []
-
-        self._extract_params_recursive(response, "root", parameters)
-
-        # Organize parameters by top-level group
-        for param in parameters:
-            parts = param.name.split(".")
-            group_name = parts[1] if len(parts) >= 2 else "Other"
-
-            if group_name not in groups:
-                groups[group_name] = []
-            groups[group_name].append(param)
-
+        """Parameters whose name contains ``pattern`` (case-insensitive)."""
+        needle = pattern.lower()
         return [
-            ParameterGroup(name=name, parameters=params) for name, params in sorted(groups.items())
+            param
+            for group in await self.get_all()
+            for param in group.parameters
+            if needle in param.name.lower()
         ]
 
-    def _extract_params_recursive(
-        self,
-        data: Any,
-        prefix: str,
-        results: list[DeviceParameter],
-    ) -> None:
-        """Recursively extract parameters from nested response.
+    async def export(self) -> dict[str, str]:
+        """The whole parameter tree as the device lists it: ``{"root.X.Y": value}``.
+
+        One shape, always: full names as keys. This is the backup payload and
+        what ``param.cgi?action=update`` consumes on restore.
+        """
+        return await self._list()
+
+    async def definitions(self) -> dict[str, ParamDefinition]:
+        """``action=listdefinitions``: every parameter with its access levels.
+
+        This is how a caller learns, before writing, which parameters the
+        device will refuse (``ParamDefinition.writable``). Large (~400 KB on
+        a camera) — call it once, not per parameter.
+
+        Raises:
+            AxisDeviceError: Not the XML document (``# Error`` or HTML).
+            AxisAuthenticationError / AxisConnectionError: Propagate.
+        """
+        params: dict[str, Any] = {"action": "listdefinitions", "listformat": "xmlschema"}
+        return parse_param_definitions(await self._get_text(self.CGI_PATH, params))
+
+    async def set(self, param_name: str, value: str) -> None:
+        """Update one existing parameter (``action=update``).
+
+        The device answers HTTP 200 with ``OK`` on success and HTTP 200 with
+        ``# Error: Error setting '<group.name>' to '<value>'!`` when it refuses
+        (read-only parameter, invalid value, insufficient rights). Only the
+        device knows which parameters are writable; callers should treat the
+        error as a per-parameter fact, not a transport failure.
 
         Args:
-            data: Current data level.
-            prefix: Current parameter name prefix.
-            results: List to append found parameters.
+            param_name: Full or short name.
+            value: New value, as a string.
+
+        Raises:
+            AxisDeviceError: The device refused the update (``# Error`` body).
+            AxisAuthenticationError / AxisConnectionError: Propagate.
         """
-        if isinstance(data, dict):
-            for key, value in data.items():
-                new_prefix = f"{prefix}.{key}" if prefix else key
-                self._extract_params_recursive(value, new_prefix, results)
-        elif isinstance(data, str) and prefix:
-            results.append(
-                DeviceParameter(
-                    name=prefix,
-                    value=data,
-                    group=prefix.split(".")[1] if "." in prefix else "",
-                )
-            )
+        params: dict[str, Any] = {"action": "update", short_name(param_name): value}
+        body = (await self._get_text(self.CGI_PATH, params)).strip()
+        if body.startswith("# Error"):
+            raise AxisDeviceError(f"param.cgi: {body.lstrip('# ')}")
+        if body != "OK":
+            raise AxisDeviceError(f"param.cgi: unexpected reply to update: {body[:120]!r}")
 
     # Convenience methods for common parameters
 
     async def get_friendly_name(self) -> str:
-        """Get the device's friendly name.
-
-        Returns:
-            User-assigned device name or empty string.
-        """
+        """User-assigned device name, or ``""``."""
         return await self.get("root.Properties.FriendlyName") or ""
 
     async def get_location(self) -> str:
-        """Get the device's location description.
-
-        Returns:
-            Device location or empty string.
-        """
+        """Device location description, or ``""``."""
         return await self.get("root.Properties.Location") or ""
 
     async def get_ip_address(self) -> str:
-        """Get the device's primary IP address from parameters.
-
-        Returns:
-            IP address string or empty string.
-        """
-        # Try IPv4 first
-        ip = await self.get("root.Network.eth0.IPAddress")
-        if ip:
-            return ip
-
-        # Try alternative parameter names
-        for param_name in [
-            "root.Network.VolatileHostName.IPv4Address",
-            "root.Network.IPv4.Address",
-        ]:
-            ip = await self.get(param_name)
-            if ip:
-                return ip
-
-        return ""
+        """Primary IPv4 address, or ``""``."""
+        values = await self.get_many(
+            [
+                "root.Network.eth0.IPAddress",
+                "root.Network.VolatileHostName.IPv4Address",
+                "root.Network.IPv4.Address",
+            ]
+        )
+        return next((v for v in values.values() if v), "")
 
     async def get_mac_address(self) -> str:
-        """Get the device's MAC address.
-
-        Returns:
-            MAC address string or empty string.
-        """
+        """MAC address of ``eth0``, or ``""``."""
         return await self.get("root.Network.eth0.MACAddress") or ""
