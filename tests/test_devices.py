@@ -150,7 +150,7 @@ class TestAxisDevice:
 
         mock_client.get_json = AsyncMock(side_effect=mock_get_json)
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            time_info = await camera.get_time_info()
+            time_info = await camera.time.get_info()
             assert isinstance(time_info, TimeInfo)
 
     @pytest.mark.asyncio
@@ -159,7 +159,7 @@ class TestAxisDevice:
         mock_client.get_text = AsyncMock(return_value="Jan 15 10:30:00 axis syslog: Test message")
         mock_client.get_raw = AsyncMock(return_value=b"Jan 15 10:30:00 axis syslog: Test message")
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            logs = await camera.get_logs(LogType.SYSTEM, max_entries=10)
+            logs = await camera.logs.get_logs(LogType.SYSTEM, max_entries=10)
             assert isinstance(logs, LogReport)
 
     @pytest.mark.asyncio
@@ -169,7 +169,7 @@ class TestAxisDevice:
             return_value={"root": {"Properties": {"FriendlyName": "Front Door Camera"}}}
         )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            name = await camera.get_friendly_name()
+            name = await camera.params.get_friendly_name()
             assert name == "Front Door Camera"
 
     @pytest.mark.asyncio
@@ -179,7 +179,7 @@ class TestAxisDevice:
             return_value={"root": {"Properties": {"Location": "Building A, Entrance"}}}
         )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
-            location = await camera.get_location()
+            location = await camera.params.get_location()
             assert location == "Building A, Entrance"
 
 

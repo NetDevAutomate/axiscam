@@ -315,7 +315,7 @@ async with AxisCamera(
     print(f"RTSP: {rtsp_url}")
 
     # Get stream diagnostics
-    diagnostics = await camera.get_stream_diagnostics("front_camera")
+    diagnostics = await camera.stream.get_diagnostics("front_camera")
     print(f"RTSP Port: {diagnostics.rtsp.port}")
 ```
 

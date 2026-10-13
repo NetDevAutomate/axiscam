@@ -368,7 +368,7 @@ def device_info(
 
             # Time API may not be available on all devices (e.g., speakers)
             try:
-                time_info = await dev.get_time_info()
+                time_info = await dev.time.get_info()
             except Exception:
                 time_info = None
 
@@ -521,7 +521,7 @@ def show_lldp(
 
     async def _show_lldp():
         async with target.open(use_digest_auth=digest) as dev:
-            lldp_info = await dev.get_lldp_info()
+            lldp_info = await dev.lldp.get_info()
 
             if json_output:
                 # Output as JSON
@@ -904,7 +904,7 @@ def network_show(
 
     async def _show_network():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_network_config()
+            config = await dev.network.get_config()
 
             if json_output:
                 data = {
@@ -1037,7 +1037,7 @@ def security_firewall(
 
     async def _show_firewall():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_firewall_config()
+            config = await dev.firewall.get_config()
 
             if json_output:
                 data = {
@@ -1115,7 +1115,7 @@ def security_ssh(
 
     async def _show_ssh():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_ssh_config()
+            config = await dev.ssh.get_config()
 
             if json_output:
                 data = {
@@ -1196,7 +1196,7 @@ def security_certs(
 
     async def _show_certs():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_cert_config()
+            config = await dev.cert.get_config()
 
             if json_output:
                 data = {
@@ -1278,7 +1278,7 @@ def services_snmp(
 
     async def _show_snmp():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_snmp_config()
+            config = await dev.snmp.get_config()
 
             if json_output:
                 data = {
@@ -1360,7 +1360,7 @@ def services_ntp(
 
     async def _show_ntp():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_ntp_config()
+            config = await dev.ntp.get_config()
 
             if json_output:
                 data = {
@@ -1466,7 +1466,7 @@ def show_actions(
 
     async def _show_actions():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_action_config()
+            config = await dev.action.get_config()
 
             if json_output:
                 data = {
@@ -1539,7 +1539,7 @@ def show_mqtt(
 
     async def _show_mqtt():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_mqtt_config()
+            config = await dev.mqtt.get_config()
 
             if json_output:
                 data = {
@@ -1647,7 +1647,7 @@ def show_recording(
 
     async def _show_recording():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_recording_config()
+            config = await dev.recording.get_config()
 
             if json_output:
                 data = {
@@ -1742,7 +1742,7 @@ def show_storage(
 
     async def _show_storage():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_storage_config()
+            config = await dev.storage.get_config()
 
             if json_output:
                 data = {
@@ -1811,7 +1811,7 @@ def show_location(
 
     async def _show_location():
         async with target.open(use_digest_auth=digest) as dev:
-            config = await dev.get_geolocation_config()
+            config = await dev.geolocation.get_config()
 
             if json_output:
                 data = {
@@ -1893,7 +1893,7 @@ def stream_show(
 
     async def _show_stream():
         async with target.open(use_digest_auth=digest) as dev:
-            diag = await dev.get_stream_diagnostics(device or target.host)
+            diag = await dev.stream.get_diagnostics(device or target.host)
 
             if json_output:
                 data = {
@@ -2042,7 +2042,7 @@ def device_report(
 
             # Time info
             try:
-                time_info = await dev.get_time_info()
+                time_info = await dev.time.get_info()
                 report["time"] = {
                     "utc_time": str(time_info.utc_time) if time_info.utc_time else None,
                     "timezone": time_info.timezone,
@@ -2052,7 +2052,7 @@ def device_report(
 
             # Network config
             try:
-                network = await dev.get_network_config()
+                network = await dev.network.get_config()
                 if network.interfaces:
                     iface = network.interfaces[0]
                     report["network"] = {
@@ -2066,7 +2066,7 @@ def device_report(
 
             # LLDP info
             try:
-                lldp = await dev.get_lldp_info()
+                lldp = await dev.lldp.get_info()
                 report["lldp"] = {
                     "enabled": lldp.activated,
                     "neighbors": [
@@ -2084,7 +2084,7 @@ def device_report(
             # Stream diagnostics (cameras only)
             if target.device_type == "camera":
                 try:
-                    stream = await dev.get_stream_diagnostics()
+                    stream = await dev.stream.get_diagnostics()
                     report["stream"] = {
                         "rtsp_port": stream.rtsp.port,
                         "rtsp_auth": stream.rtsp.authentication,
@@ -2099,7 +2099,7 @@ def device_report(
 
             # Security status
             try:
-                firewall = await dev.get_firewall_config()
+                firewall = await dev.firewall.get_config()
                 report["security"] = {
                     "firewall_enabled": firewall.enabled,
                     "ipv4_rules_count": len(firewall.ipv4_rules),
@@ -2110,7 +2110,7 @@ def device_report(
 
             # NTP status
             try:
-                ntp = await dev.get_ntp_config()
+                ntp = await dev.ntp.get_config()
                 report["ntp"] = {
                     "enabled": ntp.enabled,
                     "servers": [s.address for s in ntp.servers] if ntp.servers else [],
@@ -2122,7 +2122,7 @@ def device_report(
             if full:
                 # SSH config
                 try:
-                    ssh = await dev.get_ssh_config()
+                    ssh = await dev.ssh.get_config()
                     report["ssh"] = {
                         "enabled": ssh.enabled,
                         "port": ssh.port,
@@ -2132,7 +2132,7 @@ def device_report(
 
                 # SNMP config
                 try:
-                    snmp = await dev.get_snmp_config()
+                    snmp = await dev.snmp.get_config()
                     report["snmp"] = {
                         "enabled": snmp.enabled,
                         "version": snmp.version.value if snmp.version else None,
@@ -2146,7 +2146,7 @@ def device_report(
 
                 # Certificate config
                 try:
-                    cert = await dev.get_cert_config()
+                    cert = await dev.cert.get_config()
                     report["certificates"] = {
                         "count": len(cert.certificates) if cert.certificates else 0,
                         "certificates": [
@@ -2165,7 +2165,7 @@ def device_report(
 
                 # Action rules
                 try:
-                    actions = await dev.get_action_config()
+                    actions = await dev.action.get_config()
                     report["actions"] = {
                         "rules_count": len(actions.rules) if actions.rules else 0,
                         "rules": [
@@ -2178,7 +2178,7 @@ def device_report(
 
                 # MQTT config
                 try:
-                    mqtt = await dev.get_mqtt_config()
+                    mqtt = await dev.mqtt.get_config()
                     report["mqtt"] = {
                         "enabled": mqtt.enabled,
                         "connected": mqtt.connected,
@@ -2197,7 +2197,7 @@ def device_report(
 
                 # Recording config
                 try:
-                    recording = await dev.get_recording_config()
+                    recording = await dev.recording.get_config()
                     report["recording"] = {
                         "groups_count": len(recording.groups) if recording.groups else 0,
                         "groups": [{"id": g.id, "name": g.name} for g in (recording.groups or [])],
@@ -2207,7 +2207,7 @@ def device_report(
 
                 # Storage config
                 try:
-                    storage = await dev.get_storage_config()
+                    storage = await dev.storage.get_config()
                     report["storage"] = {
                         "destinations_count": len(storage.destinations)
                         if storage.destinations
@@ -2226,7 +2226,7 @@ def device_report(
 
                 # Geolocation
                 try:
-                    geo = await dev.get_geolocation_config()
+                    geo = await dev.geolocation.get_config()
                     report["geolocation"] = {
                         "latitude": geo.latitude,
                         "longitude": geo.longitude,
@@ -2239,7 +2239,7 @@ def device_report(
                 # Analytics (cameras)
                 if target.device_type == "camera":
                     try:
-                        analytics = await dev.get_analytics_config()
+                        analytics = await dev.analytics.get_config()
                         report["analytics"] = {
                             "profiles_count": len(analytics.profiles) if analytics.profiles else 0,
                             "profiles": [
@@ -2252,7 +2252,7 @@ def device_report(
 
                 # OIDC config
                 try:
-                    oidc = await dev.get_oidc_config()
+                    oidc = await dev.oidc.get_config()
                     report["oidc"] = {
                         "enabled": oidc.enabled,
                         "issuer_uri": oidc.provider.issuer_uri if oidc.provider else None,
@@ -2263,7 +2263,7 @@ def device_report(
 
                 # OAuth config
                 try:
-                    oauth = await dev.get_oauth_config()
+                    oauth = await dev.oauth.get_config()
                     report["oauth"] = {
                         "enabled": oauth.enabled,
                     }
@@ -2272,7 +2272,7 @@ def device_report(
 
                 # Crypto policy
                 try:
-                    crypto = await dev.get_crypto_policy_config()
+                    crypto = await dev.crypto_policy.get_config()
                     report["crypto_policy"] = {
                         "tls_min_version": crypto.tls_min_version.value
                         if crypto.tls_min_version
@@ -2475,7 +2475,7 @@ def download_server_report(
             with console.status(
                 f"[bold blue]Downloading server report from {target.host}...[/bold blue]"
             ):
-                report = await dev.download_server_report(
+                report = await dev.serverreport.download_report(
                     format=report_format,
                     timeout=timeout,
                 )
@@ -2546,7 +2546,7 @@ def download_debug_archive(
             with console.status(
                 f"[bold blue]Downloading debug archive from {target.host}...[/bold blue]"
             ):
-                report = await dev.download_debug_archive(timeout=timeout)
+                report = await dev.serverreport.get_debug_archive(timeout=timeout)
 
             if not report.success:
                 console.print(f"[red]Error:[/red] {report.error}")
