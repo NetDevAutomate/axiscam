@@ -11,6 +11,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     BestSnapshotConfig,
@@ -19,6 +20,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class BestSnapshotAPI(BaseAPI):
     """API module for best snapshot configuration.
 
@@ -37,8 +39,15 @@ class BestSnapshotAPI(BaseAPI):
         ...     image = await camera.snapshot.capture()
     """
 
+    name = "snapshot"
+    api_id = "best-snapshot"
+
     REST_PATH = "/config/rest/best-snapshot/v1beta"
     IMAGE_CGI = "/axis-cgi/jpg/image.cgi"
+
+    async def read(self) -> BestSnapshotConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> BestSnapshotConfig:
         """Get complete best snapshot configuration.

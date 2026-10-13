@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import GeolocationConfig
 
 
+@register
 class GeolocationAPI(BaseAPI):
     """API module for device geolocation configuration.
 
@@ -29,7 +31,14 @@ class GeolocationAPI(BaseAPI):
         ...         print(f"Location: {config.latitude}, {config.longitude}")
     """
 
+    name = "geolocation"
+    api_id = "geolocation"
+
     REST_PATH = "/config/rest/geolocation/v1beta"
+
+    async def read(self) -> GeolocationConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> GeolocationConfig:
         """Get geolocation configuration.

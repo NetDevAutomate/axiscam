@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import VirtualHost, VirtualHostConfig
 
 
+@register
 class VirtualHostAPI(BaseAPI):
     """API module for virtual host configuration.
 
@@ -31,7 +33,14 @@ class VirtualHostAPI(BaseAPI):
         ...         print(f"Host: {host.hostname}")
     """
 
+    name = "virtualhost"
+    api_id = "virtualhost"
+
     REST_PATH = "/config/rest/virtualhost/v1"
+
+    async def read(self) -> VirtualHostConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> VirtualHostConfig:
         """Get virtual host configuration.

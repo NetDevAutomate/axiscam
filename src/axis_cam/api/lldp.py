@@ -16,10 +16,12 @@ from typing import Any
 from pydantic import ValidationError
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import LldpInfo, LldpNeighbor
 
 
+@register
 class LldpAPI(BaseAPI):
     """API module for LLDP neighbor discovery.
 
@@ -36,8 +38,15 @@ class LldpAPI(BaseAPI):
         ...         print(f"Connected to: {neighbor.sys_name} ({neighbor.port_id.value})")
     """
 
+    name = "lldp"
+    api_id = "lldp"
+
     # REST API endpoint
     REST_PATH = "/config/rest/lldp/v1"
+
+    async def read(self) -> LldpInfo:
+        """Read the current state (``ResourceModule`` protocol)."""
+        return await self.get_info()
 
     async def get_info(self) -> LldpInfo:
         """Get LLDP configuration and neighbor information.

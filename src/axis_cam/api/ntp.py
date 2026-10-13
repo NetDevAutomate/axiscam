@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import NtpConfig, NtpServer, NtpSyncStatus
 
 
+@register
 class NtpAPI(BaseAPI):
     """API module for NTP configuration.
 
@@ -31,7 +33,14 @@ class NtpAPI(BaseAPI):
         ...         print(f"  Server: {server.address}")
     """
 
+    name = "ntp"
+    api_id = "network-time-sync"
+
     REST_PATH = "/config/rest/network-time-sync/v1beta"
+
+    async def read(self) -> NtpConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> NtpConfig:
         """Get NTP configuration.

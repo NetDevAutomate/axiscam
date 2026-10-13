@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import RecordingConfig, RecordingGroup, RecordingProfile
 
 
+@register
 class RecordingAPI(BaseAPI):
     """API module for recording group configuration.
 
@@ -29,7 +31,14 @@ class RecordingAPI(BaseAPI):
         ...         print(f"Group: {group.name} - Storage: {group.storage_id}")
     """
 
+    name = "recording"
+    api_id = "recording-group"
+
     REST_PATH = "/config/rest/recording-group/v1"
+
+    async def read(self) -> RecordingConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> RecordingConfig:
         """Get complete recording configuration.

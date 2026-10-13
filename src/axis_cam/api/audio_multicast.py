@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     AudioMulticastConfig,
@@ -18,6 +19,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class AudioMulticastAPI(BaseAPI):
     """API module for audio multicast configuration.
 
@@ -34,7 +36,14 @@ class AudioMulticastAPI(BaseAPI):
         ...         print(f"Group: {group.name} -> {group.address}:{group.port}")
     """
 
+    name = "audio_multicast"
+    api_id = "audio-multicast-ctrl"
+
     REST_PATH = "/config/rest/audio-multicast-ctrl/v1beta"
+
+    async def read(self) -> AudioMulticastConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> AudioMulticastConfig:
         """Get complete audio multicast configuration.

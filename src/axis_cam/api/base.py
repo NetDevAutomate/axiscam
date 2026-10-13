@@ -1,36 +1,48 @@
 """Base class for AXIS VAPIX API modules.
 
-This module provides the abstract base class for all API module implementations.
-Each API module encapsulates a specific VAPIX API domain (device info, params, etc.)
-and uses composition with the VapixClient for HTTP communication.
+Each API module encapsulates one VAPIX API domain (device info, SSH, NTP, …)
+and uses composition with the :class:`~axis_cam.client.VapixClient` for HTTP
+communication. Modules declare a ``name`` and an ``api_id`` and register
+themselves with :func:`axis_cam.api.registry.register`; ``AxisDevice`` builds
+its modules from that registry rather than naming each class by hand.
+
+``BaseAPI`` is deliberately a plain base class, not an ABC: it exists to share
+the request helpers, and it has no method every module must override. The
+contract generic code relies on is the structural
+:class:`~axis_cam.api.registry.ResourceModule` protocol.
 """
 
-from abc import ABC
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
     from axis_cam.client import VapixClient
 
 
-class BaseAPI(ABC):  # noqa: B024
-    """Abstract base class for VAPIX API modules.
+class BaseAPI:
+    """Base class for VAPIX API modules.
 
-    Each API module represents a specific domain of the VAPIX API
-    (e.g., basic-device-info, param, time). This base class provides
-    common functionality and defines the interface for all API modules.
+    Subclasses set two class attributes:
 
-    API modules are designed to be composed into device classes:
+    - ``name``: the attribute the module is exposed under on ``AxisDevice``
+      (``device.ssh``) and the key used by reports and backups.
+    - ``api_id``: the identifier the device advertises for this API in
+      ``/config/discover/apis.json``. ``None`` means the module does not depend
+      on a discoverable REST API (legacy CGI) and is always attempted.
 
     Example:
-        >>> class AxisCamera(AxisDevice):
-        ...     def __init__(self, ...):
-        ...         super().__init__(...)
-        ...         self.device_info = BasicDeviceInfoAPI(self._client)
-        ...         self.params = ParamAPI(self._client)
+        >>> @register
+        ... class SshAPI(BaseAPI):
+        ...     name = "ssh"
+        ...     api_id = "ssh"
+        ...     async def read(self) -> SshConfig:
+        ...         return await self.get_config()
 
     Attributes:
         _client: The VapixClient instance for HTTP communication.
     """
+
+    name: ClassVar[str]
+    api_id: ClassVar[str | None] = None
 
     def __init__(self, client: "VapixClient") -> None:
         """Initialize the API module.

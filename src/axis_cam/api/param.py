@@ -14,10 +14,12 @@ would require explicit confirmation due to potential device impact.
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
 
 
+@register
 class ParamAPI(BaseAPI):
     """API module for reading device parameters.
 
@@ -39,6 +41,9 @@ class ParamAPI(BaseAPI):
         ...     value = await camera.params.get("root.Network.eth0.IPAddress")
         ...     print(f"IP Address: {value}")
     """
+
+    name = "params"
+    api_id = None
 
     # Legacy CGI endpoint
     CGI_PATH = "/axis-cgi/param.cgi"

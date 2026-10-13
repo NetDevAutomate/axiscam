@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     FirewallAction,
@@ -19,6 +20,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class FirewallAPI(BaseAPI):
     """API module for firewall configuration.
 
@@ -36,7 +38,14 @@ class FirewallAPI(BaseAPI):
         ...         print(f"  {rule.action}: {rule.source} -> {rule.dest_port}")
     """
 
+    name = "firewall"
+    api_id = "firewall"
+
     REST_PATH = "/config/rest/firewall/v1"
+
+    async def read(self) -> FirewallConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> FirewallConfig:
         """Get complete firewall configuration.

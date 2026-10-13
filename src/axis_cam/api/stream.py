@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 
 # =============================================================================
@@ -136,6 +137,7 @@ class StreamDiagnostics(BaseModel):
 # =============================================================================
 
 
+@register
 class StreamAPI(BaseAPI):
     """API module for stream diagnostics.
 
@@ -154,8 +156,15 @@ class StreamAPI(BaseAPI):
         ...         print(f"Profile {profile.name}: {profile.resolution}")
     """
 
+    name = "stream"
+    api_id = "param"
+
     # REST API endpoint for param v2beta
     REST_PATH = "/config/rest/param/v2beta"
+
+    async def read(self) -> StreamDiagnostics:
+        """Read the current stream diagnostics (``ResourceModule`` protocol)."""
+        return await self.get_diagnostics()
 
     async def _get_param_json(self, path: str = "") -> dict[str, Any]:
         """Get JSON data from param API.
@@ -314,7 +323,7 @@ class StreamAPI(BaseAPI):
             ...     print(f"Warnings: {diagnostics.errors}")
             >>> print(f"RTSP enabled: {diagnostics.rtsp.enabled}")
         """
-        diagnostics = StreamDiagnostics(device_name=device_name)
+        diagnostics = StreamDiagnostics(device_name=device_name or self._client.host)
 
         # Collect RTSP config
         try:

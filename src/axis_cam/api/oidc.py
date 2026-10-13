@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import OidcClaimMapping, OidcConfig, OidcProviderConfig
 
 
+@register
 class OidcAPI(BaseAPI):
     """API module for OpenID Connect configuration.
 
@@ -31,7 +33,14 @@ class OidcAPI(BaseAPI):
         ...         print(f"Issuer: {config.provider.issuer_uri}")
     """
 
+    name = "oidc"
+    api_id = "oidcsetup"
+
     REST_PATH = "/config/rest/oidcsetup/v1"
+
+    async def read(self) -> OidcConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> OidcConfig:
         """Get OIDC configuration.

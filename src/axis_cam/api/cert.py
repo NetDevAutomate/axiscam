@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import CertConfig, Certificate, CertificateType
 
 
+@register
 class CertAPI(BaseAPI):
     """API module for certificate management.
 
@@ -30,7 +32,14 @@ class CertAPI(BaseAPI):
         ...         print(f"  {cert.subject}: expires {cert.not_after}")
     """
 
+    name = "cert"
+    api_id = "cert"
+
     REST_PATH = "/config/rest/cert/v1"
+
+    async def read(self) -> CertConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> CertConfig:
         """Get certificate configuration.

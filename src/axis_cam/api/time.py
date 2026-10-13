@@ -15,10 +15,12 @@ from datetime import datetime
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import NtpStatus, TimeInfo, TimeZoneSource
 
 
+@register
 class TimeAPI(BaseAPI):
     """API module for device time and timezone settings.
 
@@ -35,11 +37,18 @@ class TimeAPI(BaseAPI):
         ...     print(f"Timezone: {time_info.timezone}")
     """
 
+    name = "time"
+    api_id = None
+
     # REST API endpoint (AXIS OS 11.x+)
     REST_PATH = "/config/rest/time/v2"
 
     # Legacy CGI endpoint
     CGI_PATH = "/axis-cgi/date.cgi"
+
+    async def read(self) -> TimeInfo:
+        """Read the current state (``ResourceModule`` protocol)."""
+        return await self.get_info()
 
     async def get_info(self) -> TimeInfo:
         """Get complete time information.

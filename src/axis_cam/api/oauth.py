@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import OAuthConfig, OAuthCredentialConfig, OAuthTokenStatus
 
 
+@register
 class OAuthAPI(BaseAPI):
     """API module for OAuth 2.0 Client Credentials Grant configuration.
 
@@ -30,7 +32,14 @@ class OAuthAPI(BaseAPI):
         ...         print(f"Credential: {cred.name} ({cred.client_id})")
     """
 
+    name = "oauth"
+    api_id = "oauth-ccgrant"
+
     REST_PATH = "/config/rest/oauth-ccgrant/v1"
+
+    async def read(self) -> OAuthConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> OAuthConfig:
         """Get OAuth configuration.

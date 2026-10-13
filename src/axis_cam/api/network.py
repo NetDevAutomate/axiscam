@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     DnsSettings,
@@ -19,6 +20,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class NetworkSettingsAPI(BaseAPI):
     """API module for network configuration.
 
@@ -36,7 +38,14 @@ class NetworkSettingsAPI(BaseAPI):
         ...         print(f"  {iface.name}: {iface.ip_address}")
     """
 
+    name = "network"
+    api_id = "network-settings"
+
     REST_PATH = "/config/rest/network-settings/v2beta"
+
+    async def read(self) -> NetworkConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> NetworkConfig:
         """Get complete network configuration.

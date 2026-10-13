@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     AnalyticsConfig,
@@ -19,6 +20,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class VideoAnalyticsAPI(BaseAPI):
     """API module for video analytics configuration.
 
@@ -35,7 +37,14 @@ class VideoAnalyticsAPI(BaseAPI):
         ...         print(f"Profile: {profile.name} - Enabled: {profile.enabled}")
     """
 
+    name = "analytics"
+    api_id = "video-analytics"
+
     REST_PATH = "/config/rest/video-analytics/v1beta"
+
+    async def read(self) -> AnalyticsConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> AnalyticsConfig:
         """Get complete video analytics configuration.

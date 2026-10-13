@@ -17,11 +17,15 @@ import tarfile
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import LogEntry, LogLevel, LogReport, LogType
+
+if TYPE_CHECKING:
+    from axis_cam.client import VapixClient
 
 
 class ServerReportMode(str, Enum):
@@ -152,6 +156,7 @@ def parse_log_content(content: str, _log_type: LogType = LogType.SYSTEM) -> list
     return entries
 
 
+@register
 class LogsAPI(BaseAPI):
     """API module for retrieving device logs.
 
@@ -174,21 +179,26 @@ class LogsAPI(BaseAPI):
         ...         print(entry.message)
     """
 
+    name = "logs"
+    api_id = None
+
     # Server report CGI endpoint
     CGI_PATH = "/axis-cgi/serverreport.cgi"
 
     # REST API endpoint (AXIS OS 11.x+)
     REST_PATH = "/config/rest/log/v1beta"
 
-    def __init__(self, client: Any, device_name: str = "unknown") -> None:
+    def __init__(self, client: "VapixClient", device_name: str | None = None) -> None:
         """Initialize the logs API.
 
         Args:
             client: VapixClient instance.
-            device_name: Device name for report metadata.
+            device_name: Device name for report metadata. Defaults to the
+                client's host so the registry can build this module like any
+                other.
         """
         super().__init__(client)
-        self._device_name = device_name
+        self._device_name = device_name or client.host
 
     async def get_server_report(
         self,

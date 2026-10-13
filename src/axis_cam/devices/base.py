@@ -6,7 +6,7 @@ interacting with specific device types.
 """
 
 from abc import ABC, abstractmethod
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from axis_cam.api.action import ActionAPI
 from axis_cam.api.analytics import VideoAnalyticsAPI
@@ -27,6 +27,7 @@ from axis_cam.api.oauth import OAuthAPI
 from axis_cam.api.oidc import OidcAPI
 from axis_cam.api.param import ParamAPI
 from axis_cam.api.recording import RecordingAPI
+from axis_cam.api.registry import ResourceModule, build_modules
 from axis_cam.api.serverreport import ServerReportAPI
 from axis_cam.api.snapshot import BestSnapshotAPI
 from axis_cam.api.snmp import SnmpAPI
@@ -69,6 +70,9 @@ from axis_cam.models import (
     TimeInfo,
     VirtualHostConfig,
 )
+
+if TYPE_CHECKING:
+    from axis_cam.api.base import BaseAPI
 
 
 class AxisDevice(ABC):
@@ -120,6 +124,38 @@ class AxisDevice(ABC):
 
     # Device type identifier - must be set by subclasses
     device_type: DeviceType = DeviceType.UNKNOWN
+
+    # API modules. Instances are built from the registry in __init__; these
+    # declarations keep attribute access statically typed. One line per module
+    # is the whole cost of adding one here; tests/test_registry.py fails if the
+    # declarations and the registry drift apart.
+    device_info: BasicDeviceInfoAPI
+    params: ParamAPI
+    time: TimeAPI
+    logs: LogsAPI
+    lldp: LldpAPI
+    network: NetworkSettingsAPI
+    firewall: FirewallAPI
+    ssh: SshAPI
+    snmp: SnmpAPI
+    cert: CertAPI
+    ntp: NtpAPI
+    action: ActionAPI
+    mqtt: MqttBridgeAPI
+    recording: RecordingAPI
+    storage: RemoteStorageAPI
+    geolocation: GeolocationAPI
+    analytics: VideoAnalyticsAPI
+    snapshot: BestSnapshotAPI
+    analytics_mqtt: AnalyticsMqttAPI
+    audio_multicast: AudioMulticastAPI
+    serverreport: ServerReportAPI
+    oidc: OidcAPI
+    oauth: OAuthAPI
+    virtualhost: VirtualHostAPI
+    crypto_policy: CryptoPolicyAPI
+    networkpairing: NetworkPairingAPI
+    stream: StreamAPI
 
     def __init__(
         self,
@@ -175,44 +211,11 @@ class AxisDevice(ABC):
             use_digest_auth=use_digest_auth,
         )
 
-        # Initialize common API modules
-        self.device_info = BasicDeviceInfoAPI(self._client)
-        self.params = ParamAPI(self._client)
-        self.time = TimeAPI(self._client)
-        self.logs = LogsAPI(self._client, device_name=host)
-        self.lldp = LldpAPI(self._client)
-
-        # Initialize high-priority API modules
-        self.network = NetworkSettingsAPI(self._client)
-        self.firewall = FirewallAPI(self._client)
-        self.ssh = SshAPI(self._client)
-        self.snmp = SnmpAPI(self._client)
-        self.cert = CertAPI(self._client)
-        self.ntp = NtpAPI(self._client)
-
-        # Initialize medium-priority API modules
-        self.action = ActionAPI(self._client)
-        self.mqtt = MqttBridgeAPI(self._client)
-        self.recording = RecordingAPI(self._client)
-        self.storage = RemoteStorageAPI(self._client)
-        self.geolocation = GeolocationAPI(self._client)
-
-        # Initialize device-specific API modules
-        self.analytics = VideoAnalyticsAPI(self._client)
-        self.snapshot = BestSnapshotAPI(self._client)
-        self.analytics_mqtt = AnalyticsMqttAPI(self._client)
-        self.audio_multicast = AudioMulticastAPI(self._client)
-        self.serverreport = ServerReportAPI(self._client)
-
-        # Initialize lower-priority API modules
-        self.oidc = OidcAPI(self._client)
-        self.oauth = OAuthAPI(self._client)
-        self.virtualhost = VirtualHostAPI(self._client)
-        self.crypto_policy = CryptoPolicyAPI(self._client)
-        self.networkpairing = NetworkPairingAPI(self._client)
-
-        # Initialize stream diagnostics API
-        self.stream = StreamAPI(self._client)
+        # Build every registered API module against this client and expose
+        # each under its registered name (device.ssh, device.firewall, ...).
+        self.modules: dict[str, BaseAPI] = build_modules(self._client)
+        for name, module in self.modules.items():
+            setattr(self, name, module)
 
         # Track discovered capabilities
         self._capabilities: DeviceCapabilities | None = None
@@ -299,6 +302,38 @@ class AxisDevice(ABC):
                 has_analytics="analytics-metadata" in apis,
             )
         return self._capabilities
+
+    @property
+    def resources(self) -> dict[str, ResourceModule]:
+        """API modules that can read their state into one model.
+
+        Structural check against :class:`ResourceModule`; download-only
+        modules (``logs``, ``serverreport``) and ``params`` are excluded.
+        """
+        return {
+            name: module
+            for name, module in self.modules.items()
+            if isinstance(module, ResourceModule)
+        }
+
+    async def available_resources(self) -> dict[str, ResourceModule]:
+        """Resources this device advertises via API discovery.
+
+        A module with ``api_id`` set is included only if the device lists that
+        id in ``/config/discover/apis.json``. Modules with ``api_id = None``
+        (legacy CGI) are always included, and when discovery returns nothing
+        (older firmware) every resource is included rather than none.
+
+        Returns:
+            Resources keyed by module name, in registration order.
+        """
+        capabilities = await self.get_capabilities()
+        advertised = set(capabilities.supported_apis)
+        return {
+            name: module
+            for name, module in self.resources.items()
+            if module.api_id is None or not advertised or module.api_id in advertised
+        }
 
     async def check_connectivity(self) -> bool:
         """Check if the device is reachable.

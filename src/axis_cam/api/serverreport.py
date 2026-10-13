@@ -15,10 +15,12 @@ Report Modes:
 from pathlib import Path
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import ServerReport, ServerReportFormat
 
 
+@register
 class ServerReportAPI(BaseAPI):
     """API module for server report retrieval.
 
@@ -37,6 +39,9 @@ class ServerReportAPI(BaseAPI):
         ...     # Save report to file
         ...     await camera.serverreport.save_report("/tmp/device_report.zip")
     """
+
+    name = "serverreport"
+    api_id = None
 
     CGI_PATH = "/axis-cgi/serverreport.cgi"
 

@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phase 0 complete; Phase 1 not started (see [Phase status](#phase-status))
+- **Status:** Phase 0 complete; Phase 1 in progress (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -149,6 +149,27 @@ Rationale for the order: the two transport bugs are the only findings that hurt 
 After Phase 0: 485 tests pass · 54.6% coverage · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged). Each fix carries a regression test that was shown to fail against the previous source.
 
 Behaviour changes a library user will notice: a non-443 port no longer implies HTTP (`https=False` is explicit); Basic auth over plain HTTP raises `AxisConfigError` unless `allow_insecure_basic=True`; `get_config()`-style methods raise `AxisAuthenticationError`/`AxisConnectionError` instead of returning defaults.
+
+### Phase 1 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+
+Sequence, one commit each, ordered so every step can end on its own:
+
+| Step | Scope | Definition of done (countable) |
+|---|---|---|
+| 1.1 | `api/registry.py`: `ResourceModule` Protocol (`name`, `api_id`, `read()`), `@register` decorator, `build_modules()`. Every module gains `name`/`api_id`; resources gain `read()`. `AxisDevice` builds its modules from the registry and exposes `modules`, `resources`, `available_resources()` (gated by API discovery). Additive — wrappers still exist. | `tests/test_registry.py`: every `BaseAPI` subclass in `axis_cam.api` is registered (27), names unique, `AxisDevice` annotations match the registry, gating filters by discovered ids and does not filter when discovery is empty |
+| 1.2 | Delete the pass-through wrappers from `AxisDevice`; rewrite CLI and test call sites to `dev.<module>.<method>()` with asserted counts | `devices/base.py` has 0 `self.x = XAPI(...)` lines and 0 `get_*_config`-style wrappers; the device-specific methods on subclasses are untouched |
+| 1.3 | `axis_cam/report.py`: registry-driven collection (`collect_report`), per-module `AxisDeviceError`/`AxisApiNotSupportedError` → `errors`, auth/connection errors propagate; `report` command uses it | A test registers a fake resource and sees it in a `--full` report without editing report code; the 18 `except Exception` sites in the old report are gone |
+| 1.4 | `cli/` package: `app.py` (Typer apps, console, `run_async`), `context.py` (`DeviceContext`, `resolve_device_config`), `options.py`, one module per command group; `cli.py` deleted | `axiscam --help` and every group `--help` pass under `CliRunner`; `axis_cam.cli:main` entry point unchanged |
+| 1.5 | Docs (`README`, `docs/architecture.md`, `docs/api-modules.md`, `docs/device-classes.md`, `docs/cli-reference.md`), this status table, coverage ratchet | `fail_under` raised to the new measured floor (≥ 54); ruff clean; pyright 0 errors |
+
+Decisions taken for Phase 1:
+
+- **Typed attribute declarations stay.** `AxisDevice` keeps one annotation per module (`ssh: SshAPI`) so `dev.ssh.get_config()` remains statically typed; the registry does the instantiation. Adding a module is therefore `api/<m>.py` + its import in `api/__init__.py` + one annotation line, and a test fails if the annotations and the registry drift. Full dynamism (`setattr` only) would have cost every caller its type information.
+- **A resource is a module with `read() -> BaseModel`.** `params`, `logs` and `serverreport` are registered modules but not resources in Phase 1: the param tree is too large for a report (Phase 4 gives `ParamAPI` an `export()`), and logs / server reports are downloads, not configuration.
+- **`api_id` is `None` for CGI-capable modules** (`device_info`, `time`, `params`, `logs`, `serverreport`) because they work on devices whose discovery omits the REST id (`c1410` lists neither `time` nor `param`). Gating applies only to REST-only modules and only when discovery returned a non-empty list; the four captures in `src/specs/` are the fixtures.
+- **Report sections are keyed by module name and hold `model_dump(mode="json")`.** `info` → `device_info`, `security` → `firewall`, `certificates` → `cert`; the default report is the summary set (`device_info`, `time`, `network`, `lldp`, `stream`, `firewall`, `ntp`), `--full` is every available resource. Output-shape change, acceptable at 0.1.0.
+- **Device options stay per command.** Typer's shared-callback pattern would move `--device` before the subcommand (`axiscam --device x info`), a UX break for no gain. `ResolvedDevice` becomes `DeviceContext` with Digest/Basic folded in so `open()` takes no arguments.
+- **`Exportable` / `Restorable` are not defined yet.** They get a Protocol when Phase 4/5 has a second implementer; an abstraction with one implementation is a fake nobody wants.
 
 ## Decisions and open questions
 

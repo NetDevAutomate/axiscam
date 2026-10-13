@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import RemoteStorageConfig, StorageDestination, StorageType
 
 
+@register
 class RemoteStorageAPI(BaseAPI):
     """API module for remote object storage configuration.
 
@@ -29,7 +31,14 @@ class RemoteStorageAPI(BaseAPI):
         ...         print(f"Storage: {dest.name} ({dest.storage_type.value})")
     """
 
+    name = "storage"
+    api_id = "remote-object-storage"
+
     REST_PATH = "/config/rest/remote-object-storage/v1"
+
+    async def read(self) -> RemoteStorageConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> RemoteStorageConfig:
         """Get complete remote storage configuration.

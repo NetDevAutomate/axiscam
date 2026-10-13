@@ -10,10 +10,12 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import ActionConfig, ActionRule, ActionTemplate
 
 
+@register
 class ActionAPI(BaseAPI):
     """API module for action rules configuration.
 
@@ -29,7 +31,14 @@ class ActionAPI(BaseAPI):
         ...         print(f"Rule: {rule.name} - Enabled: {rule.enabled}")
     """
 
+    name = "action"
+    api_id = "action"
+
     REST_PATH = "/config/rest/action/v1"
+
+    async def read(self) -> ActionConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> ActionConfig:
         """Get complete action configuration.

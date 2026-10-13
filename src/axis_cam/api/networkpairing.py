@@ -10,6 +10,7 @@ API Endpoints:
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import (
     NetworkPairingConfig,
@@ -19,6 +20,7 @@ from axis_cam.models import (
 )
 
 
+@register
 class NetworkPairingAPI(BaseAPI):
     """API module for network pairing configuration.
 
@@ -36,7 +38,14 @@ class NetworkPairingAPI(BaseAPI):
         ...         print(f"Paired: {device.name} ({device.address})")
     """
 
+    name = "networkpairing"
+    api_id = "networkpairing"
+
     REST_PATH = "/config/rest/networkpairing/v1"
+
+    async def read(self) -> NetworkPairingConfig:
+        """Read the current configuration (``ResourceModule`` protocol)."""
+        return await self.get_config()
 
     async def get_config(self) -> NetworkPairingConfig:
         """Get network pairing configuration.

@@ -14,10 +14,12 @@ is not available on older firmware versions.
 from typing import Any
 
 from axis_cam.api.base import BaseAPI
+from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import BasicDeviceInfo, DeviceProperties
 
 
+@register
 class BasicDeviceInfoAPI(BaseAPI):
     """API module for retrieving basic device information.
 
@@ -38,11 +40,18 @@ class BasicDeviceInfoAPI(BaseAPI):
         ...     print(f"Firmware: {info.firmware_version}")
     """
 
+    name = "device_info"
+    api_id = None
+
     # Legacy CGI endpoint
     CGI_PATH = "/axis-cgi/basicdeviceinfo.cgi"
 
     # REST API endpoint (AXIS OS 11.x+)
     REST_PATH = "/config/rest/basic-device-info/v2beta"
+
+    async def read(self) -> BasicDeviceInfo:
+        """Read the current state (``ResourceModule`` protocol)."""
+        return await self.get_info()
 
     async def get_info(self) -> BasicDeviceInfo:
         """Get basic device information.
