@@ -10,6 +10,7 @@ Usage:
 """
 
 from axis_cam.cli import (  # noqa: F401  (imported for their command registrations)
+    accounts,
     automation,
     config,
     device,

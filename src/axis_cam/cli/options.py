@@ -74,3 +74,20 @@ JsonOption = Annotated[
         help="Output in JSON format.",
     ),
 ]
+
+YesOption = Annotated[
+    bool,
+    typer.Option(
+        "--yes",
+        "-y",
+        help="Apply without asking for confirmation.",
+    ),
+]
+
+DryRunOption = Annotated[
+    bool,
+    typer.Option(
+        "--dry-run",
+        help="Show the planned change and exit without applying it.",
+    ),
+]

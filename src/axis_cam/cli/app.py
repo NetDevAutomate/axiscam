@@ -83,6 +83,13 @@ stream_app = typer.Typer(
 )
 app.add_typer(stream_app, name="stream")
 
+accounts_app = typer.Typer(
+    name="accounts",
+    help="User accounts: list, add, set-password, set-role, remove.",
+    no_args_is_help=True,
+)
+app.add_typer(accounts_app, name="accounts")
+
 
 def run_async[T](coro: Coroutine[Any, Any, T]) -> T:
     """Run an async coroutine synchronously, reporting AXIS errors cleanly.

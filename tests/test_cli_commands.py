@@ -21,7 +21,17 @@ from axis_cam.report import DeviceReport
 
 runner = CliRunner()
 
-GROUPS = ["logs", "network", "security", "services", "download", "automation", "media", "stream"]
+GROUPS = [
+    "logs",
+    "network",
+    "security",
+    "services",
+    "download",
+    "automation",
+    "media",
+    "stream",
+    "accounts",
+]
 TOP_LEVEL = {
     "info",
     "status",
