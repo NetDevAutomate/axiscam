@@ -287,7 +287,7 @@ so the device layer never passes `use_https` directly.
 | `post_json(path, data, json_data)` | `dict` | POST + JSON parse |
 | `get_raw(path, params)` | `bytes` | GET binary content |
 | `get_binary(path, params, timeout)` | `bytes` | GET binary with timeout override |
-| `discover_apis()` | `dict` | GET `/config/discover/apis.json` |
+| `discover_apis()` | `dict` | GET `/config/discover/apis` |
 | `check_connectivity()` | `bool` | Probe `/axis-cgi/basicdeviceinfo.cgi` |
 
 **Error mapping** (in `_check_response`):
@@ -1108,7 +1108,7 @@ All shared fixtures are in `tests/conftest.py`. Key fixtures:
 | `mock_env_vars` | `dict` | Patches `AXIS_ADMIN_USERNAME`, `AXIS_ADMIN_PASSWORD`, `AXIS_HOST` |
 | `sample_config_yaml` | `str` | YAML string with two devices (camera + recorder) |
 | `sample_server_report` | `str` | Three syslog-format lines at different severity levels |
-| `sample_api_response` | `dict` | Simulated `/config/discover/apis.json` response |
+| `sample_api_response` | `dict` | Simulated `/config/discover/apis` response |
 
 ### 8.3 Mocking Patterns
 

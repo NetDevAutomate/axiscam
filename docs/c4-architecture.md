@@ -1,6 +1,7 @@
 # C4 Architecture: axis-cam
 
-> **C4 Model** — Context, Containers, Components, Code  
+> **C4 Model** — Context, Containers, Components, Code
+>
 > A hierarchical set of diagrams that describe software architecture at different levels of abstraction.
 
 ---
@@ -340,7 +341,7 @@ graph TD
         end
 
         subgraph discovery["Discovery"]
-            discoverAPIs["discover_apis()<br/>/config/discover/apis.json"]
+            discoverAPIs["discover_apis()<br/>/config/discover/apis"]
             checkConn["check_connectivity()<br/>/axis-cgi/basicdeviceinfo.cgi"]
         end
     end

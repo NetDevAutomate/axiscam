@@ -242,7 +242,7 @@ flowchart LR
     M["api/&lt;module&gt;.py<br/>@register"] --> REG[(registry)]
     REG -->|build_modules| DEV[AxisDevice.modules]
     DEV -->|has read| RES[device.resources]
-    RES -->|gated by /config/discover/apis.json| AV[available_resources]
+    RES -->|gated by /config/discover/apis| AV[available_resources]
     AV --> R[report]
     AV -.-> B[backup — Phase 4]
     AV -.-> A[security audit — Phase 7]
@@ -827,7 +827,7 @@ flowchart LR
 
 #### API Discovery Mechanism
 
-`VapixClient.discover_apis()` queries `/config/discover/apis.json`. This endpoint returns a dict mapping API names to version and capability metadata. The result is consumed by `AxisDevice.get_capabilities()` to populate a `DeviceCapabilities` model. On older firmware that does not have this endpoint, the method catches the `AxisDeviceError` and returns an empty dict — making capability discovery gracefully degrading.
+`VapixClient.discover_apis()` queries `/config/discover/apis`. This endpoint returns a dict mapping API names to version and capability metadata. The result is consumed by `AxisDevice.get_capabilities()` to populate a `DeviceCapabilities` model. On older firmware that does not have this endpoint, the method catches the `AxisDeviceError` and returns an empty dict — making capability discovery gracefully degrading.
 
 ---
 
@@ -1224,7 +1224,7 @@ sequenceDiagram
     end
 
     CLI->>Device: get_capabilities()
-    Device->>Client: GET /config/discover/apis.json
+    Device->>Client: GET /config/discover/apis
     Client->>AXIS: HTTPS GET
     AXIS-->>Client: API discovery JSON
     Client-->>Device: DeviceCapabilities

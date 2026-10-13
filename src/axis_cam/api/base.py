@@ -28,7 +28,7 @@ class BaseAPI:
     - ``name``: the attribute the module is exposed under on ``AxisDevice``
       (``device.ssh``) and the key used by reports and backups.
     - ``api_id``: the identifier the device advertises for this API in
-      ``/config/discover/apis.json``. ``None`` means the module does not depend
+      ``/config/discover/apis``. ``None`` means the module does not depend
       on a discoverable REST API (legacy CGI) and is always attempted.
 
     Example:

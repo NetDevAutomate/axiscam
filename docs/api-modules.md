@@ -53,7 +53,7 @@ two class attributes every module declares:
 ```python
 class BaseAPI:
     name: ClassVar[str]              # attribute on AxisDevice, key in reports/backups
-    api_id: ClassVar[str | None]     # id in /config/discover/apis.json; None = legacy CGI
+    api_id: ClassVar[str | None]     # id in /config/discover/apis; None = legacy CGI
 
     def __init__(self, client: VapixClient) -> None:
         self._client = client

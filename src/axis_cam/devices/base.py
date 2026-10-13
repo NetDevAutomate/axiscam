@@ -303,7 +303,7 @@ class AxisDevice(ABC):
         """Resources this device advertises via API discovery.
 
         A module with ``api_id`` set is included only if the device lists that
-        id in ``/config/discover/apis.json``. Modules with ``api_id = None``
+        id in ``/config/discover/apis``. Modules with ``api_id = None``
         (legacy CGI) are always included, and when discovery returns nothing
         (older firmware) every resource is included rather than none.
 

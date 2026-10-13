@@ -1,8 +1,8 @@
 # axiscam Troubleshooting and Runbook
 
-**Version**: 0.1.0  
-**CLI**: `axiscam`  
-**Package**: `axis-cam`
+- **Version**: 0.1.0
+- **CLI**: `axiscam`
+- **Package**: `axis-cam`
 
 ---
 
@@ -573,7 +573,7 @@ Raised by `get_json()` and `post_json()` in `VapixClient` when the response body
 
 ```bash
 # Check what the raw response looks like with curl
-curl -k -u root:<pass> https://<device-ip>/config/discover/apis.json
+curl -k -u root:<pass> https://<device-ip>/config/discover/apis
 
 # Try the CGI fallback endpoint
 curl -k -u root:<pass> "https://<device-ip>/axis-cgi/basicdeviceinfo.cgi?json=yes"
@@ -586,14 +586,15 @@ curl -k -v -u root:<pass> https://<device-ip>/axis-cgi/basicdeviceinfo.cgi
 
 AXIS OS 11.x introduced REST APIs at `/config/rest/*/v*`. Older firmware only supports CGI endpoints at `/axis-cgi/*.cgi`. The codebase uses REST-first with CGI fallback in some modules.
 
-**API discovery endpoint**: `/config/discover/apis.json`  
+**API discovery endpoint**: `/config/discover/apis`
+
 The `discover_apis()` method in `VapixClient` queries this endpoint. On older firmware, it returns `{}` (empty dict) rather than raising an error:
 
 ```python
 # From client.py - older devices return empty dict, no exception raised
 async def discover_apis(self) -> dict[str, Any]:
     try:
-        return await self.get_json("/config/discover/apis.json")
+        return await self.get_json("/config/discover/apis")
     except AxisDeviceError:
         return {}
 ```
@@ -614,7 +615,7 @@ curl -k -u root:<pass> https://<device-ip>/axis-cgi/basicdeviceinfo.cgi
 | Feature | Minimum AXIS OS |
 |---------|----------------|
 | REST API (`/config/rest/`) | 11.x |
-| API discovery (`/config/discover/apis.json`) | 11.x |
+| API discovery (`/config/discover/apis`) | 11.x |
 | CGI endpoints (`/axis-cgi/`) | All versions |
 | LLDP API | 10.x+ |
 | Analytics REST API | 11.x |
@@ -683,7 +684,7 @@ sequenceDiagram
     DEV-->>CLI: Full device details
     CLI-->>U: Device info table
     U->>CLI: axiscam apis --device new_camera
-    CLI->>DEV: GET /config/discover/apis.json
+    CLI->>DEV: GET /config/discover/apis
     DEV-->>CLI: API list
     CLI-->>U: Available APIs tree
 ```
@@ -1219,7 +1220,7 @@ When you need to rule out an axiscam-specific issue, test the raw API:
 curl -k -u root:<pass> https://<ip>/axis-cgi/basicdeviceinfo.cgi
 
 # API discovery (AXIS OS 11.x+)
-curl -k -u root:<pass> https://<ip>/config/discover/apis.json | python3 -m json.tool
+curl -k -u root:<pass> https://<ip>/config/discover/apis | python3 -m json.tool
 
 # System logs
 curl -k -u root:<pass> "https://<ip>/axis-cgi/admin/systemlog.cgi"
