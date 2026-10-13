@@ -739,6 +739,45 @@ $ axiscam accounts remove ops --dry-run --device front_camera
 
 ---
 
+### onvif
+
+ONVIF users — a **separate database** from the VAPIX accounts above. A VMS,
+NVR or Home Assistant that talks ONVIF logs in with one of these, and
+`accounts list` does not show them. Same write-safety pattern as `accounts`.
+
+```bash
+axiscam onvif list [--json] [OPTIONS]
+axiscam onvif add USER --level administrator|operator|user [--password-stdin] [--yes] [--dry-run] [OPTIONS]
+axiscam onvif set-password USER [--password-stdin] [--yes] [--dry-run] [OPTIONS]
+axiscam onvif set-level USER --level LEVEL [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+axiscam onvif remove USER [--allow-lockout] [--yes] [--dry-run] [OPTIONS]
+```
+
+| Option | Description |
+|--------|-------------|
+| `--level`, `-l` | ONVIF `UserLevel`: `administrator`, `operator` or `user` |
+| `--password-stdin` | Read the **ONVIF user's** new password from standard input (one line). Otherwise it is prompted for, hidden, after the plan is accepted. Never a command-line argument. |
+| `--allow-lockout` | Permit removing or demoting the only ONVIF Administrator |
+| `--yes`, `-y` | Apply without the confirmation prompt |
+| `--dry-run` | Show the planned change and exit 0 |
+
+**Rules the library enforces** (the plan warns about them in advance):
+
+- Transport is ONVIF Device Management SOAP on `POST /vapix/services`, which accepts the device's VAPIX administrator credentials (verified on AXIS OS 12.11 and 11.11). Device refusals are SOAP faults; they are shown with the ONVIF code (`ter:UsernameClash`, `ter:Password` = too weak, `ter:FixedUser`).
+- `add`, `set-level` and `remove` are verified by re-reading the list; `set-password` cannot be — ONVIF never returns passwords — so verify by connecting the client.
+- `set-password` warns that every ONVIF client using that user must be updated.
+- Removing or demoting the **only** ONVIF Administrator is refused without `--allow-lockout`.
+
+**Examples:**
+```bash
+$ axiscam onvif list --device front_camera
+$ axiscam onvif add frigate --level operator --device front_camera          # prompts for the password
+$ echo "$PW" | axiscam onvif set-password frigate --password-stdin -y --device front_camera
+$ axiscam onvif remove frigate --dry-run --device front_camera
+```
+
+---
+
 ### backup
 
 Configuration backups. `create` reads the device and never writes to it; `show`

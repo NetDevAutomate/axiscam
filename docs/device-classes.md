@@ -250,6 +250,7 @@ The attribute name is the module's registered `name`:
 | `device.networkpairing` | `NetworkPairingAPI` | `get_config()` → `NetworkPairingConfig` |
 | `device.stream` | `StreamAPI` | `get_diagnostics()` → `StreamDiagnostics` |
 | `device.users` | `UsersAPI` | `list()` → `UserAccounts`; **writes:** `add()`, `set_password()`, `set_role()`, `remove()` |
+| `device.onvif_users` | `OnvifUsersAPI` | `list()` → `OnvifAccounts`; **writes:** `add()`, `set_password()`, `set_level()`, `remove()` |
 
 Two views over the same modules exist for generic code:
 

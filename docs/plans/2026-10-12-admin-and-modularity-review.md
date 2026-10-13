@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–5 complete (5 narrowed to parameters, live-tested A/B/A on the M3216); Phase 6 not started (see [Phase status](#phase-status))
+- **Status:** Phases 0–5 complete; Phase 6 implemented and read-verified on all five devices (live write cycle pending your go); Phase 7 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -128,7 +128,7 @@ Audit → `auditlog.cgi?tail=N`; system → `systemlog.cgi`; keep `tar_all` for 
 | 3 | Logs via `auditlog.cgi`/`systemlog.cgi`; `download crash-report` alias + warning + `0600` | Small, high value |
 | 4 | Backup with honest manifest | Pure reads over the registry |
 | 5 | Restore, module by module, verified on a device | Most unknowns; benefits from everything above |
-| 6 | ONVIF accounts after a device check of the SOAP path | Unverified auth behaviour |
+| 6 | ONVIF accounts after a device check of the SOAP path | Unverified auth behaviour — resolved 2026-10-13: `/vapix/services` + VAPIX admin |
 | 7 | `security audit` + fleet fan-out | Composition |
 
 Rationale for the order: the two transport bugs are the only findings that hurt someone today, and writes change the project's safety posture — the confirm/dry-run pattern should exist once, in Phase 2, before restore multiplies it across 27 modules.
@@ -307,6 +307,31 @@ Both were invisible to 719 green tests. The device pass (item 4) is the gate it 
 | 5.7 | `params.json` is hash-checked against the manifest before restore (a hand-edited or damaged file is refused, exit 1) | ✅ live |
 
 Decisions: per-module REST `PATCH` writes are not attempted — each is a separate contract to verify, and the device pass showed how often the hard-coded assumptions were wrong. Writability comes from the device (`listdefinitions`), not from a list in the code; when definitions are unavailable every difference is attempted and the device's `# Error` decides.
+
+### Phase 6 — ONVIF accounts (2026-10-13)
+
+**Device check first** (the plan's precondition), read-only on all five devices:
+
+| Probe | `/onvif/device_service` | `/vapix/services` |
+|---|---|---|
+| `GetUsers`, no auth | 401 `WWW-Authenticate: Digest` | 401 `WWW-Authenticate: Basic` |
+| `GetUsers`, HTTP Basic, VAPIX admin | 401 | **200**, user list |
+| `GetUsers`, HTTP Digest, VAPIX admin | 401 | — |
+| `GetUsers`, WS-UsernameToken (digest), VAPIX admin | 400 SOAP fault | 401 |
+| `GetSystemDateAndTime`, no auth | 200 (pre-auth operation) | 401 |
+
+So: `/vapix/services` is the management path — it authenticates with the device's ordinary HTTP scheme (`VapixAuth`, Basic over HTTPS), and a VAPIX administrator may run the ONVIF user operations there. `/onvif/device_service` authenticates **ONVIF** users (a VAPIX account is refused even with Digest), so it cannot administer the list from outside. Faults: HTTP 400 (`env:Sender`) / 500 (`env:Receiver`) with SOAP 1.2 `Fault`, nested `Subcode` = ONVIF codes (`ter:InvalidArgVal`→`ter:UsernameMissing` for an unknown user; `ter:ActionNotSupported` for an unimplemented operation). Contract source: `devicemgmt.wsdl` + ONVIF Core Specification 26.06 §8.4.3–8.4.6 (fetched on the day): `GetUsers` never returns passwords; the specification says a `SetUser` without `Password` makes the device *consider clearing it* (refused with `ter:PasswordTooWeak` if it cannot accept an empty one), so `set_level` sends no password and relies on that refusal rather than on the password being kept — whether Axis keeps or refuses is one of the things the live cycle in 6.4 must show.
+
+What the five devices hold: cameras/intercom one `onvif` user (Administrator on `back_of_house`, Operator on the other two); S3008 none; C1410 `unifiprotect` (Administrator) + `onvif` (Operator).
+
+| Step | Scope | Status |
+|---|---|---|
+| 6.1 | `VapixClient.post_raw()` (raw body; 401/403 raised, other statuses returned); `AxisSoapFault(code, subcodes, reason)` | ✅ |
+| 6.2 | `OnvifUsersAPI` (`onvif_users`, registry module so `report --full` / `backup create` include it): `list`, `add`, `set_password`, `set_level`, `remove`; template-built SOAP, defusedxml parsing, fault decoding to ONVIF codes, verify-by-re-read for create/level/delete, last-Administrator guard, `Anonymous` refused | ✅ 31 tests on verbatim device bodies |
+| 6.3 | `axiscam onvif list\|add\|set-password\|set-level\|remove` on the write-safety pattern; passwords by hidden prompt / `--password-stdin` only | ✅ 18 CLI tests |
+| 6.4 | Live, read-only: `onvif list` on all five devices; `--dry-run` add and remove-only-Administrator warning on `back_of_house`; `report --full` → 24 sections (was 23); `backup create` on the C1410 → `onvif_users.json`. **No live write**: creating/deleting an ONVIF user on your cameras needs your go (proposal: add `axiscam-test` as `User` on `back_of_house`, rotate its password, demote/promote, remove — ends with the database as it was) | ✅ reads / ⏸ writes |
+
+Definition of done: all five devices list; a dry run of each write shows the plan and writes nothing; after your go, the A/B/A write cycle on one device passes with every step verified by re-read.
 
 ## Decisions and open questions
 

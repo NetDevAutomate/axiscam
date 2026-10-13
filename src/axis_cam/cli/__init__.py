@@ -19,6 +19,7 @@ from axis_cam.cli import (  # noqa: F401  (imported for their command registrati
     logs,
     media,
     network,
+    onvif,
     security,
     services,
     stream,

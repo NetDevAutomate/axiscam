@@ -325,6 +325,57 @@ Manage VAPIX user accounts. Registered as `users` and a resource, so
 
 ---
 
+### OnvifUsersAPI
+
+**Module:** `api/onvif_users.py`
+
+Manage the ONVIF user database — separate from the VAPIX accounts above. A VMS,
+an NVR or Home Assistant speaking ONVIF authenticates against this list, and
+`accounts list` does not show it. Registered as `onvif_users` and a resource,
+so `report --full` and `backup create` include the names and levels (never
+passwords: the ONVIF Core Specification forbids returning them).
+
+| Endpoint | Type | Description |
+|----------|------|-------------|
+| `POST /vapix/services` | SOAP 1.2, ONVIF Device Management (`devicemgmt.wsdl`) | `GetUsers`, `CreateUsers`, `SetUser`, `DeleteUsers` |
+
+Verified on AXIS OS 12.11.118 and 11.11.192 (2026-10-13): `/vapix/services`
+takes the device's ordinary HTTP authentication (Basic over HTTPS), so an
+administrator's VAPIX credentials manage ONVIF users through the same
+`VapixAuth` as everything else. The ONVIF-proper endpoint
+`/onvif/device_service` demands HTTP Digest and rejects the VAPIX
+administrator even then — it authenticates ONVIF users, so it cannot be used to
+administer the list from outside. Faults arrive as HTTP 400 (`env:Sender`) or
+500 (`env:Receiver`) with a SOAP `Fault` whose nested `Subcode` values are the
+ONVIF error codes; `AxisSoapFault` carries `code`, `subcodes` and `reason`.
+
+**Methods:**
+
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `list()` / `read()` | `OnvifAccounts` | Every ONVIF user with its level |
+| `add(username, password, level)` | `OnvifAccount` | `CreateUsers`, then verify by re-reading |
+| `set_password(username, password)` | `None` | `SetUser` with the current level (acknowledged, not verifiable by reading) |
+| `set_level(username, level, *, allow_lockout)` | `OnvifAccount` | `SetUser` without a password (kept), then verify |
+| `remove(username, *, allow_lockout)` | `None` | `DeleteUsers`, then verify it is gone |
+
+**Write-safety rules** (enforced here, not in the CLI):
+
+- Requests are built from a fixed template with escaped values and parsed with
+  `defusedxml`; passwords travel in the request body.
+- Faults become `AxisSoapFault` with the ONVIF code spelled out
+  (`ter:UsernameClash`, `ter:Password` = too weak, `ter:FixedUser`, …).
+- `add`/`set_level`/`remove` re-read the list and raise `AxisUserError` if the
+  device's acknowledgement does not match reality.
+- Removing or demoting the **only** ONVIF Administrator raises
+  `AxisLockoutError` unless `allow_lockout=True` — not a self-lockout (these
+  are never this session's credentials) but the VMS using that user loses
+  administrative control.
+- `validate_onvif_username()` / `validate_onvif_password()` run before any
+  request; the `Anonymous` level is refused (`ter:AnonymousNotAllowed`).
+
+---
+
 ### SnmpAPI
 
 **Module:** `api/snmp.py`

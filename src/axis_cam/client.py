@@ -229,6 +229,34 @@ class VapixClient:
         except httpx.TimeoutException as e:
             raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
 
+    async def post_raw(
+        self, path: str, content: str | bytes, *, content_type: str
+    ) -> httpx.Response:
+        """POST a raw body (SOAP, XML) and return the response for the caller to interpret.
+
+        Connection failures, a TLS/plain-HTTP mismatch, 401 and 403 are raised
+        as usual. Any other status is returned: SOAP faults travel as HTTP 400
+        or 500 with an XML body that says what went wrong, and only the caller
+        can read it.
+
+        Raises:
+            AxisConnectionError: If connection fails.
+            AxisAuthenticationError: If authentication fails (401).
+            AxisPermissionError: If the account may not use the path (403).
+        """
+        client = self._ensure_connected()
+        url = f"{self.base_url}{path}"
+        try:
+            response = await client.post(
+                url, content=content, headers={"Content-Type": content_type}
+            )
+            self._check_response(response, raise_on_error_status=False)
+            return response
+        except httpx.ConnectError as e:
+            raise self._connection_error(e) from e
+        except httpx.TimeoutException as e:
+            raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
+
     async def get_json(
         self,
         path: str,
@@ -361,15 +389,21 @@ class VapixClient:
             )
         return AxisConnectionError(f"Failed to connect to {self.host}: {exc}")
 
-    def _check_response(self, response: httpx.Response) -> None:
+    def _check_response(
+        self, response: httpx.Response, *, raise_on_error_status: bool = True
+    ) -> None:
         """Check HTTP response for errors.
 
         Args:
             response: HTTP response to check.
+            raise_on_error_status: Raise ``AxisDeviceError`` for any other
+                4xx/5xx. ``False`` leaves those to a caller that can read the
+                body (SOAP faults).
 
         Raises:
             AxisConnectionError: Plain HTTP was sent to a port that expects TLS.
             AxisAuthenticationError: If authentication failed (401).
+            AxisPermissionError: If the account may not use the path (403).
             AxisDeviceError: If device returned an error status.
         """
         if response.status_code == 400 and "plain http" in response.text.lower():
@@ -388,7 +422,7 @@ class VapixClient:
             raise AxisPermissionError(
                 f"Access denied to {self.host}: this account may not use {response.url.path} (403)."
             )
-        if response.status_code >= 400:
+        if response.status_code >= 400 and raise_on_error_status:
             raise AxisDeviceError(
                 f"Device error {response.status_code} from {self.host}: {response.text[:200]}"
             )
