@@ -237,7 +237,7 @@ Original step table:
 | 4.0 `ParamAPI` on the documented text contract; one `export()` shape; `$export` removed | `30edca9` | ✅ 28 tests incl. the doc's example through the real client |
 | 4.1 `axis_cam/backup.py`: `create_backup`, `load_manifest`, `verify_backup`; honest manifest | `4dbd060` | ✅ 18 tests incl. fake-module independence, tamper detection, `0700`/`0600` |
 | 4.2 `backup create\|show\|verify` | `6c45863` | ✅ 10 groups in `--help` |
-| 4.3 docs, coverage ratchet 62 → 64, this table | — | ✅ |
+| 4.3 docs, coverage ratchet 62 → 64, this table | `e1a8a72` | ✅ |
 
 After Phase 4: 712 tests pass (from 682) · 65.8% coverage (from 64.6) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged).
 
