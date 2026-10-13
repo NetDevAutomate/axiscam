@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–3 complete; Phase 4 in progress (see [Phase status](#phase-status))
+- **Status:** Phases 0–4 complete; Phase 5 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -228,9 +228,20 @@ Original step table:
 | 3.2 | `download crash-report` (primary) with `download debug` kept as an alias; privacy notice before download; every downloaded diagnostic written `0600` via one helper (`axis_cam.files.write_private`), also used by `save_report`/`save_debug_archive`; crash-report timeout default 300 s | Tests: file mode is `0600` on POSIX; notice printed; alias and primary share one implementation |
 | 3.3 | Docs, plan status, coverage ratchet | `fail_under` at the new measured floor |
 
-### Phase 4 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+### Phase 4 — complete on branch `phase-0-security-fixes` (2026-10-13)
 
 **Blocker found first.** `ParamAPI` reads `param.cgi` through `client.get_json()`, but the VAPIX Parameter management page (fetched 2026-10-13) documents `action=list` as `Content-Type: text/plain` with `<parameter>=<value>` lines (`responseformat=rfc` "should always be used"; errors are HTTP 200 `# Error: <description>`). `response.json()` therefore raises on every real device, the narrow `except` turns it into `None`/`[]`/`{}`, and `params`, `location`, `get_friendly_name()` and `params --export` have been silently empty — the "cannot read ≠ empty" false negative from Phase 0 in another coat. All 27 tests in `tests/test_api_param.py` feed JSON dicts, i.e. they lock the wrong contract in. The REST `$export` endpoint `export()` tries first is documented nowhere I can find (discovery lists `/config/rest/param/v2beta` but no `$export`), so it is dropped rather than kept on faith.
+
+| Step | Commit | Status |
+|---|---|---|
+| 4.0 `ParamAPI` on the documented text contract; one `export()` shape; `$export` removed | `30edca9` | ✅ 28 tests incl. the doc's example through the real client |
+| 4.1 `axis_cam/backup.py`: `create_backup`, `load_manifest`, `verify_backup`; honest manifest | `4dbd060` | ✅ 18 tests incl. fake-module independence, tamper detection, `0700`/`0600` |
+| 4.2 `backup create\|show\|verify` | `6c45863` | ✅ 10 groups in `--help` |
+| 4.3 docs, coverage ratchet 62 → 64, this table | — | ✅ |
+
+After Phase 4: 712 tests pass (from 682) · 65.8% coverage (from 64.6) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged).
+
+Original step table:
 
 | Step | Scope | Definition of done (countable) |
 |---|---|---|

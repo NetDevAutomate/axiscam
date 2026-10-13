@@ -228,7 +228,7 @@ axiscam params [OPTIONS]
 | Option | Description |
 |--------|-------------|
 | `--group` | Parameter group (e.g., "Network") |
-| `--export` | Export all parameters |
+| `--export` | Export every parameter as `{"root.Group.Name": "value"}` (JSON) |
 | `--output, -o` | Output file path |
 
 **Example:**
@@ -731,6 +731,59 @@ $ axiscam accounts remove ops --dry-run --device front_camera
 
 ---
 
+### backup
+
+Configuration backups. `create` reads the device and never writes to it; `show`
+and `verify` need only the directory.
+
+```mermaid
+flowchart LR
+    CREATE[axiscam backup create] --> DIR["backup-&lt;device&gt;-&lt;UTC ts&gt;/"]
+    DIR --> M[manifest.json]
+    DIR --> R["&lt;module&gt;.json × N"]
+    DIR --> P[params.json]
+    DIR -.--with-server-report.-> S[server-report.zip]
+    M --> SHOW[axiscam backup show]
+    M --> VERIFY[axiscam backup verify]
+```
+
+```bash
+axiscam backup create [-o PARENT_DIR] [--with-server-report] [OPTIONS]
+axiscam backup show BACKUP_DIR [--json]
+axiscam backup verify BACKUP_DIR
+```
+
+| Option | Description |
+|--------|-------------|
+| `--output`, `-o` | Parent directory; the backup directory is created inside it (default: current directory) |
+| `--with-server-report` | Also download the server report (zip with image) into the backup |
+
+**What a backup holds.** One `<module>.json` per resource the device advertises
+(the same modules `report --full` reads), `params.json` with the whole parameter
+tree as `{"root.Group.Name": "value"}`, and `manifest.json` with the tool
+version, device identity, a SHA-256 and source per file, per-module errors, the
+modules the device does not advertise, and two explicit lists:
+
+- **not included by design** — VAPIX gives no client a way to read these: account
+  passwords and hashes, certificate private keys, ACAP binaries and licence keys,
+  recordings and edge-storage content, the device's own TLS/SSH host keys;
+- **not implemented** — readable in principle, not read by this version: ONVIF
+  users, the installed ACAP list, stream profiles beyond the stream module, view
+  areas / PTZ presets / guard tours, overlays.
+
+The directory is created `0700` and every file `0600`. `verify` re-hashes each
+file and exits 1 on a mismatch, a missing file or a file the manifest does not
+list.
+
+**Examples:**
+```bash
+$ axiscam backup create --device front_camera -o ~/backups
+$ axiscam backup show ~/backups/backup-front_camera-20261013T110000Z
+$ axiscam backup verify ~/backups/backup-front_camera-20261013T110000Z
+```
+
+---
+
 ### Configuration Commands
 
 #### config
@@ -817,11 +870,14 @@ flowchart TD
 
 ```mermaid
 flowchart LR
-    START[Start] --> REPORT[axiscam report --full]
-    REPORT --> PARAMS[axiscam params --export]
-    PARAMS --> DOWNLOAD[axiscam download report]
-    DOWNLOAD --> DEBUG[axiscam download debug]
+    START[Start] --> BACKUP["axiscam backup create --with-server-report"]
+    BACKUP --> VERIFY[axiscam backup verify]
+    START -.ad hoc.-> REPORT[axiscam report --full]
+    START -.support case.-> CRASH[axiscam download crash-report]
 ```
+
+`backup create` supersedes chaining `report --full`, `params --export` and
+`download report` by hand: one directory, one manifest, verifiable later.
 
 ---
 

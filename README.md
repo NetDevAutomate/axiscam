@@ -10,6 +10,7 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Network Discovery**: LLDP neighbor discovery for switch port mapping
 - **Log Retrieval**: System, access and audit logs from their dedicated CGIs (audit log on AXIS OS 12.7+), with the server report as fallback
 - **Device Reports**: Generate comprehensive JSON/YAML configuration reports
+- **Backups**: Registry-driven configuration snapshots with a hash-verified manifest that says what is and is not included
 - **Diagnostic Downloads**: Server report and crash report for AXIS support, written `0600`
 - **Security Configuration**: Firewall, SSH, certificates, SNMP, NTP
 - **Account Management**: list, add, rotate passwords, change roles, remove — with plan/confirm/verify and a lockout guard
@@ -366,6 +367,27 @@ axiscam services snmp --device camera1
 
 # NTP configuration
 axiscam services ntp --device camera1
+```
+
+### Backup Commands
+
+A backup is a directory with a manifest: one JSON file per configuration module
+the device advertises, the full parameter tree, and optionally the server
+report. It is read-only on the device. The manifest records a SHA-256 per file
+and lists what a VAPIX backup **cannot** contain (passwords, private keys, ACAP
+binaries and licences, recordings) separately from what this version does not
+read yet — so nobody mistakes it for a full image. Restore is not implemented yet.
+
+```bash
+# Create backup-<device>-<timestamp>/ in the current directory (0700, files 0600)
+axiscam backup create --device camera1
+
+# Elsewhere, and with the server report included
+axiscam backup create --device camera1 -o ~/backups --with-server-report
+
+# Inspect and verify
+axiscam backup show ~/backups/backup-camera1-20261013T110000Z
+axiscam backup verify ~/backups/backup-camera1-20261013T110000Z
 ```
 
 ### Configuration Commands

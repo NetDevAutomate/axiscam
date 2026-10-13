@@ -84,10 +84,12 @@ axis_cam/
 │   ├── device.py        # info, status, apis, lldp, params, location, report
 │   ├── confirm.py       # Write safety: plan → dry-run / confirm → apply
 │   ├── accounts.py      # accounts list/add/set-password/set-role/remove
+│   ├── backup.py        # backup create/show/verify
 │   ├── config.py        # config, init, migrate, devices, version
 │   └── <group>.py       # logs, network, security, services, automation, media, stream, download
 ├── report.py            # Registry-driven device report
 ├── files.py             # write_private(): diagnostics reach disk as 0600
+├── backup.py            # create_backup/verify_backup: snapshot directory + manifest
 ├── client.py            # VapixClient HTTP client
 ├── config.py            # Configuration management
 ├── models.py            # Pydantic models (~2000 lines)

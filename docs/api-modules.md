@@ -179,23 +179,36 @@ print(f"Firmware: {info.firmware_version}")
 
 **Module:** `api/param.py`
 
-Access and modify device parameters via the param.cgi endpoint.
+Read device parameters via `param.cgi`. The CGI answers `text/plain` with one
+`<parameter>=<value>` line per parameter (errors are HTTP 200 `# Error: ...`);
+the module parses exactly that and always sends `responseformat=rfc`. Writes are
+Phase 5.
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
-| `/axis-cgi/param.cgi` | CGI | Parameter management |
+| `/axis-cgi/param.cgi?action=list[&group=…]&responseformat=rfc` | CGI (text) | Parameter listing |
 
 **Methods:**
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `get_friendly_name()` | `str` | Device friendly name |
-| `get_location()` | `str` | Device location |
+| `get(name)` | `str \| None` | One value; `None` if the parameter does not exist |
+| `get_group(name)` | `ParameterGroup` | Everything under a group (`Network`, `Network.eth0`) |
+| `get_all()` | `list[ParameterGroup]` | Everything, by top-level group; errors propagate |
+| `get_many(names)` | `dict[str, str \| None]` | Several values in one request |
+| `search(pattern)` | `list[DeviceParameter]` | Case-insensitive name match |
+| `export()` | `dict[str, str]` | The whole tree as `{"root.Group.Name": "value"}` — the backup payload |
+| `get_friendly_name()` | `str` | Convenience reader |
+| `get_location()` | `str` | Convenience reader |
+| `get_ip_address()` | `str` | Convenience reader |
+| `get_mac_address()` | `str` | Convenience reader |
 
 **Example:**
+
 ```python
-params = await device.params.get_params("Network")
+network = await device.params.get_group("Network")
 name = await device.params.get_friendly_name()
+everything = await device.params.export()
 ```
 
 ---
