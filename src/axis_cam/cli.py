@@ -31,8 +31,9 @@ from axis_cam.config import (
     load_config,
 )
 from axis_cam.devices.base import AxisDevice
-from axis_cam.exceptions import AxisError
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError, AxisError
 from axis_cam.models import LogType, ServerReportFormat
+from axis_cam.report import DeviceReport, collect_report, render_text
 
 # Console for rich output
 console = Console()
@@ -369,7 +370,7 @@ def device_info(
             # Time API may not be available on all devices (e.g., speakers)
             try:
                 time_info = await dev.time.get_info()
-            except Exception:
+            except (AxisDeviceError, AxisApiNotSupportedError):
                 time_info = None
 
             # Create info table
@@ -880,7 +881,7 @@ def complete_device_names() -> list[str]:
     try:
         config = load_config()
         return list(config.devices.keys())
-    except Exception:
+    except Exception:  # shell completion must never raise; no names is the right answer
         return []
 
 
@@ -2001,324 +2002,49 @@ def device_report(
     digest: DigestOption = True,
     output: Annotated[Path | None, typer.Option("--output", "-o", help="Output file")] = None,
     format_opt: Annotated[
-        str, typer.Option("--format", "-f", help="Output format (json, yaml)")
+        str, typer.Option("--format", "-f", help="Output format (json, yaml, text)")
     ] = "json",
     full: Annotated[
-        bool, typer.Option("--full", help="Include all available configurations")
+        bool, typer.Option("--full", help="Include every resource the device advertises")
     ] = False,
 ):
-    """Generate comprehensive device report.
+    """Generate a device report from every available configuration module.
 
-    Collects device info, network config, security settings, stream
-    diagnostics, LLDP info, and time configuration.
-
-    Use --full to include ALL available configurations (SSH, SNMP, certs,
-    MQTT, actions, recording, storage, geolocation, analytics, etc.)
+    The default report covers device info, time, network, LLDP, stream
+    diagnostics, firewall and NTP. Use --full to read every resource the
+    device advertises via API discovery. Sections are keyed by module name
+    and hold the complete model; per-module failures are listed under
+    "errors" and modules the device does not advertise under "skipped".
     """
     import json as json_mod
 
     target = resolve_device_config(device, host, username, password, port)
 
-    async def _generate_report():
+    async def _generate_report() -> DeviceReport:
         async with target.open(use_digest_auth=digest) as dev:
-            # Collect all information
-            report: dict = {"device": device or target.host, "errors": []}
+            return await collect_report(dev, full=full, name=device or target.host)
 
-            # Device info
-            try:
-                info = await dev.get_info()
-                report["info"] = {
-                    "brand": info.brand,
-                    "model": info.product_number,
-                    "product_name": info.product_full_name,
-                    "serial_number": info.serial_number,
-                    "firmware": info.firmware_version,
-                    "hardware_id": info.hardware_id,
-                    "architecture": info.architecture,
-                    "soc": info.soc,
-                }
-            except Exception as e:
-                report["errors"].append(f"Device info: {e}")
+    report = run_async(_generate_report())
 
-            # Time info
-            try:
-                time_info = await dev.time.get_info()
-                report["time"] = {
-                    "utc_time": str(time_info.utc_time) if time_info.utc_time else None,
-                    "timezone": time_info.timezone,
-                }
-            except Exception as e:
-                report["errors"].append(f"Time info: {e}")
+    if format_opt == "yaml":
+        try:
+            import yaml
 
-            # Network config
-            try:
-                network = await dev.network.get_config()
-                if network.interfaces:
-                    iface = network.interfaces[0]
-                    report["network"] = {
-                        "interface": iface.name,
-                        "ip_address": iface.ip_address,
-                        "mac_address": iface.mac_address,
-                        "dhcp": iface.dhcp_enabled,
-                    }
-            except Exception as e:
-                report["errors"].append(f"Network config: {e}")
+            output_str = yaml.dump(report.to_dict(), default_flow_style=False, sort_keys=False)
+        except ImportError:
+            output_str = json_mod.dumps(report.to_dict(), indent=2)
+            console.print("[yellow]PyYAML not installed, using JSON[/yellow]")
+    elif format_opt == "text":
+        output_str = render_text(report)
+    else:
+        output_str = json_mod.dumps(report.to_dict(), indent=2)
 
-            # LLDP info
-            try:
-                lldp = await dev.lldp.get_info()
-                report["lldp"] = {
-                    "enabled": lldp.activated,
-                    "neighbors": [
-                        {
-                            "system": n.sys_name,
-                            "port": n.port_id.value,
-                            "port_desc": n.port_descr,
-                        }
-                        for n in lldp.neighbors
-                    ],
-                }
-            except Exception as e:
-                report["errors"].append(f"LLDP info: {e}")
-
-            # Stream diagnostics (cameras only)
-            if target.device_type == "camera":
-                try:
-                    stream = await dev.stream.get_diagnostics()
-                    report["stream"] = {
-                        "rtsp_port": stream.rtsp.port,
-                        "rtsp_auth": stream.rtsp.authentication,
-                        "rtp_range": f"{stream.rtp.start_port}-{stream.rtp.end_port}",
-                        "profiles": [
-                            {"name": p.name, "codec": p.video_codec, "resolution": p.resolution}
-                            for p in stream.profiles
-                        ],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Stream diagnostics: {e}")
-
-            # Security status
-            try:
-                firewall = await dev.firewall.get_config()
-                report["security"] = {
-                    "firewall_enabled": firewall.enabled,
-                    "ipv4_rules_count": len(firewall.ipv4_rules),
-                    "ipv6_rules_count": len(firewall.ipv6_rules),
-                }
-            except Exception as e:
-                report["errors"].append(f"Security config: {e}")
-
-            # NTP status
-            try:
-                ntp = await dev.ntp.get_config()
-                report["ntp"] = {
-                    "enabled": ntp.enabled,
-                    "servers": [s.address for s in ntp.servers] if ntp.servers else [],
-                }
-            except Exception as e:
-                report["errors"].append(f"NTP config: {e}")
-
-            # Full configuration export
-            if full:
-                # SSH config
-                try:
-                    ssh = await dev.ssh.get_config()
-                    report["ssh"] = {
-                        "enabled": ssh.enabled,
-                        "port": ssh.port,
-                    }
-                except Exception as e:
-                    report["errors"].append(f"SSH config: {e}")
-
-                # SNMP config
-                try:
-                    snmp = await dev.snmp.get_config()
-                    report["snmp"] = {
-                        "enabled": snmp.enabled,
-                        "version": snmp.version.value if snmp.version else None,
-                        "v3_enabled": snmp.v3_enabled,
-                        "read_community": snmp.read_community,
-                        "system_location": snmp.system_location,
-                        "system_contact": snmp.system_contact,
-                    }
-                except Exception as e:
-                    report["errors"].append(f"SNMP config: {e}")
-
-                # Certificate config
-                try:
-                    cert = await dev.cert.get_config()
-                    report["certificates"] = {
-                        "count": len(cert.certificates) if cert.certificates else 0,
-                        "certificates": [
-                            {
-                                "cert_id": c.cert_id,
-                                "subject": c.subject,
-                                "issuer": c.issuer,
-                                "not_before": c.not_before if c.not_before else None,
-                                "not_after": c.not_after if c.not_after else None,
-                            }
-                            for c in (cert.certificates or [])
-                        ],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Certificate config: {e}")
-
-                # Action rules
-                try:
-                    actions = await dev.action.get_config()
-                    report["actions"] = {
-                        "rules_count": len(actions.rules) if actions.rules else 0,
-                        "rules": [
-                            {"id": r.id, "name": r.name, "enabled": r.enabled}
-                            for r in (actions.rules or [])
-                        ],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Action config: {e}")
-
-                # MQTT config
-                try:
-                    mqtt = await dev.mqtt.get_config()
-                    report["mqtt"] = {
-                        "enabled": mqtt.enabled,
-                        "connected": mqtt.connected,
-                        "clients": [
-                            {
-                                "id": c.id,
-                                "host": c.host,
-                                "port": c.port,
-                                "client_id": c.client_id,
-                            }
-                            for c in (mqtt.clients or [])
-                        ],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"MQTT config: {e}")
-
-                # Recording config
-                try:
-                    recording = await dev.recording.get_config()
-                    report["recording"] = {
-                        "groups_count": len(recording.groups) if recording.groups else 0,
-                        "groups": [{"id": g.id, "name": g.name} for g in (recording.groups or [])],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Recording config: {e}")
-
-                # Storage config
-                try:
-                    storage = await dev.storage.get_config()
-                    report["storage"] = {
-                        "destinations_count": len(storage.destinations)
-                        if storage.destinations
-                        else 0,
-                        "destinations": [
-                            {
-                                "id": d.id,
-                                "storage_type": d.storage_type.value if d.storage_type else None,
-                                "enabled": d.enabled,
-                            }
-                            for d in (storage.destinations or [])
-                        ],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Storage config: {e}")
-
-                # Geolocation
-                try:
-                    geo = await dev.geolocation.get_config()
-                    report["geolocation"] = {
-                        "latitude": geo.latitude,
-                        "longitude": geo.longitude,
-                        "altitude": geo.altitude,
-                        "direction": geo.direction,
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Geolocation config: {e}")
-
-                # Analytics (cameras)
-                if target.device_type == "camera":
-                    try:
-                        analytics = await dev.analytics.get_config()
-                        report["analytics"] = {
-                            "profiles_count": len(analytics.profiles) if analytics.profiles else 0,
-                            "profiles": [
-                                {"id": p.id, "name": p.name, "enabled": p.enabled}
-                                for p in (analytics.profiles or [])
-                            ],
-                        }
-                    except Exception as e:
-                        report["errors"].append(f"Analytics config: {e}")
-
-                # OIDC config
-                try:
-                    oidc = await dev.oidc.get_config()
-                    report["oidc"] = {
-                        "enabled": oidc.enabled,
-                        "issuer_uri": oidc.provider.issuer_uri if oidc.provider else None,
-                        "client_id": oidc.provider.client_id if oidc.provider else None,
-                    }
-                except Exception as e:
-                    report["errors"].append(f"OIDC config: {e}")
-
-                # OAuth config
-                try:
-                    oauth = await dev.oauth.get_config()
-                    report["oauth"] = {
-                        "enabled": oauth.enabled,
-                    }
-                except Exception as e:
-                    report["errors"].append(f"OAuth config: {e}")
-
-                # Crypto policy
-                try:
-                    crypto = await dev.crypto_policy.get_config()
-                    report["crypto_policy"] = {
-                        "tls_min_version": crypto.tls_min_version.value
-                        if crypto.tls_min_version
-                        else None,
-                        "tls_max_version": crypto.tls_max_version.value
-                        if crypto.tls_max_version
-                        else None,
-                        "cipher_suites": [c.name for c in (crypto.cipher_suites or [])],
-                    }
-                except Exception as e:
-                    report["errors"].append(f"Crypto policy config: {e}")
-
-            # Format output
-            if format_opt == "yaml":
-                try:
-                    import yaml
-
-                    output_str = yaml.dump(report, default_flow_style=False, sort_keys=False)
-                except ImportError:
-                    output_str = json_mod.dumps(report, indent=2)
-                    console.print("[yellow]PyYAML not installed, using JSON[/yellow]")
-            elif format_opt == "text":
-                lines = [f"Device Report: {report['device']}", "=" * 50]
-                if "info" in report:
-                    lines.append(f"Model: {report['info'].get('model', '-')}")
-                    lines.append(f"Serial: {report['info'].get('serial_number', '-')}")
-                    lines.append(f"Firmware: {report['info'].get('firmware', '-')}")
-                if "network" in report:
-                    lines.append(f"IP: {report['network'].get('ip_address', '-')}")
-                    lines.append(f"MAC: {report['network'].get('mac_address', '-')}")
-                if "lldp" in report and report["lldp"]["neighbors"]:
-                    lines.append(
-                        f"Connected to: {report['lldp']['neighbors'][0].get('system', '-')}"
-                    )
-                output_str = "\n".join(lines)
-            else:
-                output_str = json_mod.dumps(report, indent=2)
-
-            # Output
-            if output:
-                output.write_text(output_str)
-                console.print(f"[green]Report saved to:[/green] {output}")
-            else:
-                console.print(output_str)
-
-    run_async(_generate_report())
+    if output:
+        output.write_text(output_str)
+        console.print(f"[green]Report saved to:[/green] {output}")
+    else:
+        # Plain echo: Rich would soft-wrap long lines and corrupt piped JSON.
+        typer.echo(output_str)
 
 
 @app.command("devices")
