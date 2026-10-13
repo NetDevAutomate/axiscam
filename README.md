@@ -575,6 +575,12 @@ This tool covers the following AXIS VAPIX APIs:
 
 ## Development
 
+[![CI](https://github.com/NetDevAutomate/axiscam/actions/workflows/ci.yml/badge.svg)](https://github.com/NetDevAutomate/axiscam/actions/workflows/ci.yml)
+
+CI mirrors the central `ci-standards` `python-uv` profile (ruff format/check,
+bandit, pytest with the coverage floor, pip-audit, repo hygiene) plus pyright and
+the docs-match-code tests; see `.ci-standards.yaml` and `CONTRIBUTING.md`.
+
 ### Setup
 
 ```bash
