@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–4 complete; Phase 5 not started (see [Phase status](#phase-status))
+- **Status:** Phases 0–5 complete (5 narrowed to parameters; live apply pending your go); Phase 6 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -293,6 +293,17 @@ Five configured devices (I8016-LVE intercom, 2× M3216-LVE, S3008 recorder — a
 2. **Digest-by-default failed on three of five devices.** The AXIS OS 12 cameras/intercom with `Network.HTTP.AuthenticationPolicy=recommended` offer *only* `Basic` on HTTPS (401 `WWW-Authenticate: Basic realm=…`) and reject Digest; the 11.x speaker offers only Digest. Axis's Authentication page recommends Basic over HTTPS and Digest over HTTP and says to follow the challenge. Fixed: `axis_cam.auth.VapixAuth` — `auto` (new default) starts with the recommended scheme for the transport and switches once when the device offers only the other; `basic`/`digest` force. `--digest/--no-digest` → `--auth auto|basic|digest`; `use_digest_auth` → `auth_mode`. Basic over plain HTTP is never chosen automatically (`allow_insecure_basic` remains the explicit opt-in). All five devices answer `axiscam info` with defaults.
 
 Both were invisible to 719 green tests. The device pass (item 4) is the gate it was claimed to be.
+
+### Phase 5 — complete, narrowed to parameters (2026-10-13)
+
+| Step | Scope | Status |
+|---|---|---|
+| 5.1 | `ParamAPI.set()` (`action=update`, `OK` / `# Error` bodies per the VAPIX page); `axis_cam/restore.py`: `diff_params` (pure), `plan_param_restore` (reads, never writes, refuses a backup from another serial number), `apply_param_restore` (one parameter at a time, read back, per-change result) | ✅ 19 tests, module at 100 % |
+| 5.2 | `axiscam backup restore DIR [--include-network] [-v] [--yes] [--dry-run]` on the write-safety pattern; per-parameter result table; exit 1 if any change failed | ✅ 6 CLI tests |
+| 5.3 | Live: `--dry-run -v` against the M3216 and its own backup → `Nothing to restore … 1533 skipped: unchanged` | ✅ read-only |
+| 5.4 | Live `--apply` on a real device | ⏸ **not run** — writing to your cameras needs your explicit go; the unit tests prove the sequence, not a device's reaction to `action=update` |
+
+Decisions: identity groups (`Brand`, `Properties`, `BasicDeviceInfo`, `ApiDiscovery`, `API`, `Browser`) are skipped up front — read-only by nature, and `listdefinitions` `securityLevel` codes (`7707`, `7766`, `7716`, … on the M3216) are not documented well enough to derive writability from, so the device's own `# Error` reply is the authority for everything else. Per-module REST `PATCH` writes are not attempted: each is a separate contract to verify, and the device pass showed how often the hard-coded assumptions were wrong.
 
 ## Decisions and open questions
 

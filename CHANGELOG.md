@@ -25,6 +25,12 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   that lists what a VAPIX backup cannot contain and what this version does not read.
 - `--auth auto|basic|digest`: `auto` follows the device's `WWW-Authenticate`
   challenge (Basic over HTTPS, Digest over HTTP).
+- `backup restore DIR`: restores the parameter tree from a backup through
+  `param.cgi?action=update`, one parameter at a time with read-back verification,
+  plan → `--dry-run` / confirm → apply; refuses a backup from another serial
+  number; `Network` excluded unless `--include-network`. `ParamAPI.set()`.
+- CI (`.github/workflows/ci.yml`) mirroring the central `ci-standards` `python-uv`
+  profile; `CHANGELOG.md`, `CONTRIBUTING.md`.
 - `axis_cam.files.write_private`: every diagnostic, export and the config file are
   written `0600`.
 - `tests/test_docs.py`: documented methods must exist on the real classes.

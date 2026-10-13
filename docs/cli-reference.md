@@ -759,6 +759,7 @@ flowchart LR
 axiscam backup create [-o PARENT_DIR] [--with-server-report] [OPTIONS]
 axiscam backup show BACKUP_DIR [--json]
 axiscam backup verify BACKUP_DIR
+axiscam backup restore BACKUP_DIR [--include-network] [-v] [--yes] [--dry-run] [OPTIONS]
 ```
 
 | Option | Description |
@@ -782,6 +783,30 @@ modules the device does not advertise, and two explicit lists:
 The directory is created `0700` and every file `0600`. `verify` re-hashes each
 file and exits 1 on a mismatch, a missing file or a file the manifest does not
 list.
+
+**Restore** is deliberately narrow: it restores `params.json` through
+`param.cgi?action=update`, the one write path VAPIX documents for the parameter
+tree. The per-module REST APIs are not written. The flow is the same write-safety
+pattern as `accounts`:
+
+```mermaid
+flowchart LR
+    READ[export current params] --> DIFF[diff against params.json]
+    DIFF -->|serial differs| REFUSE[refuse: other device]
+    DIFF --> PLAN[Planned change: N differ, skipped by reason]
+    PLAN -->|--dry-run| STOP[exit 0]
+    PLAN -->|confirm / --yes| APPLY[set one parameter] --> VERIFY[read it back] --> NEXT{more?}
+    NEXT -->|yes| APPLY
+    NEXT -->|no| TABLE[per-parameter results; exit 1 if any failed]
+```
+
+- Skipped with a reason: unchanged; identity groups (`Brand`, `Properties`, …,
+  read-only by nature); `Network` unless `--include-network` (a wrong address cuts
+  this connection); parameters the device no longer has.
+- The device's refusal of a parameter (`# Error: Error setting …`, typically
+  read-only) is recorded for that parameter and the run continues; a 401 or a
+  connection failure aborts.
+- `-v` lists every change as `name: 'current' -> 'target'`.
 
 **Examples:**
 ```bash

@@ -2,7 +2,8 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from typing import ClassVar
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -178,3 +179,130 @@ class TestShowAndVerify:
 def test_backup_group_is_listed():
     result = runner.invoke(app, ["--help"])
     assert "backup" in result.output
+
+
+class TestRestore:
+    """backup restore follows the write-safety pattern; writes go through params.set."""
+
+    CURRENT: ClassVar[dict[str, str]] = {
+        "root.Properties.System.SerialNumber": "B8A44F9F0228",
+        "root.Audio.MaxListeners": "10",
+        "root.Network.eth0.IPAddress": "192.168.10.12",
+    }
+
+    def _backup(self, tmp_path: Path, params: dict, serial="B8A44F9F0228") -> Path:
+        import hashlib
+
+        root = tmp_path / "backup-cam-20261013T120000Z"
+        root.mkdir()
+        content = json.dumps(params).encode()
+        (root / "params.json").write_bytes(content)
+        manifest = _manifest(
+            device={"host": "10.0.0.5", "name": "cam", "serial_number": serial},
+            files=[
+                BackupFile(
+                    "params", "params.json", hashlib.sha256(content).hexdigest(), len(content), "x"
+                )
+            ],
+        )
+        (root / MANIFEST_FILE).write_text(json.dumps(manifest.to_dict()))
+        return root
+
+    def _device(self):
+        state = dict(self.CURRENT)
+        params = MagicMock()
+        params.export = AsyncMock(return_value=dict(state))
+
+        async def fake_set(name, value):
+            state[name] = value
+
+        async def fake_get(name):
+            return state.get(name)
+
+        params.set = AsyncMock(side_effect=fake_set)
+        params.get = AsyncMock(side_effect=fake_get)
+        device = FakeDevice()
+        device.params = params  # type: ignore[attr-defined]
+        return device
+
+    def _run(self, device, args, input=None):
+        with patch.object(DeviceContext, "open", return_value=device):
+            return runner.invoke(app, ["backup", "restore", *args, *HOST_ARGS], input=input)
+
+    def test_dry_run_shows_the_plan_and_writes_nothing(self, no_config, tmp_path):
+        root = self._backup(tmp_path, dict(self.CURRENT, **{"root.Audio.MaxListeners": "20"}))
+        device = self._device()
+
+        result = self._run(device, [str(root), "--dry-run", "-v"])
+
+        assert result.exit_code == 0, result.output
+        text = _text(result)
+        assert "Restore 1 parameter(s)" in text and "root.Audio.MaxListeners: '10' -> '20'" in text
+        assert "Dry run" in text
+        device.params.set.assert_not_awaited()
+
+    def test_declining_writes_nothing_and_exits_1(self, no_config, tmp_path):
+        root = self._backup(tmp_path, dict(self.CURRENT, **{"root.Audio.MaxListeners": "20"}))
+        device = self._device()
+
+        result = self._run(device, [str(root)], input="n\n")
+
+        assert result.exit_code == 1 and device.params.set.await_count == 0
+
+    def test_yes_applies_and_reports_per_parameter(self, no_config, tmp_path):
+        root = self._backup(tmp_path, dict(self.CURRENT, **{"root.Audio.MaxListeners": "20"}))
+        device = self._device()
+
+        result = self._run(device, [str(root), "--yes"])
+
+        assert result.exit_code == 0, result.output
+        device.params.set.assert_awaited_once_with("root.Audio.MaxListeners", "20")
+        text = _text(result)
+        assert "Restored 1/1" in text and "verified" in text
+
+    def test_network_excluded_by_default_and_warned_when_included(self, no_config, tmp_path):
+        root = self._backup(
+            tmp_path, dict(self.CURRENT, **{"root.Network.eth0.IPAddress": "192.168.10.99"})
+        )
+
+        result = self._run(self._device(), [str(root), "--dry-run"])
+        assert result.exit_code == 0 and "Nothing to restore" in _text(result)
+        assert "network group" in _text(result)
+
+        result = self._run(self._device(), [str(root), "--dry-run", "--include-network"])
+        assert "Restore 1 parameter(s)" in _text(result)
+        assert "cuts this connection" in _text(result)
+
+    def test_backup_from_another_device_is_refused(self, no_config, tmp_path):
+        root = self._backup(tmp_path, self.CURRENT, serial="ACCC8E000001")
+
+        result = self._run(self._device(), [str(root), "--yes"])
+
+        assert result.exit_code == 1 and "refusing to restore across devices" in _text(result)
+        assert "Planned change" not in result.output
+
+    def test_device_refusal_exits_1_but_other_changes_land(self, no_config, tmp_path):
+        from axis_cam.exceptions import AxisDeviceError
+
+        root = self._backup(
+            tmp_path,
+            dict(self.CURRENT, **{"root.Audio.MaxListeners": "20", "root.Image.Compression": "40"}),
+        )
+        device = self._device()
+        device.params.export = AsyncMock(
+            return_value=dict(self.CURRENT, **{"root.Image.Compression": "30"})
+        )
+        original_set = device.params.set.side_effect
+
+        async def refusing_set(name, value):
+            if name == "root.Image.Compression":
+                raise AxisDeviceError("param.cgi: Error setting 'Image.Compression' to '40'!")
+            await original_set(name, value)
+
+        device.params.set = AsyncMock(side_effect=refusing_set)
+
+        result = self._run(device, [str(root), "--yes"])
+
+        assert result.exit_code == 1
+        text = _text(result)
+        assert "Restored 1/2" in text and "Error setting" in text

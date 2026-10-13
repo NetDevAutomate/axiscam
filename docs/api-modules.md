@@ -181,8 +181,8 @@ print(f"Firmware: {info.firmware_version}")
 
 Read device parameters via `param.cgi`. The CGI answers `text/plain` with one
 `<parameter>=<value>` line per parameter (errors are HTTP 200 `# Error: ...`);
-the module parses exactly that and always sends `responseformat=rfc`. Writes are
-Phase 5.
+the module parses exactly that and always sends `responseformat=rfc`. The one
+write, `set()`, is driven by `axis_cam.restore` through plan → confirm → apply → verify.
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
@@ -198,6 +198,7 @@ Phase 5.
 | `get_many(names)` | `dict[str, str \| None]` | Several values in one request |
 | `search(pattern)` | `list[DeviceParameter]` | Case-insensitive name match |
 | `export()` | `dict[str, str]` | The whole tree as `{"root.Group.Name": "value"}` — the backup payload |
+| `set(name, value)` | `None` | `action=update` for one parameter; `# Error` body → `AxisDeviceError` (the only write) |
 | `get_friendly_name()` | `str` | Convenience reader |
 | `get_location()` | `str` | Convenience reader |
 | `get_ip_address()` | `str` | Convenience reader |

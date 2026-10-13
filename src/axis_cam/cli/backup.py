@@ -1,4 +1,4 @@
-"""``axiscam backup``: create, inspect and verify configuration backups.
+"""``axiscam backup``: create, inspect, verify and restore configuration backups.
 
 A backup is a directory with a manifest (see :mod:`axis_cam.backup`). ``create``
 reads the device and never writes to it; ``show`` and ``verify`` work on the
@@ -14,16 +14,20 @@ from rich.table import Table
 from axis_cam.auth import AuthMode
 from axis_cam.backup import BackupManifest, create_backup, load_manifest, verify_backup
 from axis_cam.cli.app import backup_app, console, emit_json, run_async
+from axis_cam.cli.confirm import WritePlan, confirm_write
 from axis_cam.cli.context import resolve_device_config
 from axis_cam.cli.options import (
     AuthOption,
     DeviceOption,
+    DryRunOption,
     HostOption,
     JsonOption,
     PasswordOption,
     PortOption,
     UsernameOption,
+    YesOption,
 )
+from axis_cam.restore import RestorePlan, apply_param_restore, plan_param_restore
 
 BackupDirArgument = Annotated[
     Path,
@@ -158,3 +162,91 @@ def backup_verify(backup_dir: BackupDirArgument):
         raise typer.Exit(1)
     manifest = load_manifest(backup_dir)
     console.print(f"[green]Backup intact:[/green] {len(manifest.files)} files match the manifest")
+
+
+def _plan_lines(plan: RestorePlan, *, verbose: bool) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Context and warning lines for the Planned-change panel."""
+    context = [f"{len(plan.changes)} parameter(s) differ and will be written"]
+    for reason, count in plan.skip_counts().items():
+        context.append(f"{count} skipped: {reason}")
+    if verbose:
+        context.extend(f"  {c.name}: {c.current!r} -> {c.target!r}" for c in plan.changes)
+    warnings: list[str] = []
+    if any(c.group == "Network" for c in plan.changes):
+        warnings.append(
+            "network parameters are included; a wrong address or VLAN cuts this connection"
+        )
+    return tuple(context), tuple(warnings)
+
+
+@backup_app.command("restore")
+def backup_restore(
+    backup_dir: BackupDirArgument,
+    device: DeviceOption = None,
+    host: HostOption = None,
+    username: UsernameOption = None,
+    password: PasswordOption = None,
+    port: PortOption = None,
+    auth: AuthOption = AuthMode.AUTO,
+    include_network: Annotated[
+        bool,
+        typer.Option(
+            "--include-network",
+            help="Also restore the Network parameter group (can cut this connection).",
+        ),
+    ] = False,
+    verbose: Annotated[
+        bool, typer.Option("--verbose", "-v", help="List every parameter change in the plan.")
+    ] = False,
+    yes: YesOption = False,
+    dry_run: DryRunOption = False,
+):
+    """Restore the parameter tree from a backup, one parameter at a time.
+
+    Only params.json is restored (param.cgi action=update, the documented
+    write path). The plan shows what differs; --dry-run stops there. Each
+    change is written individually and read back; the device's refusals
+    (read-only parameters) are reported per parameter, not as a failure of
+    the whole run. A backup from a different serial number is refused.
+    """
+    target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
+
+    async def _restore() -> None:
+        async with target.open() as dev:
+            try:
+                plan = await plan_param_restore(dev, backup_dir, include_network=include_network)
+            except (FileNotFoundError, ValueError) as exc:
+                console.print(f"[red]Error:[/red] {exc}", style="bold")
+                raise typer.Exit(1) from None
+            context, warnings = _plan_lines(plan, verbose=verbose)
+            if plan.is_empty:
+                console.print(
+                    "[green]Nothing to restore:[/green] the device already matches the backup."
+                )
+                for line in context[1:]:
+                    console.print(f"  [dim]{line}[/dim]")
+                return
+            write_plan = WritePlan(
+                target=target.host,
+                action=f"Restore {len(plan.changes)} parameter(s) from {backup_dir.name}",
+                context=context,
+                warnings=warnings,
+            )
+            if not confirm_write(write_plan, yes=yes, dry_run=dry_run):
+                return
+            results = await apply_param_restore(dev, plan)
+            failed = [r for r in results if not r.ok]
+            table = Table(
+                title=f"Restored {len(results) - len(failed)}/{len(results)} parameter(s)"
+            )
+            table.add_column("Parameter", style="cyan")
+            table.add_column("Value", style="white")
+            table.add_column("Result", style="white")
+            for result in results:
+                status = "[green]verified[/green]" if result.ok else f"[red]{result.detail}[/red]"
+                table.add_row(result.change.name, result.change.target, status)
+            console.print(table)
+            if failed:
+                raise typer.Exit(1)
+
+    run_async(_restore())

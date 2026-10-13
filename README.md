@@ -376,7 +376,7 @@ the device advertises, the full parameter tree, and optionally the server
 report. It is read-only on the device. The manifest records a SHA-256 per file
 and lists what a VAPIX backup **cannot** contain (passwords, private keys, ACAP
 binaries and licences, recordings) separately from what this version does not
-read yet — so nobody mistakes it for a full image. Restore is not implemented yet.
+read yet — so nobody mistakes it for a full image. Restore covers the parameter tree.
 
 ```bash
 # Create backup-<device>-<timestamp>/ in the current directory (0700, files 0600)
@@ -388,7 +388,16 @@ axiscam backup create --device camera1 -o ~/backups --with-server-report
 # Inspect and verify
 axiscam backup show ~/backups/backup-camera1-20261013T110000Z
 axiscam backup verify ~/backups/backup-camera1-20261013T110000Z
+
+# Restore the parameter tree: plan first, then apply one parameter at a time
+axiscam backup restore ~/backups/backup-camera1-20261013T110000Z --device camera1 --dry-run -v
+axiscam backup restore ~/backups/backup-camera1-20261013T110000Z --device camera1
 ```
+
+Restore covers `params.json` only (`param.cgi?action=update`, the one documented
+write path), refuses a backup taken from a different serial number, excludes the
+`Network` group unless `--include-network`, and reports the device's refusals
+(read-only parameters) per parameter.
 
 ### Configuration Commands
 

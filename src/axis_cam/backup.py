@@ -89,7 +89,8 @@ class BackupManifest:
         errors: Modules the device advertises but that failed to read.
         skipped: Modules the device does not advertise.
         not_included: What is absent, split by reason.
-        restore: Human-readable status of the restore path.
+        restore: Human-readable status of the restore path (which files a
+            restore consumes and which it does not).
     """
 
     format_version: int
@@ -105,7 +106,10 @@ class BackupManifest:
             "not_implemented": list(NOT_IMPLEMENTED),
         }
     )
-    restore: str = "not implemented in this version"
+    restore: str = (
+        "params.json: `axiscam backup restore DIR` (param.cgi action=update, one parameter "
+        "at a time, verified); other sections: not implemented"
+    )
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-ready dictionary."""

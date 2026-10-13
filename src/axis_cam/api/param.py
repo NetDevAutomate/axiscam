@@ -7,8 +7,10 @@ request answers HTTP 200 with ``# Error: <description>``. This module parses
 exactly that format (VAPIX Parameter management, fetched 2026-10-13) and always
 sends ``responseformat=rfc`` as the documentation asks.
 
-Parameters are read-only here. Writing (``action=update``) is Phase 5's restore
-path and will go through the confirm/dry-run pattern.
+Parameters are read with ``action=list`` and written one at a time with
+``action=update`` (:meth:`ParamAPI.set`), which is the only write the module
+offers; the restore path in :mod:`axis_cam.restore` drives it through the
+plan → confirm → apply → verify pattern.
 """
 
 from typing import Any
@@ -175,6 +177,30 @@ class ParamAPI(BaseAPI):
         what ``param.cgi?action=update`` consumes on restore.
         """
         return await self._list()
+
+    async def set(self, param_name: str, value: str) -> None:
+        """Update one existing parameter (``action=update``).
+
+        The device answers HTTP 200 with ``OK`` on success and HTTP 200 with
+        ``# Error: Error setting '<group.name>' to '<value>'!`` when it refuses
+        (read-only parameter, invalid value, insufficient rights). Only the
+        device knows which parameters are writable; callers should treat the
+        error as a per-parameter fact, not a transport failure.
+
+        Args:
+            param_name: Full or short name.
+            value: New value, as a string.
+
+        Raises:
+            AxisDeviceError: The device refused the update (``# Error`` body).
+            AxisAuthenticationError / AxisConnectionError: Propagate.
+        """
+        params: dict[str, Any] = {"action": "update", short_name(param_name): value}
+        body = (await self._get_text(self.CGI_PATH, params)).strip()
+        if body.startswith("# Error"):
+            raise AxisDeviceError(f"param.cgi: {body.lstrip('# ')}")
+        if body != "OK":
+            raise AxisDeviceError(f"param.cgi: unexpected reply to update: {body[:120]!r}")
 
     # Convenience methods for common parameters
 

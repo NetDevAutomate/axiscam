@@ -90,6 +90,7 @@ axis_cam/
 ├── report.py            # Registry-driven device report
 ├── files.py             # write_private(): diagnostics reach disk as 0600
 ├── backup.py            # create_backup/verify_backup: snapshot directory + manifest
+├── restore.py           # plan_param_restore/apply_param_restore: params-only restore
 ├── client.py            # VapixClient HTTP client
 ├── config.py            # Configuration management
 ├── models.py            # Pydantic models (~2000 lines)
