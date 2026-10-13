@@ -29,6 +29,14 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   `param.cgi?action=update`, one parameter at a time with read-back verification,
   plan → `--dry-run` / confirm → apply; refuses a backup from another serial
   number; `Network` excluded unless `--include-network`. `ParamAPI.set()`.
+  The plan skips what the device declares read-only (`ParamAPI.definitions()`
+  decodes `listdefinitions` `securityLevel`) and refuses a `params.json` that
+  does not match the manifest's hash. Live-tested on an M3216-LVE: one label
+  changed and restored, both writes verified by read-back and visible in the
+  device's audit log.
+- `ParamAPI.get()` returned `None` for every parameter: a single-parameter
+  `action=list` is echoed without the `root.` prefix, which the parser now
+  normalises. Found by the first live restore's read-back.
 - CI (`.github/workflows/ci.yml`) mirroring the central `ci-standards` `python-uv`
   profile; `CHANGELOG.md`, `CONTRIBUTING.md`.
 - `axis_cam.files.write_private`: every diagnostic, export and the config file are

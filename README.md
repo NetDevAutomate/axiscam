@@ -395,9 +395,10 @@ axiscam backup restore ~/backups/backup-camera1-20261013T110000Z --device camera
 ```
 
 Restore covers `params.json` only (`param.cgi?action=update`, the one documented
-write path), refuses a backup taken from a different serial number, excludes the
-`Network` group unless `--include-network`, and reports the device's refusals
-(read-only parameters) per parameter.
+write path). It refuses a backup whose `params.json` no longer matches the
+manifest or that was taken from a different serial number, skips what the
+device itself declares read-only (`listdefinitions`), excludes the `Network`
+group unless `--include-network`, and verifies every write by reading it back.
 
 ### Configuration Commands
 

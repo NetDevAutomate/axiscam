@@ -181,8 +181,18 @@ print(f"Firmware: {info.firmware_version}")
 
 Read device parameters via `param.cgi`. The CGI answers `text/plain` with one
 `<parameter>=<value>` line per parameter (errors are HTTP 200 `# Error: ...`);
-the module parses exactly that and always sends `responseformat=rfc`. The one
-write, `set()`, is driven by `axis_cam.restore` through plan → confirm → apply → verify.
+the module parses exactly that and always sends `responseformat=rfc`. Keys are
+normalised to `root.`-prefixed names: a single-parameter group is echoed the way
+it was requested (`group=Image.I0.Name` answers `Image.I0.Name=…`), a group
+always with `root.` (AXIS OS 12.11, live). The one write, `set()`, is driven by
+`axis_cam.restore` through plan → confirm → apply → verify.
+
+`securityLevel` is four digits — the privilege needed to add, remove, read and
+write: `0` anonymous, `1` viewer, `4` operator, `6` admin, `7` nobody. Evidence:
+`Brand.Brand` is `7707`; the Param API page's own example `HTTPS.Enabled` is
+`7706` ("readable by viewer/operator/admin", writable); on the M3216 the 1200
+parameters the beta Param API `$export` marks writable are exactly those whose
+write digit is not `7`.
 
 | Endpoint | Type | Description |
 |----------|------|-------------|
@@ -198,6 +208,7 @@ write, `set()`, is driven by `axis_cam.restore` through plan → confirm → app
 | `get_many(names)` | `dict[str, str \| None]` | Several values in one request |
 | `search(pattern)` | `list[DeviceParameter]` | Case-insensitive name match |
 | `export()` | `dict[str, str]` | The whole tree as `{"root.Group.Name": "value"}` — the backup payload |
+| `definitions()` | `dict[str, ParamDefinition]` | `action=listdefinitions`: per-parameter `securityLevel`; `.writable` / `.write_access` decode the write digit |
 | `set(name, value)` | `None` | `action=update` for one parameter; `# Error` body → `AxisDeviceError` (the only write) |
 | `get_friendly_name()` | `str` | Convenience reader |
 | `get_location()` | `str` | Convenience reader |

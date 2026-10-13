@@ -8,14 +8,15 @@ and are not attempted here.
 
 The shape is the write-safety pattern from Phase 2:
 
-1. :func:`plan_param_restore` reads the device's current parameters and returns
-   the :class:`ParamChange` list — only parameters whose value differs. It never
-   writes. Parameters that cannot or should not be restored are listed with a
-   reason so the plan is honest about what it will not do.
+1. :func:`plan_param_restore` reads the device's current parameters and their
+   definitions (``listdefinitions``, which says who may write each one) and
+   returns the :class:`ParamChange` list — only parameters whose value differs
+   and which the device says are writable. It never writes. Everything it will
+   not touch is listed with a reason so the plan is honest.
 2. :func:`apply_param_restore` writes each change individually, re-reads the
-   parameter, and records the outcome per change. A device refusal (``# Error``,
-   typically a read-only parameter) is recorded and the run continues; an
-   authentication or connection failure aborts.
+   parameter, and records the outcome per change. A device refusal (``# Error``)
+   is recorded and the run continues; an authentication or connection failure
+   aborts.
 
 Network parameters are excluded unless asked for: restoring an IP address or
 VLAN to a device you are talking to over that network can end the conversation.
@@ -23,25 +24,19 @@ VLAN to a device you are talking to over that network can end the conversation.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from axis_cam.api.param import short_name
+from axis_cam.api.param import ParamDefinition, short_name
 from axis_cam.backup import PARAMS_FILE, load_manifest
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 
 if TYPE_CHECKING:
     from axis_cam.devices.base import AxisDevice
-
-#: Top-level groups that describe the device rather than configure it. Their
-#: parameters are read-only by nature; the device refuses writes with
-#: "# Error: Error setting ...". Skipping them keeps the plan honest and short.
-IDENTITY_GROUPS: frozenset[str] = frozenset(
-    {"Brand", "Properties", "BasicDeviceInfo", "ApiDiscovery", "API", "Browser"}
-)
 
 #: Groups whose restore can cut the connection the restore itself is using.
 NETWORK_GROUPS: frozenset[str] = frozenset({"Network"})
@@ -54,7 +49,7 @@ class SkipReason(str, Enum):
     """Why a backed-up parameter is not in the change list."""
 
     UNCHANGED = "unchanged"
-    IDENTITY = "identity group (read-only by nature)"
+    READ_ONLY = "read-only on this device (listdefinitions securityLevel)"
     NETWORK = "network group (excluded; pass include_network=True)"
     MISSING_ON_DEVICE = "not present on this device"
 
@@ -113,16 +108,27 @@ class ChangeResult:
 def load_backup_params(backup_dir: str | Path) -> tuple[dict[str, str], dict[str, str]]:
     """Read ``params.json`` and the device identity from a backup directory.
 
+    The file is checked against the manifest's hash first: a restore must not
+    write values from a file the backup does not vouch for.
+
     Raises:
         FileNotFoundError: No manifest or no ``params.json`` in the backup.
-        ValueError: The manifest is unreadable, or ``params.json`` is not the
-            flat ``{"root.X.Y": "value"}`` shape the backup writes.
+        ValueError: The manifest is unreadable, ``params.json`` does not match
+            its recorded hash, or it is not the flat ``{"root.X.Y": "value"}``
+            shape the backup writes.
     """
     root = Path(backup_dir)
     manifest = load_manifest(root)
-    if manifest.get("params") is None:
+    entry = manifest.get("params")
+    if entry is None:
         raise FileNotFoundError(f"{root}: the backup contains no {PARAMS_FILE}")
-    data = json.loads((root / PARAMS_FILE).read_text())
+    raw = (root / entry.file).read_bytes()
+    if hashlib.sha256(raw).hexdigest() != entry.sha256:
+        raise ValueError(
+            f"{entry.file} does not match the hash in the manifest; "
+            "the backup is damaged or was edited (run `backup verify`)"
+        )
+    data = json.loads(raw)
     if not isinstance(data, dict) or not all(
         isinstance(k, str) and isinstance(v, str) for k, v in data.items()
     ):
@@ -133,22 +139,28 @@ def load_backup_params(backup_dir: str | Path) -> tuple[dict[str, str], dict[str
 def diff_params(
     current: dict[str, str],
     target: dict[str, str],
+    definitions: dict[str, ParamDefinition] | None = None,
     *,
     include_network: bool = False,
 ) -> RestorePlan:
     """Compute the changes that would bring ``current`` to ``target``.
 
     Pure function: no device access. Keys are full names (``root.X.Y``).
+    With ``definitions`` (from :meth:`ParamAPI.definitions`), parameters the
+    device declares read-only are skipped up front instead of being tried
+    and refused; without them every differing parameter is a change and the
+    device's ``# Error`` reply decides at apply time.
     """
     plan = RestorePlan(skipped={reason: [] for reason in SkipReason})
     for name, wanted in target.items():
         group = short_name(name).split(".", 1)[0]
+        definition = definitions.get(name) if definitions else None
         if name not in current:
             plan.skipped[SkipReason.MISSING_ON_DEVICE].append(name)
         elif current[name] == wanted:
             plan.skipped[SkipReason.UNCHANGED].append(name)
-        elif group in IDENTITY_GROUPS:
-            plan.skipped[SkipReason.IDENTITY].append(name)
+        elif definition is not None and not definition.writable:
+            plan.skipped[SkipReason.READ_ONLY].append(name)
         elif group in NETWORK_GROUPS and not include_network:
             plan.skipped[SkipReason.NETWORK].append(name)
         else:
@@ -162,7 +174,7 @@ async def plan_param_restore(
     *,
     include_network: bool = False,
 ) -> RestorePlan:
-    """Read the device's parameters and diff them against a backup. Never writes.
+    """Read the device's parameters and definitions, diff against a backup. Never writes.
 
     Raises:
         ValueError: The backup was taken from a different device (serial number
@@ -181,7 +193,8 @@ async def plan_param_restore(
                 f"backup is from serial {backed_up_serial}, this device is {live_serial}; "
                 "refusing to restore across devices"
             )
-    plan = diff_params(current, target, include_network=include_network)
+    definitions = await device.params.definitions()
+    plan = diff_params(current, target, definitions, include_network=include_network)
     plan.backup_dir = Path(backup_dir)
     plan.device_identity = identity
     return plan
@@ -190,10 +203,10 @@ async def plan_param_restore(
 async def apply_param_restore(device: AxisDevice, plan: RestorePlan) -> list[ChangeResult]:
     """Write every change in ``plan``, one parameter at a time, verifying each.
 
-    A refusal by the device (``# Error`` body — usually a read-only parameter
-    the identity list did not cover) is recorded for that change and the run
-    continues with the next. A mismatch on re-read is recorded as a failure
-    too: the device said OK but did not keep the value.
+    A refusal by the device (``# Error`` body — a value it will not accept, or
+    a parameter its definitions did not flag) is recorded for that change and
+    the run continues with the next. A mismatch on re-read is recorded as a
+    failure too: the device said OK but did not keep the value.
 
     Raises:
         AxisAuthenticationError / AxisConnectionError: Propagate immediately.

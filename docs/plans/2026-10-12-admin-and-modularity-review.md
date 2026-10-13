@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–5 complete (5 narrowed to parameters; live apply pending your go); Phase 6 not started (see [Phase status](#phase-status))
+- **Status:** Phases 0–5 complete (5 narrowed to parameters, live-tested A/B/A on the M3216); Phase 6 not started (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -301,9 +301,12 @@ Both were invisible to 719 green tests. The device pass (item 4) is the gate it 
 | 5.1 | `ParamAPI.set()` (`action=update`, `OK` / `# Error` bodies per the VAPIX page); `axis_cam/restore.py`: `diff_params` (pure), `plan_param_restore` (reads, never writes, refuses a backup from another serial number), `apply_param_restore` (one parameter at a time, read back, per-change result) | ✅ 19 tests, module at 100 % |
 | 5.2 | `axiscam backup restore DIR [--include-network] [-v] [--yes] [--dry-run]` on the write-safety pattern; per-parameter result table; exit 1 if any change failed | ✅ 6 CLI tests |
 | 5.3 | Live: `--dry-run -v` against the M3216 and its own backup → `Nothing to restore … 1533 skipped: unchanged` | ✅ read-only |
-| 5.4 | Live `--apply` on a real device | ⏸ **not run** — writing to your cameras needs your explicit go; the unit tests prove the sequence, not a device's reaction to `action=update` |
+| 5.4 | Live `--apply` on `back_of_house` (M3216-LVE, 12.11.118), A/B/A: fresh backup → copy with `Image.I0.Name` `'View Area 1'→'View Area 1 test'` → `--yes` → revert by restoring the untouched fresh backup → device matches backup again (`1533 unchanged`) | ✅ 2 writes, both `OK` and read back; audit log: `root@127.0.0.1 updated Image.I0.Name (View Area 1 test)` 14:38:36, `(View Area 1)` 14:41:06 |
+| 5.5 | Found by 5.4's read-back: `ParamAPI.get()` returned `None` for everything — a single-parameter `action=list` is echoed *without* `root.` (`Image.I0.Name=…`), a group with it; the parser now normalises keys. The unit tests had encoded the wrong assumption | ✅ fixed + tests from the live echo |
+| 5.6 | `ParamAPI.definitions()` decodes `listdefinitions` `securityLevel` (digits = privilege to add/remove/read/write; `7` = nobody); the plan skips read-only parameters up front with that reason instead of a hard-coded group list. Evidence: `Brand.Brand` `7707`; the Param API docs' example `HTTPS.Enabled` `7706`; the beta `$export` set (1200) equals the write-digit≠7 set the beta API exposes | ✅ live dry-run shows `1 skipped: read-only on this device` |
+| 5.7 | `params.json` is hash-checked against the manifest before restore (a hand-edited or damaged file is refused, exit 1) | ✅ live |
 
-Decisions: identity groups (`Brand`, `Properties`, `BasicDeviceInfo`, `ApiDiscovery`, `API`, `Browser`) are skipped up front — read-only by nature, and `listdefinitions` `securityLevel` codes (`7707`, `7766`, `7716`, … on the M3216) are not documented well enough to derive writability from, so the device's own `# Error` reply is the authority for everything else. Per-module REST `PATCH` writes are not attempted: each is a separate contract to verify, and the device pass showed how often the hard-coded assumptions were wrong.
+Decisions: per-module REST `PATCH` writes are not attempted — each is a separate contract to verify, and the device pass showed how often the hard-coded assumptions were wrong. Writability comes from the device (`listdefinitions`), not from a list in the code; when definitions are unavailable every difference is attempted and the device's `# Error` decides.
 
 ## Decisions and open questions
 

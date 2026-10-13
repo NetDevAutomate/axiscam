@@ -13,7 +13,10 @@ offers; the restore path in :mod:`axis_cam.restore` drives it through the
 plan → confirm → apply → verify pattern.
 """
 
+from dataclasses import dataclass
 from typing import Any
+
+from defusedxml import ElementTree as DefusedElementTree
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
@@ -26,7 +29,10 @@ ROOT_PREFIX = "root."
 def parse_param_list(text: str) -> dict[str, str]:
     """Parse ``action=list`` output into ``{full name: value}``.
 
-    Keys are kept exactly as the device writes them (``root.Group.Name``).
+    Keys are normalised to full names (``root.Group.Name``). The device echoes
+    a *single-parameter* group the way the request spelled it — ``group=
+    Image.I0.Name`` answers ``Image.I0.Name=...`` with no ``root.`` — while a
+    real group always lists ``root.``-prefixed lines (AXIS OS 12.11, live).
     Values keep every character after the first ``=``, so a value containing
     ``=`` (a URL, a key) survives. Comment lines (``#``) and blanks are ignored.
 
@@ -43,7 +49,7 @@ def parse_param_list(text: str) -> dict[str, str]:
             continue
         name, separator, value = line.partition("=")
         if separator:
-            values[name.strip()] = value
+            values[full_name(name.strip())] = value
     return values
 
 
@@ -71,6 +77,87 @@ def group_parameters(values: dict[str, str]) -> list[ParameterGroup]:
     return [
         ParameterGroup(name=group, parameters=params) for group, params in sorted(grouped.items())
     ]
+
+
+#: Privilege needed for an operation, as encoded in ``securityLevel`` digits.
+#: 0 anonymous, 1 viewer, 4 operator, 6 admin, 7 root — i.e. nobody over VAPIX.
+ACCESS_LEVELS: dict[str, str] = {
+    "0": "anonymous",
+    "1": "viewer",
+    "4": "operator",
+    "6": "admin",
+    "7": "none",
+}
+
+
+@dataclass(frozen=True)
+class ParamDefinition:
+    """What ``listdefinitions`` says about one parameter.
+
+    ``security_level`` is the raw four-digit code; the digits are the privilege
+    needed to *add*, *remove*, *read* and *write* (``7`` = nobody). Evidence,
+    AXIS OS 12.11 (M3216-LVE): ``Brand.Brand`` is ``7707`` (anyone reads, nobody
+    writes); ``HTTPS.Enabled`` is ``7706``, which the Param API page documents
+    as readable by viewer/operator/admin and writable; the 1200 parameters the
+    beta Param API ``$export`` marks as writable are exactly the 1200 whose
+    fourth digit is not ``7`` and the beta API drops.
+    """
+
+    name: str  # full name, root.Group.Name
+    value: str
+    security_level: str
+
+    @property
+    def writable(self) -> bool:
+        """True unless the write digit says nobody may write."""
+        return len(self.security_level) == 4 and self.security_level[3] != "7"
+
+    @property
+    def write_access(self) -> str:
+        """Who may write: ``anonymous``/``viewer``/``operator``/``admin``/``none``."""
+        if len(self.security_level) != 4:
+            return "unknown"
+        return ACCESS_LEVELS.get(self.security_level[3], "unknown")
+
+
+def parse_param_definitions(xml: str) -> dict[str, ParamDefinition]:
+    """Parse ``listdefinitions&listformat=xmlschema`` into ``{full name: definition}``.
+
+    The document is ``<parameterDefinitions><group name="root"><group ...>
+    <parameter name= value= securityLevel=/>``; names are rebuilt from the
+    nesting. Parsed with defusedxml: the body comes from the network.
+
+    Raises:
+        AxisDeviceError: The body is not that document (``# Error`` or HTML).
+    """
+    stripped = xml.strip()
+    if stripped.startswith("# Error"):
+        raise AxisDeviceError(f"param.cgi: {stripped.lstrip('# ')}")
+    try:
+        root = DefusedElementTree.fromstring(stripped)
+    except (DefusedElementTree.ParseError, ValueError) as exc:
+        raise AxisDeviceError(f"param.cgi: listdefinitions did not return XML: {exc}") from exc
+
+    definitions: dict[str, ParamDefinition] = {}
+
+    def walk(element: Any, path: tuple[str, ...]) -> None:
+        for child in element:
+            tag = child.tag.rsplit("}", 1)[-1]
+            name = child.get("name")
+            if name is None:
+                continue
+            if tag == "group":
+                walk(child, (*path, name))
+            elif tag == "parameter":
+                full = full_name(".".join((*path, name)))
+                definitions[full] = ParamDefinition(
+                    name=full,
+                    value=child.get("value", ""),
+                    security_level=child.get("securityLevel", ""),
+                )
+
+    walk(root, ())
+    return definitions
 
 
 @register
@@ -177,6 +264,20 @@ class ParamAPI(BaseAPI):
         what ``param.cgi?action=update`` consumes on restore.
         """
         return await self._list()
+
+    async def definitions(self) -> dict[str, ParamDefinition]:
+        """``action=listdefinitions``: every parameter with its access levels.
+
+        This is how a caller learns, before writing, which parameters the
+        device will refuse (``ParamDefinition.writable``). Large (~400 KB on
+        a camera) — call it once, not per parameter.
+
+        Raises:
+            AxisDeviceError: Not the XML document (``# Error`` or HTML).
+            AxisAuthenticationError / AxisConnectionError: Propagate.
+        """
+        params: dict[str, Any] = {"action": "listdefinitions", "listformat": "xmlschema"}
+        return parse_param_definitions(await self._get_text(self.CGI_PATH, params))
 
     async def set(self, param_name: str, value: str) -> None:
         """Update one existing parameter (``action=update``).

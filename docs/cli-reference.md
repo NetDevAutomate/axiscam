@@ -791,7 +791,8 @@ pattern as `accounts`:
 
 ```mermaid
 flowchart LR
-    READ[export current params] --> DIFF[diff against params.json]
+    HASH[verify params.json hash] --> READ[export current params + definitions]
+    READ --> DIFF[diff against params.json]
     DIFF -->|serial differs| REFUSE[refuse: other device]
     DIFF --> PLAN[Planned change: N differ, skipped by reason]
     PLAN -->|--dry-run| STOP[exit 0]
@@ -800,12 +801,15 @@ flowchart LR
     NEXT -->|no| TABLE[per-parameter results; exit 1 if any failed]
 ```
 
-- Skipped with a reason: unchanged; identity groups (`Brand`, `Properties`, …,
-  read-only by nature); `Network` unless `--include-network` (a wrong address cuts
-  this connection); parameters the device no longer has.
-- The device's refusal of a parameter (`# Error: Error setting …`, typically
-  read-only) is recorded for that parameter and the run continues; a 401 or a
-  connection failure aborts.
+- Skipped with a reason: unchanged; read-only on this device (the plan asks
+  `param.cgi?action=listdefinitions` which parameters the device lets anyone
+  write — `Brand.*`, most of `Properties.*`, `*.NbrOfConfigs`, …); `Network`
+  unless `--include-network` (a wrong address cuts this connection); parameters
+  the device no longer has.
+- `params.json` is checked against the manifest's hash before anything is read
+  from it; a damaged or hand-edited file is refused with exit 1.
+- The device's refusal of a parameter (`# Error: Error setting …`) is recorded
+  for that parameter and the run continues; a 401 or a connection failure aborts.
 - `-v` lists every change as `name: 'current' -> 'target'`.
 
 **Examples:**

@@ -76,6 +76,15 @@ class TestParseParamList:
         with pytest.raises(AxisDeviceError, match=r"param\.cgi: Error: No such group"):
             parse_param_list("# Error: No such group\n")
 
+    def test_keys_are_normalised_to_full_names(self):
+        # group=Image.I0.Name answers without the root. prefix; a group answers with it.
+        assert parse_param_list("Image.I0.Name=View Area 1\n") == {
+            "root.Image.I0.Name": "View Area 1"
+        }
+        assert parse_param_list("root.Image.I0.Name=View Area 1\n") == {
+            "root.Image.I0.Name": "View Area 1"
+        }
+
     def test_crlf_lines(self):
         assert parse_param_list("root.A.B=1\r\nroot.A.C=2\r\n") == {
             "root.A.B": "1",
@@ -138,7 +147,9 @@ class TestList:
         assert await api.get_group("Nope") == ParameterGroup(name="Nope")
 
     async def test_get_single_parameter(self):
-        api, client = _api("root.Properties.FriendlyName=Front Door\n")
+        # A single-parameter group is echoed as requested: no root. prefix
+        # (observed live on AXIS OS 12.11; the prefix is only there for groups).
+        api, client = _api("Properties.FriendlyName=Front Door\n")
 
         value = await api.get("Properties.FriendlyName")
 

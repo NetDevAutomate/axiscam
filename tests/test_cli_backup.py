@@ -221,6 +221,7 @@ class TestRestore:
 
         params.set = AsyncMock(side_effect=fake_set)
         params.get = AsyncMock(side_effect=fake_get)
+        params.definitions = AsyncMock(return_value={})  # no definitions: attempt everything
         device = FakeDevice()
         device.params = params  # type: ignore[attr-defined]
         return device
