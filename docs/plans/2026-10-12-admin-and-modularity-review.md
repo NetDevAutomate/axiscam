@@ -1,7 +1,7 @@
 # axiscam — admin features and modularity: review and phased plan
 
 - **Date:** 2026-10-12
-- **Status:** Phases 0–3 complete; Phase 4 not started (see [Phase status](#phase-status))
+- **Status:** Phases 0–3 complete; Phase 4 in progress (see [Phase status](#phase-status))
 - **Baseline measured:** 452 tests pass · 53% coverage (`uv run pytest --cov=src/axis_cam`) · ruff clean · pyright clean
 - **Repo state at review:** local `main` was 5 ahead / 5 behind `origin/main` (diverged). Phase 0 work is on branch `phase-0-security-fixes`, cut from local `main`. Reconciling `main` with `origin/main` is a separate owner decision — nothing here pushes.
 
@@ -227,6 +227,21 @@ Original step table:
 | 3.1 | `LogsAPI` reads system/access/audit from their dedicated CGIs (`auditlog.cgi?tail=N` for the requested count) and falls back to the `tar_all` server report only when the CGI is absent; `LogReport.source` says which. `stream_logs`/`search_logs`/`get_log_summary` follow | Tests: each type hits its CGI with the right params; 404 → tarball fallback with `source` saying so; auth errors propagate; `ALL` still uses the tarball |
 | 3.2 | `download crash-report` (primary) with `download debug` kept as an alias; privacy notice before download; every downloaded diagnostic written `0600` via one helper (`axis_cam.files.write_private`), also used by `save_report`/`save_debug_archive`; crash-report timeout default 300 s | Tests: file mode is `0600` on POSIX; notice printed; alias and primary share one implementation |
 | 3.3 | Docs, plan status, coverage ratchet | `fail_under` at the new measured floor |
+
+### Phase 4 — in progress on branch `phase-0-security-fixes` (started 2026-10-13)
+
+**Blocker found first.** `ParamAPI` reads `param.cgi` through `client.get_json()`, but the VAPIX Parameter management page (fetched 2026-10-13) documents `action=list` as `Content-Type: text/plain` with `<parameter>=<value>` lines (`responseformat=rfc` "should always be used"; errors are HTTP 200 `# Error: <description>`). `response.json()` therefore raises on every real device, the narrow `except` turns it into `None`/`[]`/`{}`, and `params`, `location`, `get_friendly_name()` and `params --export` have been silently empty — the "cannot read ≠ empty" false negative from Phase 0 in another coat. All 27 tests in `tests/test_api_param.py` feed JSON dicts, i.e. they lock the wrong contract in. The REST `$export` endpoint `export()` tries first is documented nowhere I can find (discovery lists `/config/rest/param/v2beta` but no `$export`), so it is dropped rather than kept on faith.
+
+| Step | Scope | Definition of done (countable) |
+|---|---|---|
+| 4.0 | `ParamAPI` parses the documented text format (one `_list()` helper: `action=list[&group=…]&responseformat=rfc`, `# Error` → `AxisDeviceError`); `export()` returns one shape, a flat `dict[str, str]` of full names → values (what `param.cgi?action=update` consumes in Phase 5); `get_all()` groups the same parse. `$export` removed. | respx wire test parses the doc's example body; 27 tests rewritten to text fixtures; `test_devices` friendly-name/location fixtures to text; `params`/`location` CLI paths covered |
+| 4.1 | `axis_cam/backup.py`: `create_backup()` writes `backup-<host>-<UTC ts>/` with `manifest.json`, one `<module>.json` per available resource (via `collect_report(full=True)`), `params.json`, optional `server-report.zip`; dir `0700`, files `0600`; `load_manifest()`, `verify_backup()` (sha256) | Manifest lists every file with sha256; `not_included.by_design` and `not_included.not_implemented` are explicit lists; a fake registered module appears in a backup with no change to backup code; `verify_backup` detects a tampered file |
+| 4.2 | `axiscam backup create [-o DIR] [--with-server-report]`, `backup show DIR`, `backup verify DIR` | 10th group in `--help`; `show` renders the manifest incl. what is not included; `verify` exits 1 on mismatch |
+| 4.3 | Docs, plan status, coverage ratchet | `fail_under` at the new measured floor |
+
+No `Exportable` protocol: backup is every resource's `read()` plus the one module (`params`) whose payload is not a model; one special case is handled explicitly, not abstracted (Phase 1 decision stands).
+
+The manifest's honesty list (what a VAPIX backup cannot contain, by design): account passwords and hashes; private keys of device certificates; ACAP application binaries and licence keys; recordings and edge-storage content; the device's own TLS/SSH host keys. Not implemented yet (readable in principle): ONVIF users; installed ACAP list; stream profiles beyond what `stream` reads; view areas / PTZ presets; overlays.
 
 ## Decisions and open questions
 

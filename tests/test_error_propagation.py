@@ -51,14 +51,14 @@ class TestApiModulesPropagate:
     @pytest.mark.asyncio
     async def test_param_get_connection_error_propagates(self):
         api = ParamAPI(_client())
-        api._get = AsyncMock(side_effect=AxisConnectionError("timeout"))
+        api._get_text = AsyncMock(side_effect=AxisConnectionError("timeout"))
         with pytest.raises(AxisConnectionError):
             await api.get("root.Brand.Brand")
 
     @pytest.mark.asyncio
     async def test_param_export_does_not_fall_back_on_auth_error(self):
         api = ParamAPI(_client())
-        api._get = AsyncMock(side_effect=AxisAuthenticationError("401"))
+        api._get_text = AsyncMock(side_effect=AxisAuthenticationError("401"))
         with pytest.raises(AxisAuthenticationError):
             await api.export()
 

@@ -166,8 +166,8 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_friendly_name(self, mock_client):
         """Test get_friendly_name method."""
-        mock_client.get_json = AsyncMock(
-            return_value={"root": {"Properties": {"FriendlyName": "Front Door Camera"}}}
+        mock_client.get = AsyncMock(
+            return_value=MagicMock(text="root.Properties.FriendlyName=Front Door Camera\n")
         )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             name = await camera.params.get_friendly_name()
@@ -176,8 +176,8 @@ class TestAxisDevice:
     @pytest.mark.asyncio
     async def test_get_location(self, mock_client):
         """Test get_location method."""
-        mock_client.get_json = AsyncMock(
-            return_value={"root": {"Properties": {"Location": "Building A, Entrance"}}}
+        mock_client.get = AsyncMock(
+            return_value=MagicMock(text="root.Properties.Location=Building A, Entrance\n")
         )
         async with AxisCamera("192.168.1.10", "admin", "password") as camera:
             location = await camera.params.get_location()
