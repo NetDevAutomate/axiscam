@@ -14,6 +14,8 @@ contract generic code relies on is the structural
 
 from typing import TYPE_CHECKING, Any, ClassVar
 
+from axis_cam.exceptions import AxisApiNotSupportedError
+
 if TYPE_CHECKING:
     from axis_cam.client import VapixClient
 
@@ -43,6 +45,49 @@ class BaseAPI:
 
     name: ClassVar[str]
     api_id: ClassVar[str | None] = None
+    #: Hard-coded REST path, used when the device does not advertise ``api_id``.
+    REST_PATH: ClassVar[str | None] = None
+
+    @staticmethod
+    def _items(collection: Any, *, id_key: str = "id") -> list[tuple[str, dict[str, Any]]]:
+        """Normalise a REST collection to ``[(id, entry), ...]``.
+
+        Device-configuration APIs return collections in two shapes: a mapping
+        keyed by id (``{"abc": {...}}``, the shape the early fixtures assumed)
+        or a list of entries each carrying its own id (``[{"id": "abc", ...}]``,
+        what AXIS OS 12.11 devices actually return for recording groups, storage
+        destinations and action rules; verified 2026-10-13). ``None`` and
+        unknown shapes yield no items rather than raising.
+        """
+        if isinstance(collection, dict):
+            return [(str(k), v) for k, v in collection.items() if isinstance(v, dict)]
+        if isinstance(collection, list):
+            return [
+                (str(entry.get(id_key, index)), entry)
+                for index, entry in enumerate(collection)
+                if isinstance(entry, dict)
+            ]
+        return []
+
+    async def _rest_path(self) -> str:
+        """The REST base path to use for this module on this device.
+
+        Devices move an API between versions (``/config/rest/ntp/v1beta`` →
+        ``…/v1``) and often drop the old path, so the path advertised in
+        ``/config/discover/apis`` wins; the class's ``REST_PATH`` is only the
+        fallback for devices without discovery (verified against four devices,
+        2026-10-13: five of the hard-coded paths were 404 on current firmware).
+
+        Raises:
+            AxisApiNotSupportedError: Neither discovery nor ``REST_PATH`` gives a path.
+        """
+        if self.api_id:
+            advertised = await self._client.rest_path_for(self.api_id)
+            if advertised:
+                return advertised
+        if self.REST_PATH is None:
+            raise AxisApiNotSupportedError(f"{self.name}: no REST path for this device")
+        return self.REST_PATH
 
     def __init__(self, client: "VapixClient") -> None:
         """Initialize the API module.

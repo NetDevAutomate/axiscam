@@ -254,6 +254,37 @@ No `Exportable` protocol: backup is every resource's `read()` plus the one modul
 
 The manifest's honesty list (what a VAPIX backup cannot contain, by design): account passwords and hashes; private keys of device certificates; ACAP application binaries and licence keys; recordings and edge-storage content; the device's own TLS/SSH host keys. Not implemented yet (readable in principle): ONVIF users; installed ACAP list; stream profiles beyond what `stream` reads; view areas / PTZ presets; overlays.
 
+### Device verification pass (2026-10-13, read-only; queue item 4)
+
+Devices: `front_of_house` + `back_of_house` (M3216-LVE), `intercom` (I8016-LVE), `nvr` (S3008) — all AXIS OS 12.11.118; `mini_speaker` (C1410) on 11.11.192. Every command below was run with default options after the auth and scheme fixes.
+
+| Check | Camera (M3216) | Intercom (I8016) | NVR (S3008) | Speaker (C1410) |
+|---|---|---|---|---|
+| `info` / `status` | ✅ | ✅ | ✅ | ✅ / ❌→✅ `time` (see F3) |
+| `apis` | ❌→✅ (D1) | ❌→✅ | ❌→✅ | ❌→✅ |
+| `params` (first time it can work) | ✅ | ✅ | ❌ 404: no `param.cgi` on the recorder — honest error, filed | ✅ |
+| `logs system` / `access` | ✅ dedicated CGIs | ✅ | ✅ | ✅ |
+| `logs audit` | ✅ `auditlog.cgi` | ✅ | ✅ | 404 → tarball fallback, 0 entries (no audit log before 12.7); ❌→✅ auth (F2) |
+| `accounts list` | ✅ 13 accounts | ✅ | ✅ | ✅ |
+| `report --full` | ✅ 23 sections, 1 error (`oauth` 403, F4), 1 skipped (`audio_multicast`, not advertised) | — | — | — |
+| `backup create --with-server-report` + `verify` | ✅ 25 files, 45 s, intact | — | — | — |
+| `download crash-report` | ✅ 85 MB in 1 m 47 s; archive = `debug-<ts>/` with `serverreport.txt`, per-process dumps and `/proc` | — | — | — |
+| `download report` | ✅ | — | — | ✅ 57 s (close to the 60 s default; see F5) |
+| Every resource `read()` (matrix) | 23/24 ok, `oauth` 403 | 22/24 | 17/18 advertised | 11/11 advertised |
+
+Contract mismatches the unit suite could not see, all fixed in this pass (commit noted below):
+
+- **D1 — discovery path.** The code fetched `/config/discover/apis.json`; the device serves `/config/discover/apis` (the `.json` form is 404 on 11.11 and 12.11). Discovery therefore returned `{}` on every device: `apis` listed nothing and `available_resources()` never gated anything. Fixed, cached per client, with `rest_path_for()`.
+- **D2 — hard-coded REST versions.** Five module paths were 404 on 12.11 (`event-mqtt-bridge/v1beta`→`v2`, `geolocation/v1beta`→`v2beta`, `recording-group/v1`→`v2`, `action/v1`→ id renamed `action-rules` v2, `audio-multicast-ctrl` only advertised on audio devices) and every one of those modules silently returned a default model. Modules now resolve the advertised path via discovery and fall back to the hard-coded one only without discovery. The four `src/specs` captures (January 2026, 12–24 ids) are regenerated from the live devices (24–37 ids).
+- **D3 — collection shapes.** `storage`, `recording`, `mqtt`, `action` parsed collections as id-keyed dicts; live payloads are lists of entries with their own `id` (plus `recordingGroups`, `publication.eventFilter`, `templates.actions`, `parameters: [{name}]`, `actionType`). `storage.read()` crashed with `AttributeError` on every device. `BaseAPI._items()` accepts both shapes.
+- **F2 — auth scheme settled too early.** `VapixAuth` locked in Basic after the speaker answered 404 (no `auditlog.cgi`) and then failed the Digest-only `serverreport.cgi` with a 401. Only a 2xx settles the scheme now, and a later 401 offering only the other scheme re-evaluates.
+- **F3 — time fallback.** `date.cgi` is a 404 on 11.11; the fallback is now the documented Time API (`POST time.cgi getDateTimeInfo`).
+- **F4 — 403 vs 401.** An administrator gets 403 on `/config/rest/oauth-ccgrant` on 12.11. The client raises `AxisPermissionError` (a 403 names the path and means "this account may not use this API"); report and backup record it per module and continue, where a 401 still aborts.
+
+Filed, not fixed: **F5** the 60 s server-report default is tight for the speaker (57 s observed) — consider 120 s; **params on the S3008** has no `param.cgi` (404) — the recorder needs a different parameter source or an explicit "not available on this product"; the **crash report** archive confirms the web-UI description (server report + debug data) but the DevTools capture of the button's exact URL is still the only thing that proves byte equality.
+
+Account list seen on the camera is noted for the security audit (Phase 7): six administrators, including vendor/service accounts.
+
 ### First contact with real devices (2026-10-13, read-only)
 
 Five configured devices (I8016-LVE intercom, 2× M3216-LVE, S3008 recorder — all AXIS OS 12.11.118; C1410 speaker on 11.11.192). Two things broke before a single API was exercised:

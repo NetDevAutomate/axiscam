@@ -8,6 +8,7 @@ The client supports both the legacy CGI endpoints and the newer REST API
 endpoints introduced in AXIS OS 11.x.
 """
 
+import re
 from typing import Any
 
 import httpx
@@ -17,7 +18,16 @@ from axis_cam.exceptions import (
     AxisAuthenticationError,
     AxisConnectionError,
     AxisDeviceError,
+    AxisPermissionError,
 )
+
+
+def _version_sort_key(version: str) -> tuple[int, int]:
+    """Order discovery version keys: ``v1beta`` < ``v1`` < ``v2beta`` < ``v2``."""
+    match = re.match(r"v(\d+)(beta|alpha)?$", version)
+    if not match:
+        return (-1, 0)
+    return (int(match.group(1)), 0 if match.group(2) else 1)
 
 
 class VapixClient:
@@ -87,6 +97,7 @@ class VapixClient:
         self.allow_insecure_basic = allow_insecure_basic
         self._auth: VapixAuth | None = None
         self._client: httpx.AsyncClient | None = None
+        self._discovery: dict[str, Any] | None = None
 
     @property
     def auth_scheme(self) -> str | None:
@@ -374,32 +385,66 @@ class VapixClient:
                 f"Authentication failed for {self.host}. Check username/password."
             )
         if response.status_code == 403:
-            raise AxisAuthenticationError(
-                f"Access denied to {self.host}. Insufficient permissions."
+            raise AxisPermissionError(
+                f"Access denied to {self.host}: this account may not use {response.url.path} (403)."
             )
         if response.status_code >= 400:
             raise AxisDeviceError(
                 f"Device error {response.status_code} from {self.host}: {response.text[:200]}"
             )
 
-    async def discover_apis(self) -> dict[str, Any]:
-        """Discover available APIs on the device.
+    DISCOVERY_PATH = "/config/discover/apis"
 
-        Queries the device's API discovery endpoint to determine
-        which APIs are available and their versions.
+    async def discover_apis(self) -> dict[str, Any]:
+        """Discover the device-configuration REST APIs the device advertises.
+
+        ``GET /config/discover/apis`` (no ``.json`` suffix: the suffixed form
+        is a 404 on AXIS OS 11.11 and 12.11, verified 2026-10-13) answers a
+        mapping of API id to its versions, each with a ``rest_api`` path such
+        as ``/config/rest/ssh/v2``. The result is cached for the lifetime of
+        the client; the device's API set does not change between requests.
 
         Returns:
-            Dictionary mapping API names to their configuration.
+            Dictionary mapping API ids to their version entries; ``{}`` when
+            the device has no discovery endpoint.
 
         Raises:
             AxisConnectionError: If connection fails.
-            AxisDeviceError: If discovery fails.
+            AxisAuthenticationError: If the credentials are rejected.
         """
-        try:
-            return await self.get_json("/config/discover/apis.json")
-        except AxisDeviceError:
-            # Older devices may not support discovery
-            return {}
+        if self._discovery is None:
+            try:
+                self._discovery = await self.get_json(self.DISCOVERY_PATH)
+            except AxisDeviceError:
+                # Older devices may not support discovery
+                self._discovery = {}
+        return self._discovery
+
+    async def rest_path_for(self, api_id: str, *, prefer: str | None = None) -> str | None:
+        """The ``rest_api`` path the device advertises for ``api_id``.
+
+        Devices move APIs between versions (``v1beta`` → ``v1`` → ``v2``) and
+        remove the old path, so a module must ask rather than hard-code one.
+
+        Args:
+            api_id: Discovery id, e.g. ``"ssh"``.
+            prefer: A version key (``"v2"``) to pick when several are offered;
+                otherwise the highest version wins.
+
+        Returns:
+            The path, or ``None`` if the device does not advertise the API (or
+            has no discovery at all).
+        """
+        entry = (await self.discover_apis()).get(api_id)
+        if not isinstance(entry, dict) or not entry:
+            return None
+        versions = {k: v for k, v in entry.items() if isinstance(v, dict) and v.get("rest_api")}
+        if not versions:
+            return None
+        if prefer and prefer in versions:
+            return versions[prefer]["rest_api"]
+        best = max(versions, key=_version_sort_key)
+        return versions[best]["rest_api"]
 
     async def check_connectivity(self) -> bool:
         """Check if device is reachable and credentials are valid.

@@ -175,7 +175,8 @@ class StreamAPI(BaseAPI):
         Returns:
             JSON response data.
         """
-        url = f"{self.REST_PATH}/{path}" if path else self.REST_PATH
+        base = await self._rest_path()
+        url = f"{base}/{path}" if path else base
 
         try:
             response = await self._get(url, params={})

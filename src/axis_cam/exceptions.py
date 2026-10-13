@@ -61,6 +61,18 @@ class AxisAuthenticationError(AxisError):
     pass
 
 
+class AxisPermissionError(AxisAuthenticationError):
+    """Raised when the device answers 403: this account may not use this API.
+
+    Distinct from a 401 (credentials rejected): the session is authenticated
+    but a specific API refuses the account. Seen on AXIS OS 12.11, where an
+    administrator still gets 403 on ``/config/rest/oauth-ccgrant``. Report and
+    backup record it per module and carry on; a 401 aborts the run.
+    """
+
+    pass
+
+
 class AxisDeviceError(AxisError):
     """Raised when device returns an error.
 

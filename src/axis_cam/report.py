@@ -6,9 +6,10 @@ one, and records the model dump under the module's name. Adding a module to
 the registry adds it to ``--full`` reports with no change here.
 
 Per-module failures that mean "this device could not answer for this API"
-(:class:`AxisDeviceError`, :class:`AxisApiNotSupportedError`) are recorded in
-``errors`` and the report continues. Authentication and connection errors
-propagate: a report of twenty-seven "unauthorised" entries is not a report.
+(:class:`AxisDeviceError`, :class:`AxisApiNotSupportedError`) or "this account
+may not use this API" (:class:`AxisPermissionError`, a 403) are recorded in
+``errors`` and the report continues. A 401 and connection errors propagate: a
+report of twenty-seven "unauthorised" entries is not a report.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
+from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError, AxisPermissionError
 
 if TYPE_CHECKING:
     from axis_cam.devices.base import AxisDevice
@@ -99,7 +100,9 @@ async def collect_report(
             continue
         try:
             model = await available[section].read()
-        except (AxisDeviceError, AxisApiNotSupportedError) as exc:
+        except (AxisDeviceError, AxisApiNotSupportedError, AxisPermissionError) as exc:
+            # A 403 is "this account may not use this API", a per-module fact;
+            # a 401 (credentials rejected) is not caught here and aborts the run.
             report.errors[section] = str(exc)
         else:
             report.sections[section] = model.model_dump(mode="json")

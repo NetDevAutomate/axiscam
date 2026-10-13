@@ -44,6 +44,18 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
 ### Fixed
 - `ParamAPI` parsed JSON against a `text/plain` CGI and had never returned data on
   a real device.
+- API discovery fetched `/config/discover/apis.json` (404 on AXIS OS 11.11 and
+  12.11) and so returned nothing; it now uses `/config/discover/apis`, is cached,
+  and modules resolve their REST path from it instead of hard-coding a version
+  that five of them had wrong on current firmware.
+- `storage`, `recording`, `mqtt` and `action` parsers accept the list-shaped
+  collections devices actually return (`storage.read()` crashed on every device).
+- Time fallback uses the documented Time API (`POST time.cgi getDateTimeInfo`);
+  `date.cgi` is a 404 on 11.11.
+- A 403 is `AxisPermissionError` (this account may not use this API) and is
+  recorded per module by report and backup; a 401 still aborts.
+- `--auth auto` settles the scheme only on a successful response and reconsiders
+  when a later 401 offers only the other scheme.
 - 62 `except Exception` sites narrowed so authentication and connection errors
   propagate instead of rendering as empty or default-valued results.
 - Log timestamps normalised to aware UTC (mixed naive/aware sorting raised).

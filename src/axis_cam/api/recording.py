@@ -47,7 +47,7 @@ class RecordingAPI(BaseAPI):
             RecordingConfig model with recording settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
         except (AxisDeviceError, AxisApiNotSupportedError):
@@ -97,8 +97,9 @@ class RecordingAPI(BaseAPI):
         """
         # Parse groups
         groups = []
-        groups_data = data.get("groups", {})
-        for group_id, group_info in groups_data.items():
+        # v1 used "groups"; the live recording-group v2 API uses "recordingGroups".
+        groups_data = data.get("recordingGroups", data.get("groups"))
+        for group_id, group_info in self._items(groups_data):
             if isinstance(group_info, dict):
                 groups.append(self._parse_group(group_id, group_info))
 

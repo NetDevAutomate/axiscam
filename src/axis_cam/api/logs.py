@@ -436,7 +436,7 @@ class LogsAPI(BaseAPI):
             True if persistent logging is enabled.
         """
         try:
-            response = await self._get(f"{self.REST_PATH}/persistent/enabled")
+            response = await self._get(f"{await self._rest_path()}/persistent/enabled")
             return response.get("data", {}).get("enabled", False)
         except (AxisDeviceError, AxisApiNotSupportedError):
             return False

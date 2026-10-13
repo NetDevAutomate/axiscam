@@ -47,7 +47,7 @@ class RemoteStorageAPI(BaseAPI):
             RemoteStorageConfig model with storage settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
         except (AxisDeviceError, AxisApiNotSupportedError):
@@ -88,10 +88,8 @@ class RemoteStorageAPI(BaseAPI):
         """
         # Parse destinations
         destinations = []
-        dest_data = data.get("destinations", {})
-        for dest_id, dest_info in dest_data.items():
-            if isinstance(dest_info, dict):
-                destinations.append(self._parse_destination(dest_id, dest_info))
+        for dest_id, dest_info in self._items(data.get("destinations")):
+            destinations.append(self._parse_destination(dest_id, dest_info))
 
         return RemoteStorageConfig(
             destinations=destinations,

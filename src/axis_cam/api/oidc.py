@@ -49,7 +49,7 @@ class OidcAPI(BaseAPI):
             OidcConfig model with OIDC settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
         except (AxisDeviceError, AxisApiNotSupportedError):

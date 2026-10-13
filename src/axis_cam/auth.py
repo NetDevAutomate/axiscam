@@ -97,35 +97,40 @@ class VapixAuth(httpx.Auth):
                 return response
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
-        """Authenticate ``request``, switching scheme once if the device demands it.
+        """Authenticate ``request``, switching scheme when the device demands it.
 
-        Runs the current (or first-choice) scheme's flow. In ``AUTO`` mode, a
-        401 whose ``WWW-Authenticate`` offers the *other* scheme triggers one
-        retry with that scheme, which is then remembered for the session. A
-        401 that offers the same scheme is a genuine rejection and is returned.
+        Runs the settled (or first-choice) scheme's flow. In ``AUTO`` mode a 401
+        whose ``WWW-Authenticate`` offers only the *other* scheme triggers one
+        retry with that scheme, which is then remembered. A 401 that offers the
+        scheme just used is a genuine rejection and is returned. Only a 2xx
+        settles the choice: a 404 for a CGI the device lacks says nothing about
+        which scheme it accepts (an 11.x speaker answered 404 to a Basic request
+        and then demanded Digest on the next CGI, verified 2026-10-13).
         """
-        primary = self._chosen or self._first_choice()
-        response = yield from self._run(primary, request)
-        if self._chosen is not None or self.mode is not AuthMode.AUTO:
+        current = self._chosen or self._first_choice()
+        response = yield from self._run(current, request)
+        if self.mode is not AuthMode.AUTO:
+            return
+        if 200 <= response.status_code < 300:
+            self._chosen = current
             return
         if response.status_code != 401:
-            self._chosen = primary
             return
-
         offered = offered_schemes(response)
-        if primary is self._basic and "digest" in offered:
-            fallback: httpx.Auth | None = self._digest
+        current_name = "basic" if current is self._basic else "digest"
+        if current_name in offered or not offered:
+            return  # same scheme offered back (or no challenge): genuine rejection
+        if current is self._basic and "digest" in offered:
+            fallback: httpx.Auth = self._digest
         elif (
-            primary is self._digest
+            current is self._digest
             and "basic" in offered
-            and "digest" not in offered
             and (self.https or self.allow_insecure_basic)
         ):
             fallback = self._basic
         else:
-            fallback = None  # genuinely rejected, or Basic-only over plain HTTP
-        if fallback is None:
-            return
-        self._chosen = fallback
+            return  # Basic-only over plain HTTP without explicit permission
         request.headers.pop("Authorization", None)
-        yield from self._run(fallback, request)
+        retry = yield from self._run(fallback, request)
+        if 200 <= retry.status_code < 300:
+            self._chosen = fallback

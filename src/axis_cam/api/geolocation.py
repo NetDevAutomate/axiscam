@@ -47,7 +47,7 @@ class GeolocationAPI(BaseAPI):
             GeolocationConfig model with location settings.
         """
         try:
-            response = await self._get(self.REST_PATH)
+            response = await self._get(await self._rest_path())
             data = response.get("data", {})
             return self._parse_config(data)
         except (AxisDeviceError, AxisApiNotSupportedError):

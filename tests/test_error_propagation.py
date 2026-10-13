@@ -29,6 +29,7 @@ runner = CliRunner()
 
 def _client() -> MagicMock:
     client = MagicMock()
+    client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
     client.host = "192.168.1.10"
     return client
 

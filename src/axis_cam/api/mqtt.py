@@ -48,7 +48,7 @@ class MqttBridgeAPI(BaseAPI):
             MqttBridgeConfig model with MQTT settings.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
         except (AxisDeviceError, AxisApiNotSupportedError):
@@ -92,15 +92,17 @@ class MqttBridgeAPI(BaseAPI):
         """
         # Parse clients
         clients = []
-        clients_data = data.get("clients", {})
-        for client_id, client_info in clients_data.items():
+        for client_id, client_info in self._items(data.get("clients")):
             if isinstance(client_info, dict):
                 clients.append(self._parse_client(client_id, client_info))
 
         # Parse event filters
         event_filters = []
-        filters_data = data.get("eventFilters", {})
-        for filter_id, filter_info in filters_data.items():
+        # event-mqtt-bridge v2 nests the filter list under "publication".
+        filters_data = data.get("eventFilters")
+        if filters_data is None and isinstance(data.get("publication"), dict):
+            filters_data = data["publication"].get("eventFilter")
+        for filter_id, filter_info in self._items(filters_data):
             if isinstance(filter_info, dict):
                 event_filters.append(self._parse_filter(filter_id, filter_info))
 

@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import respx
 
 from axis_cam.client import VapixClient
 from axis_cam.exceptions import (
@@ -381,3 +382,20 @@ class TestVapixClientCheckConnectivity:
             async with client:
                 result = await client.check_connectivity()
                 assert result is False
+
+
+class TestForbiddenIsPermissionError:
+    """403 names the API; it is an AxisAuthenticationError subclass so existing
+    handlers still catch it, but report/backup can tell it from a 401."""
+
+    @respx.mock
+    async def test_403_raises_permission_error_naming_the_path(self):
+        from axis_cam.exceptions import AxisAuthenticationError, AxisPermissionError
+
+        respx.get("https://192.168.1.10:443/config/rest/oauth-ccgrant/v1beta").mock(
+            return_value=httpx.Response(403, text="Forbidden")
+        )
+        async with VapixClient("192.168.1.10", "admin", "pw", port=443, use_https=True) as client:
+            with pytest.raises(AxisPermissionError, match="oauth-ccgrant") as excinfo:
+                await client.get("/config/rest/oauth-ccgrant/v1beta")
+        assert isinstance(excinfo.value, AxisAuthenticationError)

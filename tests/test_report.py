@@ -238,3 +238,28 @@ class TestRenderText:
         assert data["device"] == "cam"
         assert data["sections"] == {"device": {"would": "collide"}, "errors": {"too": True}}
         assert data["errors"] == {} and data["skipped"] == []
+
+
+class TestPermissionDenied:
+    """A 403 on one API is a per-module fact; a 401 aborts the run."""
+
+    async def test_403_is_recorded_per_module(self):
+        from axis_cam.exceptions import AxisPermissionError
+
+        device = _device(
+            FakeModule(
+                "oauth", AxisPermissionError("Access denied: this account may not use /oauth")
+            ),
+            FakeModule("ssh", SshConfig(enabled=True)),
+        )
+
+        report = await collect_report(device, full=True)
+
+        assert "oauth" in report.errors and "may not use" in report.errors["oauth"]
+        assert report.sections["ssh"]["enabled"] is True
+
+    async def test_401_still_aborts(self):
+        device = _device(FakeModule("ssh", AxisAuthenticationError("401")))
+
+        with pytest.raises(AxisAuthenticationError):
+            await collect_report(device, full=True)

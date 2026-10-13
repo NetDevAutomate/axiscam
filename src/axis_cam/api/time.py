@@ -44,7 +44,9 @@ class TimeAPI(BaseAPI):
     REST_PATH = "/config/rest/time/v2"
 
     # Legacy CGI endpoint
-    CGI_PATH = "/axis-cgi/date.cgi"
+    # Time API (VAPIX "Time API"): JSON-RPC over POST. The old date.cgi is a 404
+    # on AXIS OS 11.11 (C1410, verified 2026-10-13).
+    CGI_PATH = "/axis-cgi/time.cgi"
 
     async def read(self) -> TimeInfo:
         """Read the current state (``ResourceModule`` protocol)."""
@@ -73,7 +75,7 @@ class TimeAPI(BaseAPI):
             TimeInfo model from REST API response.
         """
         # Get main time entity
-        response = await self._get(self.REST_PATH)
+        response = await self._get(await self._rest_path())
         data = response.get("data", {})
 
         # Check if combined response (some devices return time+timezone together)
@@ -82,11 +84,11 @@ class TimeAPI(BaseAPI):
             tz_data = data.get("timeZone", {})
         else:
             # Get time settings separately
-            time_response = await self._get(f"{self.REST_PATH}/time")
+            time_response = await self._get(f"{await self._rest_path()}/time")
             time_data = time_response.get("data", {})
 
             # Get timezone settings separately
-            tz_response = await self._get(f"{self.REST_PATH}/timeZone")
+            tz_response = await self._get(f"{await self._rest_path()}/timeZone")
             tz_data = tz_response.get("data", {})
 
         return self._parse_rest_response(data, time_data, tz_data)
@@ -97,9 +99,12 @@ class TimeAPI(BaseAPI):
         Returns:
             TimeInfo model from CGI response.
         """
-        params = {"action": "get"}
-        response = await self._get(self.CGI_PATH, params)
-        return self._parse_cgi_response(response)
+        response = await self._post(
+            self.CGI_PATH, json_data={"apiVersion": "1.0", "method": "getDateTimeInfo"}
+        )
+        if "error" in response:
+            raise AxisDeviceError(f"time.cgi getDateTimeInfo: {response['error']}")
+        return self._parse_cgi_response(response.get("data", {}))
 
     def _parse_rest_response(
         self,
@@ -164,8 +169,8 @@ class TimeAPI(BaseAPI):
         Returns:
             TimeInfo model instance.
         """
-        # CGI returns simpler format
-        utc_str = response.get("utcDateTime", "")
+        # getDateTimeInfo data: dateTime (UTC), localDateTime, timeZone, posixTimeZone, dstEnabled
+        utc_str = response.get("dateTime") or response.get("utcDateTime", "")
         local_str = response.get("localDateTime", "")
         timezone = response.get("timeZone", "")
         posix_tz = response.get("posixTimeZone", "")

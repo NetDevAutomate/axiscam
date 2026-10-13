@@ -107,7 +107,7 @@ class BasicDeviceInfoAPI(BaseAPI):
         Returns:
             Raw REST API response data.
         """
-        response = await self._get(self.REST_PATH)
+        response = await self._get(await self._rest_path())
         return response.get("data", {})
 
     async def _get_cgi_info(self) -> dict[str, Any]:

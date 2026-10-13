@@ -31,6 +31,7 @@ class TestAxisDevice:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -193,6 +194,7 @@ class TestAxisCamera:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -365,6 +367,7 @@ class TestAxisRecorder:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.100"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -605,6 +608,7 @@ class TestAxisIntercom:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.11"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -828,6 +832,7 @@ class TestAxisSpeaker:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.125.45"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -1067,6 +1072,7 @@ class TestDeviceInfo:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)
@@ -1098,6 +1104,7 @@ class TestDeviceCapabilities:
         """Create a mock VapixClient."""
         with patch("axis_cam.devices.base.VapixClient") as mock:
             client = MagicMock()
+            client.rest_path_for = AsyncMock(return_value=None)  # no discovery in unit tests
             client.host = "192.168.1.10"
             client.__aenter__ = AsyncMock(return_value=client)
             client.__aexit__ = AsyncMock(return_value=None)

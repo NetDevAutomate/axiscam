@@ -32,7 +32,8 @@ class ActionAPI(BaseAPI):
     """
 
     name = "action"
-    api_id = "action"
+    # Discovery id on AXIS OS 12.11 is "action-rules" (v2); the older "action" id is gone.
+    api_id = "action-rules"
 
     REST_PATH = "/config/rest/action/v1"
 
@@ -47,7 +48,7 @@ class ActionAPI(BaseAPI):
             ActionConfig model with all action rules.
         """
         try:
-            response = await self._get(self.REST_PATH, params={"recursive": "true"})
+            response = await self._get(await self._rest_path(), params={"recursive": "true"})
             data = response.get("data", {})
             return self._parse_config(data)
         except (AxisDeviceError, AxisApiNotSupportedError):
@@ -97,17 +98,17 @@ class ActionAPI(BaseAPI):
         """
         # Parse rules
         rules = []
-        rules_data = data.get("rules", {})
-        for rule_id, rule_info in rules_data.items():
-            if isinstance(rule_info, dict):
-                rules.append(self._parse_rule(rule_id, rule_info))
+        for rule_id, rule_info in self._items(data.get("rules")):
+            rules.append(self._parse_rule(rule_id, rule_info))
 
         # Parse templates
         templates = []
-        templates_data = data.get("templates", {})
-        for template_id, template_info in templates_data.items():
-            if isinstance(template_info, dict):
-                templates.append(self._parse_template(template_id, template_info))
+        # action-rules v2 nests templates: {"templates": {"actions": [...], ...}}.
+        templates_data = data.get("templates")
+        if isinstance(templates_data, dict) and isinstance(templates_data.get("actions"), list):
+            templates_data = templates_data["actions"]
+        for template_id, template_info in self._items(templates_data):
+            templates.append(self._parse_template(template_id, template_info))
 
         return ActionConfig(
             rules=rules,
@@ -143,9 +144,20 @@ class ActionAPI(BaseAPI):
         Returns:
             ActionTemplate model.
         """
+        # action-rules v2 lists parameters as [{"name": ...}, ...] and types the
+        # template under "actionType"; v1 fixtures used a dict and "type".
+        raw_params = data.get("parameters", {})
+        if isinstance(raw_params, list):
+            parameters = {
+                str(entry.get("name")): {k: v for k, v in entry.items() if k != "name"}
+                for entry in raw_params
+                if isinstance(entry, dict) and entry.get("name")
+            }
+        else:
+            parameters = raw_params if isinstance(raw_params, dict) else {}
         return ActionTemplate(
             id=template_id,
             name=data.get("name", ""),
-            template_type=data.get("type", ""),
-            parameters=data.get("parameters", {}),
+            template_type=data.get("type") or data.get("actionType", ""),
+            parameters=parameters,
         )

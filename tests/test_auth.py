@@ -183,3 +183,43 @@ class TestForcedModes:
     def test_scheme_is_none_before_any_request(self):
         auth = VapixAuth("u", "p")
         assert auth.scheme is None
+
+
+class TestSettlingNeedsSuccess:
+    """A 404 before any 401 must not lock the scheme in (the C1410 speaker case)."""
+
+    @respx.mock
+    async def test_404_then_digest_challenge_still_switches(self):
+        def speaker(request: httpx.Request) -> httpx.Response:
+            if request.url.path.endswith("auditlog.cgi"):
+                return httpx.Response(404, text="Not Found")  # no such CGI on 11.x
+            return digest_only_device(request)
+
+        respx.route(host=HOST).mock(side_effect=speaker)
+
+        async with VapixClient(HOST, "root", "pw", port=443, use_https=True) as client:
+            with pytest.raises(Exception):  # noqa: B017 - any AxisError for the 404 is fine here
+                await client.get("/axis-cgi/auditlog.cgi")
+            assert client.auth_scheme is None  # 404 proved nothing
+            response = await client.get("/axis-cgi/serverreport.cgi")
+
+        assert response.status_code == 200 and client.auth_scheme == "digest"
+
+    @respx.mock
+    async def test_settled_scheme_is_reconsidered_when_a_later_401_offers_only_the_other(self):
+        calls = {"n": 0}
+
+        def device(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] <= 1:
+                return basic_only_device(request)  # first CGI: Basic works
+            return digest_only_device(request)  # a different CGI insists on Digest
+
+        respx.route(host=HOST).mock(side_effect=device)
+
+        async with VapixClient(HOST, "root", "pw", port=443, use_https=True) as client:
+            await client.get("/axis-cgi/a.cgi")
+            assert client.auth_scheme == "basic"
+            response = await client.get("/axis-cgi/b.cgi")
+
+        assert response.status_code == 200 and client.auth_scheme == "digest"
