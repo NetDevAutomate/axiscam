@@ -216,7 +216,7 @@ Contracts verified from the VAPIX pages on 2026-10-13: `GET /axis-cgi/systemlog.
 |---|---|---|
 | 3.1 dedicated log CGIs with tarball fallback; `LogReport.source`; aware `retrieved_at` | `5533830` | ✅ 9 endpoint tests + 5 fallback tests |
 | 3.2 `download crash-report` (+ hidden `debug` alias), privacy notice, 300 s; `files.write_private` for every diagnostic incl. `report -o`, `params --export -o`, `init` | `3317711` | ✅ 12 tests incl. `0600` on POSIX and tightening of a pre-existing `0644` file |
-| 3.3 docs, coverage ratchet 61 → 62, this table | — | ✅ |
+| 3.3 docs, coverage ratchet 61 → 62, this table | `a82c141` | ✅ |
 
 After Phase 3: 682 tests pass (from 661) · 64.6% coverage (from 63.2) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged).
 
