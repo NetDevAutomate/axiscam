@@ -158,7 +158,7 @@ Behaviour changes a library user will notice: a non-443 port no longer implies H
 | 1.2 delete the 29 pass-through wrappers; 34 CLI + 4 test + 1 doc call sites rewritten | `2f23115` | ✅ `devices/base.py` 603 → 334 lines |
 | 1.3 `axis_cam/report.py`; `report` command registry-driven; JSON via `typer.echo` | `fd4226a` | ✅ fake-module test proves report code lists no modules |
 | 1.4 `cli/` package; `DeviceContext`; `cli.py` deleted | `df52dfc` | ✅ 32 CLI tests: every `--help`, commands end to end through `DeviceContext.open` |
-| 1.5 docs, coverage ratchet 50 → 58, this table | — | ✅ |
+| 1.5 docs, coverage ratchet 50 → 58, `emit_json()` across all `--json` paths, this table | `fb9a1b7` | ✅ |
 
 After Phase 1: 553 tests pass (from 485) · 60% coverage (from 54.6) · ruff clean · pyright 0 errors (9 pre-existing warnings, unchanged). Each step was committed through the pre-commit gate.
 
