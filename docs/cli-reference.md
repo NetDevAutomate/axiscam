@@ -298,7 +298,7 @@ $ axiscam report --device front_camera --full --output full_report.json
 ```
 
 **What is included.** The report is driven by the API module registry: it asks the
-device which APIs it advertises (`/config/discover/apis.json`) and reads each
+device which APIs it advertises (`/config/discover/apis`) and reads each
 matching module. The summary report covers `device_info`, `time`, `network`,
 `lldp`, `stream`, `firewall` and `ntp`; `--full` reads every available resource
 (additionally `ssh`, `snmp`, `cert`, `action`, `mqtt`, `recording`, `storage`,

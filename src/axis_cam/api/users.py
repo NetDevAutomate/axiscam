@@ -133,7 +133,7 @@ class UsersAPI(BaseAPI):
     """
 
     name = "users"
-    api_id = None  # legacy CGI; not in /config/discover/apis.json
+    api_id = None  # legacy CGI; not in /config/discover/apis
 
     CGI_PATH = "/axis-cgi/pwdgrp.cgi"
 

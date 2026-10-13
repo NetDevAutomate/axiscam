@@ -257,7 +257,7 @@ Two views over the same modules exist for generic code:
 - `device.modules` — every module, keyed by name.
 - `device.resources` — the modules that implement `read()` (every one above except
   `params`, `logs` and `serverreport`). `device.available_resources()` filters them
-  by the APIs the device advertises in `/config/discover/apis.json`; modules that
+  by the APIs the device advertises in `/config/discover/apis`; modules that
   work over legacy CGI (`device_info`, `time`) are never filtered out, and when
   discovery returns nothing every resource is kept.
 

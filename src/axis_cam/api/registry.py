@@ -34,7 +34,7 @@ class ResourceModule(Protocol):
 
     Attributes:
         name: Attribute name on ``AxisDevice`` and key in reports/backups.
-        api_id: Identifier advertised in ``/config/discover/apis.json``, or
+        api_id: Identifier advertised in ``/config/discover/apis``, or
             ``None`` for modules that do not depend on a discoverable REST API.
     """
 
