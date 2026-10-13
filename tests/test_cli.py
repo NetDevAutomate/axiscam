@@ -5,7 +5,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from axis_cam.cli import ResolvedDevice, app, get_device_class, resolve_device_config
+from axis_cam.cli import DeviceContext, app, get_device_class, resolve_device_config
 from axis_cam.config import AppConfig, DeviceConfig
 
 runner = CliRunner()
@@ -87,11 +87,11 @@ class TestResolveDeviceConfig:
 
     def test_resolve_with_host(self):
         """--host is ad hoc: HTTPS, port 443, app timeout."""
-        with patch("axis_cam.cli.load_config", return_value=self._config()):
+        with patch("axis_cam.cli.context.load_config", return_value=self._config()):
             target = resolve_device_config(
                 device=None, host="192.168.1.10", username="admin", password="pass123"
             )
-        assert target == ResolvedDevice(
+        assert target == DeviceContext(
             host="192.168.1.10",
             username="admin",
             password="pass123",
@@ -104,7 +104,7 @@ class TestResolveDeviceConfig:
 
     def test_resolve_host_overrides_device(self):
         """--host wins over --device."""
-        with patch("axis_cam.cli.load_config", return_value=self._config()):
+        with patch("axis_cam.cli.context.load_config", return_value=self._config()):
             target = resolve_device_config(
                 device="some_device", host="192.168.1.50", username="user", password="secret"
             )
@@ -115,7 +115,7 @@ class TestResolveDeviceConfig:
         import typer
 
         with (
-            patch("axis_cam.cli.load_config", return_value=self._config()),
+            patch("axis_cam.cli.context.load_config", return_value=self._config()),
             pytest.raises(typer.Exit),
         ):
             resolve_device_config(device=None, host="192.168.1.10", username=None, password=None)
@@ -138,7 +138,7 @@ class TestResolveDeviceConfig:
                 type="recorder",
             )
         )
-        with patch("axis_cam.cli.load_config", return_value=cfg):
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
             target = resolve_device_config(
                 device="test_camera", host=None, username=None, password=None
             )
@@ -158,7 +158,7 @@ class TestResolveDeviceConfig:
                 "main": DeviceConfig(host="10.0.0.5", username="u", password="p", https=False)
             },
         )
-        with patch("axis_cam.cli.load_config", return_value=cfg):
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
             target = resolve_device_config(device=None, host=None, username=None, password=None)
         assert target.host == "10.0.0.5"
         assert target.https is False
@@ -166,7 +166,7 @@ class TestResolveDeviceConfig:
     def test_explicit_port_443_overrides_config_port(self):
         """--port 443 is a real override, not a sentinel for 'unset'."""
         cfg = self._config(cam=DeviceConfig(host="10.0.0.9", username="u", password="p", port=8443))
-        with patch("axis_cam.cli.load_config", return_value=cfg):
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
             explicit = resolve_device_config(
                 device="cam", host=None, username=None, password=None, port=443
             )
@@ -179,7 +179,7 @@ class TestResolveDeviceConfig:
         cfg = self._config(
             cam=DeviceConfig(host="192.168.1.200", username="cfg", password="p", ssl_verify=True)
         )
-        with patch("axis_cam.cli.load_config", return_value=cfg):
+        with patch("axis_cam.cli.context.load_config", return_value=cfg):
             target = resolve_device_config(
                 device="192.168.1.200", host=None, username=None, password=None
             )
@@ -188,7 +188,7 @@ class TestResolveDeviceConfig:
 
     def test_resolve_device_as_host_ad_hoc(self):
         """--device that is an address but not in config needs credentials."""
-        with patch("axis_cam.cli.load_config", return_value=self._config()):
+        with patch("axis_cam.cli.context.load_config", return_value=self._config()):
             target = resolve_device_config(
                 device="192.168.1.200", host=None, username="admin", password="secret"
             )
@@ -200,17 +200,17 @@ class TestResolveDeviceConfig:
         import typer
 
         with (
-            patch("axis_cam.cli.load_config", return_value=self._config()),
+            patch("axis_cam.cli.context.load_config", return_value=self._config()),
             pytest.raises(typer.Exit),
         ):
             resolve_device_config(device=None, host=None, username=None, password=None)
 
 
-class TestResolvedDeviceOpen:
-    """ResolvedDevice.open passes every transport setting to the device class."""
+class TestDeviceContextOpen:
+    """DeviceContext.open passes every transport setting to the device class."""
 
     def test_open_passes_transport_settings(self):
-        target = ResolvedDevice(
+        target = DeviceContext(
             host="10.0.0.5",
             username="u",
             password="p",
@@ -219,8 +219,9 @@ class TestResolvedDeviceOpen:
             https=False,
             ssl_verify=True,
             timeout=5.0,
+            use_digest_auth=True,
         )
-        dev = target.open(use_digest_auth=True)
+        dev = target.open()
         assert type(dev).__name__ == "AxisSpeaker"
         assert dev.client.base_url == "http://10.0.0.5:8080"
         assert dev.client.verify_ssl is True
@@ -228,10 +229,16 @@ class TestResolvedDeviceOpen:
         assert dev.client.use_digest_auth is True
 
     def test_open_defaults_to_https_and_verified_flag_from_config(self):
-        target = ResolvedDevice(
-            host="10.0.0.5", username="u", password="p", port=8443, device_type="camera"
+        target = DeviceContext(
+            host="10.0.0.5",
+            username="u",
+            password="p",
+            port=8443,
+            device_type="camera",
+            use_digest_auth=False,
         )
-        dev = target.open(use_digest_auth=False)
+        dev = target.open()
+        assert dev.client.use_digest_auth is False
         assert dev.client.base_url == "https://10.0.0.5:8443"
 
 

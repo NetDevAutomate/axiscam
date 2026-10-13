@@ -104,7 +104,7 @@ class TestCliReportsAxisErrors:
             async def __aexit__(self, *exc):
                 return None
 
-        monkeypatch.setattr(cli.ResolvedDevice, "open", lambda self, **kw: FailingDevice())
+        monkeypatch.setattr(cli.DeviceContext, "open", lambda self: FailingDevice())
 
         result = runner.invoke(
             app, ["info", "--host", "192.168.1.10", "-u", "admin", "-p", "secret"]
