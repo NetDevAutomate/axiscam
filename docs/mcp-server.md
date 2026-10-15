@@ -37,6 +37,7 @@ src/axis_cam/mcp_server/
   devices.py     DeviceResolver protocol, ConfigResolver, device-name enum
   plans.py       single-use plan store
   redact.py      Scrubber and parameter redaction
+  resources.py   read-only resources
   tools/read.py, audit.py, backup.py, write.py   each exposes register(deps)
 ```
 
@@ -56,6 +57,17 @@ src/axis_cam/mcp_server/
 | `plan_restore(device, backup_id)` | Diff a backup against the device; returns a plan handle. | - |
 | `plan_account_change(device, account, action, role)` | Plan a role change/removal and say what the lockout guard would refuse. | - |
 | `apply_plan(plan_id)` | Ask the human to confirm the stored plan, then apply it. | **device** |
+
+## Resources
+
+Read-only, and fixed while the server runs, so a host may cache them. Live
+device state is never a resource; that is what the read tools are for.
+
+| URI | Content |
+|---|---|
+| `axiscam://checks` | Every check `security_audit` runs: id, title, severity, guide reference, and for parameter checks the parameter and hardened values. Derived from the audit itself, so it cannot drift. `data_dependent` names the checks that only appear when their data is readable. |
+| `axiscam://schemas/{module}` | JSON Schema of the `value` `read_module` returns for that module. |
+| `axiscam://backups/{backup_id}/manifest` | A backup's manifest, including `contains_credentials` (names only). Same `backup_id` validation as the tools. |
 
 ## Applying a plan
 

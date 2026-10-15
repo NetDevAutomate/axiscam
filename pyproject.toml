@@ -116,7 +116,7 @@ exclude_lines = [
 # (see docs/plans/2026-10-12-admin-and-modularity-review.md).
 # Raise this as each phase adds tests; never lower it. Two points of headroom so
 # one platform-specific probe cannot flip the gate.
-fail_under = 74
+fail_under = 75
 
 [tool.mypy]
 python_version = "3.12"
