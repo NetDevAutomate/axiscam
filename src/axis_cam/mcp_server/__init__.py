@@ -1,10 +1,11 @@
-"""MCP server over the ``axis_cam`` library (Phase A: read and plan).
+"""MCP server over the ``axis_cam`` library (read, plan, and confirmed apply).
 
 The server is a thin adapter: every tool composes library calls that already
 exist (``read()`` on a registered module, ``collect_report``, ``run_audit``,
 ``create_backup``, ``plan_param_restore``) and returns a Pydantic envelope.
-Nothing here talks VAPIX directly, and nothing here writes to a device —
-``apply_plan`` is Phase B, behind a confirmation the server renders itself.
+Nothing here talks VAPIX directly. Exactly one tool writes to a device:
+``apply_plan``, and only after the server has asked the human to confirm the
+stored plan (MCP elicitation); hosts that cannot ask get a refusal.
 
 Design record: ``docs/plans/2026-10-14-mcp-server-design-decision.md``.
 

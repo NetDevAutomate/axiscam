@@ -227,3 +227,50 @@ class TestAccounts:
 
 def test_params_fixture_has_the_label() -> None:
     assert PARAMS["root.Image.I0.Name"] == "View Area 1"
+
+
+class TestHonestyAndLocking:
+    async def test_instructions_name_the_one_write(self) -> None:
+        async with Client(build_server(two_cameras())) as client:
+            instructions = client.instructions or ""
+        assert "Nothing here writes" not in instructions
+        assert "apply_plan" in instructions and "confirm" in instructions
+
+    async def test_two_applies_on_one_device_never_overlap(self, tmp_path: Path) -> None:
+        import asyncio
+
+        resolver = two_cameras()
+        dev = resolver.device("back_of_house")
+        active = 0
+        peak = 0
+
+        async def slow_set_role(*args: Any, **kwargs: Any) -> None:
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            await asyncio.sleep(0.05)
+            active -= 1
+
+        dev.users.set_role = AsyncMock(side_effect=slow_set_role)
+        server = build_server(resolver, backup_root=tmp_path)
+        async with Client(server, elicitation_callback=Human()) as client:
+            plans = [
+                (
+                    await client.call_tool(
+                        "plan_account_change",
+                        {
+                            "device": "back_of_house",
+                            "account": acct,
+                            "action": "set_role",
+                            "role": "operator",
+                        },
+                    )
+                ).structured_content["plan_id"]
+                for acct in ("second", "viewer1")
+            ]
+            results = await asyncio.gather(
+                *(client.call_tool("apply_plan", {"plan_id": p}) for p in plans)
+            )
+        assert [r.structured_content["status"] for r in results] == ["applied", "applied"]
+        assert dev.users.set_role.await_count == 2
+        assert peak == 1
