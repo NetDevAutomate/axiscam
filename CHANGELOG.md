@@ -14,6 +14,9 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   and plan tools over the library, no device writes (`docs/mcp-server.md`).
   Device arguments are an enum of configured names; outputs are scrubbed of the
   device password and credential-like parameter values are redacted.
+- `apply_plan`: applies a stored plan only after the server asks the human through
+  MCP elicitation; fails closed on hosts without it (kiro-cli 2.30.0 declares none).
+  Single-use, serial-bound, refused on drift, one write at a time per device.
 - `axis_cam.connection.DeviceConnection` and console-free `axis_cam.fleet.run_fleet`
   (progress callback, per-device timeout), extracted from the CLI.
 

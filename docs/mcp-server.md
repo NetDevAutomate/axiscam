@@ -1,8 +1,9 @@
 # MCP server
 
 `axiscam-mcp` exposes the `axis_cam` library to an MCP host (Kiro, Claude, any
-client speaking the Model Context Protocol) over stdio. **Phase A is read and
-plan only: no tool writes to a device.** Design record:
+client speaking the Model Context Protocol) over stdio. Twelve tools read and
+plan; one, `apply_plan`, writes -- and only after the server has asked the human
+to confirm. Design record:
 [`plans/2026-10-14-mcp-server-design-decision.md`](plans/2026-10-14-mcp-server-design-decision.md).
 
 ## Install and run
@@ -41,10 +42,34 @@ Host configuration (Kiro `mcp.json` shape):
 | `backup_list` / `backup_verify(backup_id)` | List, and re-hash against the manifest. | - |
 | `plan_restore(device, backup_id)` | Diff a backup against the device; returns a plan handle. | - |
 | `plan_account_change(device, account, action, role)` | Plan a role change/removal and say what the lockout guard would refuse. | - |
+| `apply_plan(plan_id)` | Ask the human to confirm the stored plan, then apply it. | **device** |
 
-Plans are held in memory for 10 minutes and nothing in this version applies
-them. `apply_plan` is Phase B and will require a confirmation the server renders
-from the stored plan; a host that cannot show it will get plan-only behaviour.
+## Applying a plan
+
+`apply_plan(plan_id)` is the only write. In order:
+
+1. **The host must be able to ask a human.** The server checks that the client
+   declared the MCP *elicitation* capability. If not, the call is an error and
+   nothing is written: the model that holds a plan handle cannot approve its own
+   plan, and a host's tool auto-approve is not a human decision either.
+2. **The server renders the question from the stored plan** -- device, serial
+   number and every change (credentials redacted) -- never from model input.
+   Decline or cancel writes nothing and keeps the plan.
+3. **Single use.** An approved plan is consumed whatever happens next.
+4. **Same device, unchanged.** The serial number is re-read and must match; for a
+   restore every planned parameter must still hold the value the plan saw; for an
+   account the role must be unchanged. Otherwise `refused`.
+5. One write at a time per device (a lock), each parameter verified by reading it
+   back; the library's lockout guard still applies to account changes.
+
+Plans live in memory for 10 minutes; a restart forgets them.
+
+**Host support, checked 2026-10-15:** kiro-cli 2.30.0 declares *no* client
+capabilities when it connects (`initialize` from "Q DEV CLI" carries
+`capabilities: {}`), so in a Kiro CLI or Kiro Crew session `apply_plan` refuses
+and the plan tools are the useful part. Kiro IDE 0.10+ and other hosts with
+form elicitation (Claude Desktop, VS Code) can apply. Until then, apply with the
+CLI: `axiscam backup restore` / `axiscam accounts set-role`.
 
 ## Safety rules (each one has a test)
 
@@ -64,5 +89,5 @@ from the stored plan; a host that cannot show it will get plan-only behaviour.
   (`backup-...`, no `/`, no `..`); there is no destination argument.
 
 Not exposed by design: factory default, reboot, firmware, arbitrary parameter
-set, lockout overrides, crash/server-report downloads, network-parameter
+set (only a stored, confirmed plan), lockout overrides, crash/server-report downloads, network-parameter
 restores, fleet writes, and raw config/backup bytes.
