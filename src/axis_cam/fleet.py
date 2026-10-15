@@ -18,15 +18,32 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from axis_cam.exceptions import AxisError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Sequence
 
-    from axis_cam.connection import DeviceConnection
     from axis_cam.devices.base import AxisDevice
+
+
+class Openable(Protocol):
+    """A fleet target: an address to report and a way to open the device.
+
+    :class:`axis_cam.connection.DeviceConnection` is one; the MCP server
+    passes a small adapter over its device resolver.
+    """
+
+    @property
+    def host(self) -> str:
+        """Address shown in the result row."""
+        ...
+
+    def open(self) -> AxisDevice:
+        """A fresh device object (an async context manager)."""
+        ...
+
 
 #: How many devices are worked on at once. Cameras are small computers; a
 #: full report or backup per device is real work for them.
@@ -49,7 +66,7 @@ class FleetResult[T]:
 
 
 async def run_fleet[T](
-    targets: Sequence[tuple[str, DeviceConnection]],
+    targets: Sequence[tuple[str, Openable]],
     operation: Callable[[AxisDevice], Awaitable[T]],
     *,
     concurrency: int = DEFAULT_CONCURRENCY,
@@ -75,7 +92,7 @@ async def run_fleet[T](
     total = len(targets)
     done = 0
 
-    async def one(name: str, conn: DeviceConnection) -> FleetResult[T]:
+    async def one(name: str, conn: Openable) -> FleetResult[T]:
         nonlocal done
         async with semaphore:
             try:
@@ -116,4 +133,4 @@ def fleet_json(
     }
 
 
-__all__ = ["DEFAULT_CONCURRENCY", "FleetResult", "fleet_json", "run_fleet"]
+__all__ = ["DEFAULT_CONCURRENCY", "FleetResult", "Openable", "fleet_json", "run_fleet"]
