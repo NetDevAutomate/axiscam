@@ -1,4 +1,4 @@
-"""The axiscam MCP server (Phase A: read and plan, no writes to devices).
+"""The axiscam MCP server: read and plan tools, and one confirmed write.
 
 :func:`build_server` assembles an ``mcp`` v2 ``MCPServer`` over a
 :class:`~axis_cam.mcp_server.devices.DeviceResolver`; :func:`main` runs it on
@@ -212,11 +212,14 @@ def build_server(
         "axiscam",
         version=__version__,
         instructions=(
-            "Read-only access to configured Axis devices: module reads, reports, "
-            "security audits, parameter queries (credentials redacted), backups on "
-            "the server's own disk, and change plans. Nothing here writes to a device."
+            "Access to configured Axis devices: module reads, reports, security audits, "
+            "parameter queries (credentials redacted), backups on the server's own disk, "
+            "and change plans. Only apply_plan writes to a device, and only after the "
+            "server has asked the human to confirm the stored plan; on hosts that cannot "
+            "ask, it refuses and writes nothing."
         ),
-        cache_hints={"tools/list": CacheHint(ttl_ms=TOOLS_LIST_TTL_MS, scope="public")},
+        # private: the device enum in every schema is this user's config, not shareable
+        cache_hints={"tools/list": CacheHint(ttl_ms=TOOLS_LIST_TTL_MS, scope="private")},
     )
 
     def scrubber(name: str) -> Scrubber:
@@ -494,7 +497,7 @@ def build_server(
         problems = verify_backup(backup_path(backup_id))
         return BackupCheck(backup_id=backup_id, ok=not problems, problems=problems)
 
-    # -- plans (minted, never applied in Phase A) -------------------------------
+    # -- plans (minted here; applied only by apply_plan after confirmation) ---
 
     @tool(STATEFUL)
     async def plan_restore(device: DeviceName, backup_id: str) -> PlanResult:  # type: ignore[valid-type]

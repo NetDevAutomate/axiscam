@@ -1,10 +1,9 @@
-"""Server-minted plans: the only thing a future ``apply_plan`` will accept.
+"""Server-minted plans: the only thing ``apply_plan`` will accept.
 
 A plan records *what* would change on *which* device (by serial number) and
-when it stops being valid. Phase A only mints and lists them — nothing in this
-server applies a plan. Phase B adds ``apply_plan`` behind a confirmation the
-server renders from the stored plan (a handle proves sequencing, not consent;
-see the design decision).
+when it stops being valid. ``apply_plan`` applies one only after a confirmation
+the server renders from the stored plan -- a handle proves sequencing, not
+consent (see the design decision) -- and consumes it on approval.
 
 Plans live in memory: a restart forgets them, which is the safe direction.
 """

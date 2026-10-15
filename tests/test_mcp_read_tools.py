@@ -38,6 +38,8 @@ class TestToolsList:
         assert names == sorted(TOOL_NAMES)
         assert len(names) == 13
         assert first.ttl_ms is not None and first.ttl_ms > 0
+        # the device enum is this user's config: never shareable across users
+        assert first.cache_scope == "private"
         assert capsys.readouterr().out == ""
 
     async def test_only_apply_plan_is_destructive(self) -> None:
