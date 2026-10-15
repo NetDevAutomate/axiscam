@@ -215,8 +215,29 @@ async def plan_param_restore(
     return plan
 
 
+class RestoreDriftError(ValueError):
+    """The device is not in the state the plan was made against; nothing was written.
+
+    Attributes:
+        names: Planned parameters whose live value no longer matches the plan's
+            ``current`` (empty when the refusal is a serial-number mismatch).
+    """
+
+    def __init__(self, message: str, names: list[str] | None = None) -> None:
+        super().__init__(message)
+        self.names = list(names or [])
+
+
 async def apply_param_restore(device: AxisDevice, plan: RestorePlan) -> list[ChangeResult]:
     """Write every change in ``plan``, one parameter at a time, verifying each.
+
+    Before the first write the device is read again: if its serial number is
+    not the backup's, or any planned parameter no longer holds the value the
+    plan saw, :class:`RestoreDriftError` is raised and nothing is written.
+    The plan was a diff against a moment that has passed (a human read it,
+    someone else may have changed the device); applying it now would
+    overwrite that change without anyone having seen it. Drifted parameters
+    are named, never their values (some are credentials).
 
     A refusal by the device (``# Error`` body — a value it will not accept, or
     a parameter its definitions did not flag) is recorded for that change and
@@ -224,8 +245,26 @@ async def apply_param_restore(device: AxisDevice, plan: RestorePlan) -> list[Cha
     failure too: the device said OK but did not keep the value.
 
     Raises:
+        RestoreDriftError: The device changed since the plan, or is another device.
         AxisAuthenticationError / AxisConnectionError: Propagate immediately.
     """
+    if not plan.changes:
+        return []
+    live = await device.params.export()
+    planned_serial = plan.device_identity.get("serial_number")
+    live_serial = live.get(SERIAL_PARAM)
+    if planned_serial and live_serial and live_serial.upper() != planned_serial.upper():
+        raise RestoreDriftError(
+            f"device serial is {live_serial}, the plan was made for {planned_serial}; "
+            "nothing was written"
+        )
+    drifted = [c.name for c in plan.changes if live.get(c.name) != c.current]
+    if drifted:
+        raise RestoreDriftError(
+            "the device changed since the plan was made, nothing was written: "
+            + ", ".join(drifted),
+            drifted,
+        )
     results: list[ChangeResult] = []
     for change in plan.changes:
         try:

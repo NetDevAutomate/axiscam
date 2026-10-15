@@ -51,7 +51,13 @@ from axis_cam.mcp_server.plans import PlanStore, StoredPlan
 from axis_cam.mcp_server.redact import REDACTED, Scrubber, is_secret_name, redact_params
 from axis_cam.models import UserRole
 from axis_cam.report import collect_report
-from axis_cam.restore import ParamChange, RestorePlan, apply_param_restore, plan_param_restore
+from axis_cam.restore import (
+    ParamChange,
+    RestoreDriftError,
+    RestorePlan,
+    apply_param_restore,
+    plan_param_restore,
+)
 
 #: Every tool this server registers, in the order they are documented.
 TOOL_NAMES: tuple[str, ...] = (
@@ -624,18 +630,16 @@ def build_server(
 
     async def apply_restore(dev: AxisDevice, plan: StoredPlan) -> ApplyResult:
         wanted = plan.private["changes"]
-        live = await dev.params.export()
-        drifted = [c["name"] for c in wanted if live.get(c["name"]) != c["current"]]
-        if drifted:
-            return ApplyResult(
-                plan_id=plan.plan_id,
-                device=plan.device,
-                status="refused",
-                reason="the device changed since the plan was made: " + ", ".join(drifted),
-            )
         restore = RestorePlan(
-            changes=[ParamChange(c["name"], c["current"], c["target"]) for c in wanted]
+            changes=[ParamChange(c["name"], c["current"], c["target"]) for c in wanted],
+            device_identity={"serial_number": plan.serial},
         )
+        try:
+            applied = await apply_param_restore(dev, restore)
+        except RestoreDriftError as exc:
+            return ApplyResult(
+                plan_id=plan.plan_id, device=plan.device, status="refused", reason=str(exc)
+            )
         results = [
             AppliedChange(
                 name=r.change.name,
@@ -644,7 +648,7 @@ def build_server(
                 if not is_secret_name(r.change.name)
                 else ("verified" if r.ok else "failed (credential: detail withheld)"),
             )
-            for r in await apply_param_restore(dev, restore)
+            for r in applied
         ]
         failed = sum(not r.ok for r in results)
         status = "applied" if not failed else ("failed" if failed == len(results) else "partial")

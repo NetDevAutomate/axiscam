@@ -261,6 +261,24 @@ class TestRestore:
         text = _text(result)
         assert "Restored 1/1" in text and "verified" in text
 
+    def test_change_between_plan_and_apply_refuses_and_writes_nothing(self, no_config, tmp_path):
+        root = self._backup(tmp_path, dict(self.CURRENT, **{"root.Audio.MaxListeners": "20"}))
+        device = self._device()
+        # first read is the plan; by the time of apply someone has set it to 15
+        device.params.export = AsyncMock(  # type: ignore[attr-defined]
+            side_effect=[
+                dict(self.CURRENT),
+                dict(self.CURRENT, **{"root.Audio.MaxListeners": "15"}),
+            ]
+        )
+
+        result = self._run(device, [str(root), "--yes"])
+
+        assert result.exit_code == 1, result.output
+        text = _text(result)
+        assert "changed since the plan" in text and "root.Audio.MaxListeners" in text
+        device.params.set.assert_not_awaited()  # type: ignore[attr-defined]
+
     def test_network_excluded_by_default_and_warned_when_included(self, no_config, tmp_path):
         root = self._backup(
             tmp_path, dict(self.CURRENT, **{"root.Network.eth0.IPAddress": "192.168.10.99"})

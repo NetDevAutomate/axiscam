@@ -37,7 +37,7 @@ from axis_cam.cli.options import (
     UsernameOption,
     YesOption,
 )
-from axis_cam.restore import RestorePlan, apply_param_restore, plan_param_restore
+from axis_cam.restore import RestoreDriftError, RestorePlan, apply_param_restore, plan_param_restore
 from axis_cam.secrets import is_secret_name
 
 BackupDirArgument = Annotated[
@@ -332,7 +332,12 @@ def backup_restore(
             )
             if not confirm_write(write_plan, yes=yes, dry_run=dry_run):
                 return
-            results = await apply_param_restore(dev, plan)
+            try:
+                results = await apply_param_restore(dev, plan)
+            except RestoreDriftError as exc:
+                console.print(f"[red]Refused:[/red] {exc}", style="bold")
+                console.print("  Run the restore again to see a fresh plan.")
+                raise typer.Exit(1) from None
             failed = [r for r in results if not r.ok]
             table = Table(
                 title=f"Restored {len(results) - len(failed)}/{len(results)} parameter(s)"
