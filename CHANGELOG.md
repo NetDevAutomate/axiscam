@@ -21,6 +21,9 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   (progress callback, per-device timeout), extracted from the CLI.
 
 ### Fixed
+- `backup restore` re-reads the device before writing and refuses, writing
+  nothing, if the serial number differs or a planned parameter changed since the
+  plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.
 - Backups now say they hold credentials: `manifest.json` lists the credential
   parameters in `params.json` (`contains_credentials`) and `backup show` warns.
   `backup restore` leaves them alone unless `--include-secrets` and never prints

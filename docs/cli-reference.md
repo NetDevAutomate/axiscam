@@ -858,6 +858,11 @@ flowchart LR
   the device no longer has.
 - `params.json` is checked against the manifest's hash before anything is read
   from it; a damaged or hand-edited file is refused with exit 1.
+- Immediately before the first write the device is read again. If its serial
+  number is not the backup's, or any planned parameter no longer has the value
+  the plan showed (someone changed it while you were reading the plan), the run
+  is refused with exit 1 and nothing is written; the drifted parameters are
+  named, never their values. Run the restore again for a fresh plan.
 - The device's refusal of a parameter (`# Error: Error setting …`) is recorded
   for that parameter and the run continues; a 401 or a connection failure aborts.
 - `-v` lists every change as `name: 'current' -> 'target'`.

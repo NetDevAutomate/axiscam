@@ -15,6 +15,7 @@ from axis_cam.restore import (
     SERIAL_PARAM,
     ChangeResult,
     ParamChange,
+    RestoreDriftError,
     SkipReason,
     apply_param_restore,
     diff_params,
@@ -346,7 +347,7 @@ class TestPlan:
         assert [c.name for c in plan.changes] == ["root.Audio.MaxListeners"]
         assert plan.backup_dir == root and plan.device_identity["serial_number"] == "B8A44F9F0228"
         device.params.definitions.assert_awaited_once()
-        device.params.set.assert_not_awaited()
+        cast("MagicMock", device.params).set.assert_not_awaited()
 
     async def test_plan_uses_the_device_definitions_to_skip_read_only(self, tmp_path):
         root = _backup_dir(tmp_path, dict(CURRENT, **{"root.Brand.Brand": "ACME"}))
@@ -377,6 +378,52 @@ class TestPlan:
 
 
 class TestApply:
+    async def test_drift_since_the_plan_refuses_before_any_write(self):
+        target = dict(
+            CURRENT,
+            **{"root.Audio.MaxListeners": "20", "root.Image.I0.Appearance.Compression": "40"},
+        )
+        plan = diff_params(CURRENT, target)
+        # someone changed one planned parameter between plan and apply
+        device = _device(dict(CURRENT, **{"root.Image.I0.Appearance.Compression": "35"}))
+
+        with pytest.raises(RestoreDriftError) as excinfo:
+            await apply_param_restore(device, plan)
+
+        assert excinfo.value.names == ["root.Image.I0.Appearance.Compression"]
+        assert "root.Image.I0.Appearance.Compression" in str(excinfo.value)
+        cast("MagicMock", device.params).set.assert_not_awaited()
+
+    async def test_drifted_credential_is_named_but_its_value_is_not(self):
+        current = dict(CURRENT, **{"root.SNMP.ReadCommunity": "old-community"})
+        target = dict(current, **{"root.SNMP.ReadCommunity": "backup-community"})
+        plan = diff_params(current, target, include_secrets=True)
+        device = _device(dict(current, **{"root.SNMP.ReadCommunity": "rotated-community"}))
+
+        with pytest.raises(RestoreDriftError) as excinfo:
+            await apply_param_restore(device, plan)
+
+        message = str(excinfo.value)
+        assert "root.SNMP.ReadCommunity" in message
+        assert not any(
+            v in message for v in ("old-community", "rotated-community", "backup-community")
+        )
+
+    async def test_a_different_device_refuses_before_any_write(self):
+        target = dict(CURRENT, **{"root.Audio.MaxListeners": "20"})
+        plan = diff_params(CURRENT, target)
+        plan.device_identity = {"serial_number": "ACCC8E999999"}
+        device = _device(CURRENT)
+
+        with pytest.raises(RestoreDriftError, match="serial"):
+            await apply_param_restore(device, plan)
+        cast("MagicMock", device.params).set.assert_not_awaited()
+
+    async def test_an_empty_plan_reads_nothing(self):
+        device = _device(CURRENT)
+        assert await apply_param_restore(device, diff_params(CURRENT, CURRENT)) == []
+        cast("MagicMock", device.params).export.assert_not_awaited()
+
     async def test_writes_each_change_and_verifies(self):
         target = dict(
             CURRENT,
