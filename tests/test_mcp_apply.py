@@ -8,6 +8,7 @@ what kiro-cli 2.30.0 does today -- and must get an error and no write.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Any, Literal
 from unittest.mock import AsyncMock
 
@@ -21,6 +22,8 @@ from tests.mcp_fakes import ACCOUNTS, CANARY, PARAMS, FakeResolver, two_cameras
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 
 def _text(result: Any) -> str:
@@ -274,3 +277,52 @@ class TestHonestyAndLocking:
         assert [r.structured_content["status"] for r in results] == ["applied", "applied"]
         assert dev.users.set_role.await_count == 2
         assert peak == 1
+
+
+class TestTheConfirmationPath:
+    """The resolver and its confirmation text, which run before the tool body."""
+
+    async def test_a_crash_in_the_confirmation_resolver_shows_and_logs_no_text(
+        self, caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+
+        class ExplodingStore(PlanStore):
+            def get(self, plan_id: str) -> Any:
+                raise RuntimeError(f"resolver saw {CANARY} for {plan_id}")
+
+        server = build_server(two_cameras(), plans=ExplodingStore())
+        async with Client(server, elicitation_callback=Human()) as client:
+            result = await client.call_tool("apply_plan", {"plan_id": "plan-1"})
+        wire = _text(result)
+        captured = capfd.readouterr()
+        assert result.is_error is True
+        assert "internal error: RuntimeError" in wire
+        for surface in (wire, caplog.text, captured.out, captured.err):
+            assert CANARY not in surface
+        assert "Traceback" not in caplog.text
+
+    async def test_the_confirmation_never_shows_the_device_password(self, tmp_path: Path) -> None:
+        # A non-secret name can still hold the password (a credential in a URL);
+        # the plan returned to the model is scrubbed, and so is what the human sees.
+        resolver = two_cameras()
+        _, state = _writable(resolver)
+        url = "root.Event.E0.Actions.A0.Url"
+        state[url] = f"http://ops:{CANARY}@192.0.2.9/hook"
+        human = Human()
+        server = build_server(resolver, backup_root=tmp_path)
+        async with Client(server, elicitation_callback=human) as client:
+            backup_id = (
+                await client.call_tool("backup_create", {"device": "back_of_house"})
+            ).structured_content["backup_id"]
+            state[url] = "http://192.0.2.9/hook"  # drifted; the restore would put it back
+            plan = (
+                await client.call_tool(
+                    "plan_restore", {"device": "back_of_house", "backup_id": backup_id}
+                )
+            ).structured_content
+            assert CANARY not in str(plan)
+            await client.call_tool("apply_plan", {"plan_id": plan["plan_id"]})
+        assert len(human.seen) == 1
+        assert url in human.seen[0]
+        assert CANARY not in human.seen[0]

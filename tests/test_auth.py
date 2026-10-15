@@ -223,3 +223,45 @@ class TestSettlingNeedsSuccess:
             response = await client.get("/axis-cgi/b.cgi")
 
         assert response.status_code == 200 and client.auth_scheme == "digest"
+
+
+class TestSentRecord:
+    """Every Authorization value the client sends is remembered.
+
+    The secrets boundary needs them: a reply, or a download decoded later (the
+    server-report tarball), can quote any of them -- AUTO mode's Basic attempt,
+    or an earlier request's Digest hash -- not only the header of the request
+    whose response is at hand.
+    """
+
+    @respx.mock
+    async def test_auto_mode_records_the_basic_attempt_and_the_digest_retry(self):
+        respx.get(URL).mock(side_effect=digest_only_device)
+        async with VapixClient(HOST, "root", "pw", port=443, use_https=True) as client:
+            await client.get("/axis-cgi/basicdeviceinfo.cgi")
+            assert client._auth is not None
+            sent = list(client._auth.sent)
+        assert BASIC_OK in sent
+        assert any(v.startswith("Digest ") and 'username="root"' in v for v in sent)
+
+    @respx.mock
+    async def test_a_repeated_basic_header_is_recorded_once(self):
+        respx.get(URL).mock(side_effect=basic_only_device)
+        async with VapixClient(HOST, "root", "pw", port=443, use_https=True) as client:
+            for _ in range(3):
+                await client.get("/axis-cgi/basicdeviceinfo.cgi")
+            assert client._auth is not None
+            assert list(client._auth.sent) == [BASIC_OK]
+
+    @respx.mock
+    async def test_the_record_is_bounded(self):
+        from axis_cam.auth import SENT_MEMORY
+
+        respx.get(URL).mock(side_effect=digest_only_device)
+        async with VapixClient(
+            HOST, "root", "pw", port=443, use_https=True, auth_mode="digest"
+        ) as client:
+            for _ in range(SENT_MEMORY + 8):  # every Digest header differs (nc, cnonce)
+                await client.get("/axis-cgi/basicdeviceinfo.cgi")
+            assert client._auth is not None
+            assert len(client._auth.sent) == SENT_MEMORY

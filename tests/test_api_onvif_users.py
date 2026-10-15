@@ -432,13 +432,26 @@ class TestSentCredentialNeverReachesTheError:
         assert isinstance(error, AxisEchoError)
         assert _token_fragments_in(str(error)) == []
 
-    async def test_a_fault_holding_the_configured_password_is_withheld(self):
+    async def test_a_fault_reason_holding_the_configured_password_is_withheld(self):
         # The plain password is not an echo of the request (data may hold it),
-        # but a fault that carries it is quoted by nothing, reason included.
+        # but a fault reason that carries it is not quoted. The fault itself --
+        # its class and codes -- still reaches the caller.
         def fault(_: str) -> str:
             return FAULT_INVALID_ARGS.replace("Invalid argument", f"bad pwd {ECHO_PASSWORD}")
 
         error = await self._call(self._echo(400, fault))
-        assert isinstance(error, AxisUserError)
+        assert isinstance(error, AxisSoapFault)
+        assert error.subcodes == ["ter:InvalidArgs"]
         assert ECHO_PASSWORD not in str(error)
+        assert ECHO_PASSWORD not in error.reason
         assert "withheld: the reply contains the configured password" in str(error)
+
+    async def test_a_genuine_fault_survives_a_password_that_appears_in_the_envelope(self):
+        # Opus F6: "2003" is in the SOAP 1.2 namespace of every reply. The fault
+        # quotes only its codes and reason, so nothing needs withholding.
+        api, client = _api([_response(FAULT_USERNAME_MISSING, 400)])
+        client.password = "2003"  # pragma: allowlist secret
+        with pytest.raises(AxisSoapFault) as caught:
+            await api.list()
+        assert caught.value.subcodes == ["ter:InvalidArgVal", "ter:UsernameMissing"]
+        assert "no user with that name" in str(caught.value)

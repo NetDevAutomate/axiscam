@@ -162,3 +162,72 @@ and no traceback.
 - Pre-existing: module methods that turn a genuine 404 into defaults are reported as `ok`
   by `read_module` on devices without API discovery (Opus F1's mechanism, outside echoes).
   Fix it in the modules, not at the MCP layer.
+
+## Milestone 3: merge review (commit `f44827e`)
+
+Two seats reviewed `f44827e` against `9199ad8` (`claude-opus-5.5` MERGE-with-follow-ups,
+`gpt-5.6-sol` BLOCK). `deepseek-3.2` was dropped: it leaked tool-call markup in both earlier
+rounds and its findings did not reproduce. Both seats' probes were re-run by the coordinator
+before anything was changed; each fix below went in test-first (RED), and every defence was
+mutation-checked (ten mutations, each turns a test red).
+
+**D9. The client remembers every credential it sent (GPT F1, Opus F2).** `VapixAuth` records
+each `Authorization` value it sends (`sent`, a `deque(maxlen=64)`; Digest sends a new value
+per request). `_check_response`, the redirect hook and `refuse_echo` pass that record to
+`quotes_sent_auth(..., sent=...)`. Before this, a Digest login hash was known only for the
+request at hand, so the server-report tarball — decoded after its response is gone, over
+Digest in AUTO mode — reached the log entries with the hash in it. Digest matching now scans
+each hex run in the text once against a set of windows, so the cost does not grow with the
+number of remembered hashes.
+
+**D10. A redirect whose target quotes the credentials is refused before it is followed
+(Opus F1).** A response event hook raises `AxisEchoError` on a 3xx whose `Location` passes
+`quotes_sent_auth`, so httpx never requests the target or logs its URL. Messages quote the
+path the caller asked for (`_check_response(path=...)`), never `response.url` after a
+redirect chose it.
+
+**D11. The confirmation resolver runs inside the boundary (GPT F2, Opus F8).** `apply_plan`'s
+`Resolve(confirm_plan)` runs before the tool body, outside its `contained` wrapper, so a crash
+there was logged by the SDK with its traceback. It is now `Resolve(contained(confirm_plan))`,
+and the elicitation text the human sees is scrubbed like every other output (a value under a
+non-secret name can still hold the password, e.g. a credential in a URL).
+
+**D12. Smaller correctness fixes.**
+- `message/*` joins `_TEXT_TYPES`, so a download labelled `message/http` (what TRACE, the
+  standard request echo, returns) is scanned (Opus F2).
+- `contains_password` recognises lower-case-hex percent-encoding of a non-ASCII password
+  (Opus F7-nit).
+- An ONVIF SOAP fault is parsed first and each field quoted through `error_excerpt`, so a
+  fault that carries the configured password keeps its class and codes while the field that
+  holds the password is withheld — previously the whole fault was replaced (Opus F6).
+- `check_connectivity` returning `False` for an echoing peer is documented as intended
+  (fail-closed) and pinned by a test (Opus F5).
+
+**Tests added:** `TestSentRecord` (auth), `TestEchoBeyondTheReplyBody` (client: same-connection
+Digest replay, redirect, `message/http`, connectivity), `TestServerReportDigestEcho` (logs),
+`TestEverythingTheClientSent` and `TestPasswordSpellingsLowerHex` (secrets), the ONVIF
+fault-survives and password-withheld cases, `TestTheConfirmationPath` (apply), and the sync-tool
+crash test (read tools).
+
+**Stated limits added:**
+
+- A Digest `response` hash replayed from a *different* connection (a separate client, or
+  another process) is not recognised: the current client never sent it, so to a text filter it
+  is indistinguishable from stored device data, and a spent Digest hash is not a reusable
+  credential. The *same-connection* replay — an earlier request's hash echoed into a later
+  reply — is refused (D9). The configured Basic token is always a needle, connection or not.
+
+**Filed (F10–F12):**
+
+- **F10:** the SDK's output-conversion step runs outside `contained` (`tools/base.py`), so a
+  value that fails result conversion is logged by the SDK. Only an authoring bug reaches it
+  today — every tool returns a typed model — but a resolver/output wrapper at registration
+  would close it fully.
+- **F11:** the scan reads `response.text` (UTF-8 unless the header says otherwise) while
+  `response.json()` lets `json.loads` detect UTF-16/32; a peer that returns UTF-16 JSON with no
+  charset is scanned differently from how it is parsed. Pre-existing; it needs a deliberate
+  re-encoding peer, already a stated limit. Fix: `json.loads(response.text...)`.
+- **F12:** the in-band 2xx error sinks in `api/users.py`, `api/param.py` and `api/time.py`
+  quote device text uncut and do not call `error_excerpt`. They sit outside D2's two sinks and
+  only fire on a genuine device error that holds the configured password. Route them through
+  `error_excerpt`.

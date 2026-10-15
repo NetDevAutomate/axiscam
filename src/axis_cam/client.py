@@ -41,11 +41,12 @@ def _path_of(response: httpx.Response) -> str:
 
 
 #: Content types an echo page can come back as; binary downloads are scanned only then.
-_TEXT_TYPES = re.compile(r"^\s*(?:text/|application/(?:[\w.+-]*\+)?(?:json|xml)\b)", re.I)
+#: ``message/http`` is what TRACE, the standard request echo, answers with.
+_TEXT_TYPES = re.compile(r"^\s*(?:text/|message/|application/(?:[\w.+-]*\+)?(?:json|xml)\b)", re.I)
 
 
 def _is_text(response: httpx.Response) -> bool:
-    """Whether the reply says it is text (``text/*``, JSON or XML)."""
+    """Whether the reply says it is text (``text/*``, ``message/*``, JSON or XML)."""
     try:
         content_type = response.headers.get("content-type", "")
     except AttributeError:
@@ -155,6 +156,7 @@ class VapixClient:
             timeout=self.timeout,
             verify=self.verify_ssl,
             follow_redirects=True,
+            event_hooks={"response": [self._refuse_echoing_redirect]},
         )
         return self
 
@@ -212,7 +214,7 @@ class VapixClient:
 
         try:
             response = await client.get(url, params=params)
-            self._check_response(response)
+            self._check_response(response, path=path)
             return response
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -245,7 +247,7 @@ class VapixClient:
 
         try:
             response = await client.post(url, data=data, json=json)
-            self._check_response(response)
+            self._check_response(response, path=path)
             return response
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -273,7 +275,7 @@ class VapixClient:
             response = await client.post(
                 url, content=content, headers={"Content-Type": content_type}
             )
-            self._check_response(response, raise_on_error_status=False)
+            self._check_response(response, path=path, raise_on_error_status=False)
             return response
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -358,7 +360,7 @@ class VapixClient:
         try:
             response = await client.get(url, params=params)
             # Binary: not scanned for echoed credentials (see _check_response).
-            self._check_response(response, scan_reply=False)
+            self._check_response(response, path=path, scan_reply=False)
             return response.content
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -398,7 +400,7 @@ class VapixClient:
         try:
             response = await client.get(url, params=params, timeout=request_timeout)
             # Binary: not scanned for echoed credentials (see _check_response).
-            self._check_response(response, scan_reply=False)
+            self._check_response(response, path=path, scan_reply=False)
             return response.content
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -426,12 +428,13 @@ class VapixClient:
         self,
         response: httpx.Response,
         *,
+        path: str | None = None,
         raise_on_error_status: bool = True,
         scan_reply: bool = True,
     ) -> None:
         """Check HTTP response for errors.
 
-        A reply that quotes the credentials this request sent, in any common
+        A reply that quotes credentials this client sent, in any common
         spelling (:func:`~axis_cam.secrets.quotes_sent_auth`), is refused first,
         whatever its status: no Axis device echoes request headers, so such a
         body is a proxy or peer echoing the request. It is not device data, and
@@ -439,6 +442,9 @@ class VapixClient:
 
         Args:
             response: HTTP response to check.
+            path: The path the caller asked for, which messages quote. Not
+                ``response.url``: after a redirect that is the target, which the
+                reply chose.
             raise_on_error_status: Raise ``AxisDeviceError`` for any other
                 4xx/5xx. ``False`` leaves those to a caller that can read the
                 body (SOAP faults); that caller quotes it only through
@@ -449,17 +455,22 @@ class VapixClient:
                 always is.
 
         Raises:
-            AxisEchoError: The reply quotes the request's credentials.
+            AxisEchoError: The reply quotes credentials this client sent.
             AxisConnectionError: Plain HTTP was sent to a port that expects TLS.
             AxisAuthenticationError: If authentication failed (401).
             AxisPermissionError: If the account may not use the path (403).
             AxisDeviceError: If device returned an error status.
         """
+        where = path if path is not None else _path_of(response)
         if (scan_reply or _is_text(response)) and quotes_sent_auth(
-            response.text, response, username=self.username, password=self.password
+            response.text,
+            response,
+            username=self.username,
+            password=self.password,
+            sent=self._sent(),
         ):
             raise AxisEchoError(
-                f"Refused the reply from {self.host} to {_path_of(response)} "
+                f"Refused the reply from {self.host} to {where} "
                 f"(HTTP {response.status_code}): it quotes this request's credentials, "
                 "so a proxy or peer is echoing requests."
             )
@@ -477,7 +488,7 @@ class VapixClient:
             )
         if response.status_code == 403:
             raise AxisPermissionError(
-                f"Access denied to {self.host}: this account may not use {response.url.path} (403)."
+                f"Access denied to {self.host}: this account may not use {where} (403)."
             )
         if response.status_code >= 400 and raise_on_error_status:
             excerpt = error_excerpt(response.text, password=self.password)
@@ -485,18 +496,55 @@ class VapixClient:
                 f"Device error {response.status_code} from {self.host}: {excerpt}"
             )
 
-    def refuse_echo(self, text: str) -> None:
-        """Refuse device text that quotes this client's credentials.
+    def _sent(self) -> tuple[str, ...]:
+        """Every ``Authorization`` value this client has sent (``VapixAuth.sent``)."""
+        return tuple(self._auth.sent) if self._auth is not None else ()
 
-        For text the client only sees after decoding a binary download (a log
-        file inside the server-report tarball). Without the request at hand only
-        the configured Basic token is known, which is what a Basic request and
-        AUTO mode's first attempt send.
+    async def _refuse_echoing_redirect(self, response: httpx.Response) -> None:
+        """Response hook: refuse a redirect whose target quotes the credentials.
+
+        httpx follows a redirect -- requesting the target and logging its URL --
+        before ``_check_response`` sees the final reply. A target that carries
+        the token is an echo like any other, so it is refused here and never
+        requested.
 
         Raises:
-            AxisEchoError: ``text`` quotes the configured credentials.
+            AxisEchoError: The redirect's ``Location`` quotes credentials this
+                client sent.
         """
-        if quotes_sent_auth(text, None, username=self.username, password=self.password):
+        location = response.headers.get("location")
+        if (
+            response.is_redirect
+            and isinstance(location, str)
+            and quotes_sent_auth(
+                location,
+                response,
+                username=self.username,
+                password=self.password,
+                sent=self._sent(),
+            )
+        ):
+            raise AxisEchoError(
+                f"Refused a redirect from {self.host} at {_path_of(response)} "
+                f"(HTTP {response.status_code}): its target quotes this request's "
+                "credentials, so a proxy or peer is echoing requests."
+            )
+
+    def refuse_echo(self, text: str) -> None:
+        """Refuse device text that quotes credentials this client sent.
+
+        For text the client only sees after decoding a binary download (a log
+        file inside the server-report tarball), when the response is gone: the
+        text is checked against every ``Authorization`` value the client sent
+        (Basic tokens and Digest hashes, ``VapixAuth.sent``) and the configured
+        Basic token.
+
+        Raises:
+            AxisEchoError: ``text`` quotes credentials this client sent.
+        """
+        if quotes_sent_auth(
+            text, None, username=self.username, password=self.password, sent=self._sent()
+        ):
             raise AxisEchoError(
                 f"Refused content from {self.host}: it quotes this client's credentials, "
                 "so a proxy or peer is echoing requests."
@@ -557,6 +605,10 @@ class VapixClient:
 
     async def check_connectivity(self) -> bool:
         """Check if device is reachable and credentials are valid.
+
+        An echoing peer counts as unreachable: its reply is refused
+        (``AxisEchoError``, an ``AxisConnectionError``), because whatever
+        answered is not the device as sent. Call :meth:`get` to see why.
 
         Returns:
             True if device is accessible and authenticated.

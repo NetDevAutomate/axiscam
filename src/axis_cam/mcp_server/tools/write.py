@@ -24,6 +24,7 @@ from axis_cam.mcp_server.deps import (
     STATEFUL,
     WRITE,
     ServerDeps,
+    contained,
 )
 from axis_cam.mcp_server.plans import StoredPlan
 from axis_cam.mcp_server.redact import REDACTED, is_secret_name
@@ -165,7 +166,13 @@ def register(deps: ServerDeps) -> None:
         return f"{head}\nAccount {p['account']} (now {p['current_role']}): {what}."
 
     def confirm_plan(plan_id: str, ctx: Context) -> Elicit[Confirmation]:
-        """Resolver: refuse hosts that cannot ask a human, then ask."""
+        """Resolver: refuse hosts that cannot ask a human, then ask.
+
+        The SDK runs it before the tool body, outside the tool's own
+        ``contained`` wrapper, so it is wrapped itself (``Resolve`` below). The
+        text shown to the human is scrubbed like every other output: a value
+        under a non-secret name can still hold the password (a URL).
+        """
         capabilities = ctx.client_capabilities
         if capabilities is None or capabilities.elicitation is None:
             raise ToolError(
@@ -176,7 +183,7 @@ def register(deps: ServerDeps) -> None:
         plan = store.get(plan_id)
         if plan is None:
             raise ToolError(f"no such plan (unknown or expired): {plan_id}")
-        return Elicit(describe_plan(plan), Confirmation)
+        return Elicit(scrubber(plan.device).text(describe_plan(plan)), Confirmation)
 
     async def apply_restore(dev: AxisDevice, plan: StoredPlan) -> ApplyResult:
         wanted = plan.private["changes"]
@@ -248,7 +255,7 @@ def register(deps: ServerDeps) -> None:
     @tool(WRITE)
     async def apply_plan(
         plan_id: str,
-        answer: Annotated[ElicitationResult[Confirmation], Resolve(confirm_plan)],
+        answer: Annotated[ElicitationResult[Confirmation], Resolve(contained(confirm_plan))],
     ) -> ApplyResult:
         """Apply a plan from plan_restore or plan_account_change, after the human confirms.
 

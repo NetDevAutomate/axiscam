@@ -259,3 +259,47 @@ class TestErrorExcerpt:
     def test_without_a_configured_password(self):
         assert error_excerpt("<h1>Not Found</h1>") == "<h1>Not Found</h1>"
         assert error_excerpt(MagicMock()) == ""  # type: ignore[arg-type]
+
+
+class TestEverythingTheClientSent:
+    """``sent``: every Authorization value the client sent is a needle (milestone-3 council)."""
+
+    HASH = "0123456789abcdef0123456789abcdef"  # pragma: allowlist secret
+    DIGEST = (
+        f'Digest username="root", realm="r", nonce="n", uri="/a", response="{HASH}", '
+        'qop=auth, nc=00000001, cnonce="c"'
+    )
+
+    def test_an_earlier_digest_hash_is_found(self):
+        assert quotes_sent_auth(f'seen response="{self.HASH}"', None, sent=[self.DIGEST])
+
+    def test_an_earlier_header_verbatim_is_found(self):
+        assert quotes_sent_auth(f"echo: {self.DIGEST}", None, sent=[self.DIGEST])
+
+    def test_a_fragment_inside_a_longer_upper_case_hex_run_is_found(self):
+        text = "id=deadbeef" + self.HASH[2:16].upper() + "cafe"
+        assert quotes_sent_auth(text, None, sent=[self.DIGEST])
+
+    def test_unrelated_hex_is_not(self):
+        # A long hex run that is not a window of the Digest response (a device serial,
+        # a stored checksum) must not be mistaken for the hash.
+        hexish = "deadbeefcafef00d1234567890abcdef"  # pragma: allowlist secret
+        assert not quotes_sent_auth(f"checksum {hexish}", None, sent=[self.DIGEST])
+
+    def test_a_sent_basic_header_is_found_by_its_fragments(self):
+        token = base64.b64encode(b"root:Sent-Basic~T3st?").decode()
+        assert quotes_sent_auth(f"x{token[4:20]}x", None, sent=[f"Basic {token}"])
+
+
+class TestPasswordSpellingsLowerHex:
+    """UTF-8 percent-encoding with lower-case hex (milestone-3 council, Opus F7)."""
+
+    def test_lower_case_percent_encoding_of_a_non_ascii_password(self):
+        import re
+
+        password = "Pässwörd Ünïcode-1"  # pragma: allowlist secret
+        upper = urllib.parse.quote(password, safe="")
+        lower = re.sub(r"%[0-9A-F]{2}", lambda m: m.group(0).lower(), upper)
+        assert lower != upper  # precondition: it has escapes with letters
+        assert contains_password(f"reason: {lower}", password)
+        assert contains_password(f"reason: {lower.replace('%20', '+')}", password)  # form style

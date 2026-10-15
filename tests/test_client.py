@@ -13,6 +13,7 @@ from axis_cam.exceptions import (
     AxisConnectionError,
     AxisDeviceError,
     AxisEchoError,
+    AxisPermissionError,
 )
 
 
@@ -464,3 +465,95 @@ class TestEchoRefusal:
         client.refuse_echo("ordinary log line")
         with pytest.raises(AxisEchoError):
             client.refuse_echo(f"debug: authorization={token}")
+
+
+class TestEchoBeyondTheReplyBody:
+    """Echoes the reply body alone does not reveal (milestone-3 council).
+
+    An earlier request's Digest hash replayed later, a redirect whose target
+    carries the token, and a download labelled as an HTTP message.
+    """
+
+    PASSWORD = "Client-Replay~T3st?"  # pragma: allowlist secret
+    CHALLENGE = 'Digest realm="probe", nonce="abc123", algorithm=MD5, qop="auth"'
+
+    def _basic(self) -> VapixClient:
+        return VapixClient(
+            "192.0.2.10", "root", self.PASSWORD, port=443, use_https=True, auth_mode="basic"
+        )
+
+    @respx.mock
+    async def test_a_reply_that_replays_an_earlier_requests_digest_hash_is_refused(self):
+        first: list[str] = []
+
+        def peer(request: httpx.Request) -> httpx.Response:
+            authorization = request.headers.get("Authorization", "")
+            if not authorization.startswith("Digest "):
+                return httpx.Response(401, headers={"WWW-Authenticate": self.CHALLENGE})
+            if request.url.path == "/first":
+                first.append(authorization)
+                return httpx.Response(200, json={"ok": True})
+            # The previous request's header, not this one's.
+            return httpx.Response(
+                200, text=f"last request: {first[0]}", headers={"Content-Type": "text/plain"}
+            )
+
+        respx.route(host="192.0.2.10").mock(side_effect=peer)
+        async with VapixClient("192.0.2.10", "root", self.PASSWORD, auth_mode="digest") as client:
+            await client.get("/first")
+            with pytest.raises(AxisEchoError):
+                await client.get("/second")
+
+    @respx.mock
+    async def test_a_redirect_whose_target_quotes_the_token_is_refused_unfollowed(self):
+        token = base64.b64encode(f"root:{self.PASSWORD}".encode()).decode()
+        respx.get("https://192.0.2.10:443/start").mock(
+            return_value=httpx.Response(302, headers={"Location": f"/r/{token}/x"})
+        )
+        target = respx.route(path__startswith="/r/").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        async with self._basic() as client:
+            with pytest.raises(AxisEchoError) as caught:
+                await client.get("/start")
+        assert not target.called  # never requested, so never logged
+        assert "/start" in str(caught.value)
+        assert token[:8] not in str(caught.value)
+
+    @respx.mock
+    async def test_messages_name_the_path_the_caller_asked_for(self):
+        respx.get("https://192.0.2.10:443/start").mock(
+            return_value=httpx.Response(302, headers={"Location": "/elsewhere"})
+        )
+        respx.get("https://192.0.2.10:443/elsewhere").mock(return_value=httpx.Response(403))
+        async with self._basic() as client:
+            with pytest.raises(AxisPermissionError) as caught:
+                await client.get("/start")
+        assert "/start" in str(caught.value)
+        assert "/elsewhere" not in str(caught.value)
+
+    @respx.mock
+    async def test_a_download_labelled_as_an_http_message_is_scanned(self):
+        def peer(request: httpx.Request) -> httpx.Response:
+            trace = f"GET /img HTTP/1.1\r\nAuthorization: {request.headers['Authorization']}\r\n"
+            return httpx.Response(
+                200, content=trace.encode(), headers={"Content-Type": "message/http"}
+            )
+
+        respx.get("https://192.0.2.10:443/img").mock(side_effect=peer)
+        async with self._basic() as client:
+            with pytest.raises(AxisEchoError):
+                await client.get_raw("/img")
+
+    @respx.mock
+    async def test_connectivity_check_reports_an_echoing_peer_as_unreachable(self):
+        def peer(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                text=f"seen {request.headers['Authorization']}",
+                headers={"Content-Type": "text/plain"},
+            )
+
+        respx.get("https://192.0.2.10:443/axis-cgi/basicdeviceinfo.cgi").mock(side_effect=peer)
+        async with self._basic() as client:
+            assert await client.check_connectivity() is False

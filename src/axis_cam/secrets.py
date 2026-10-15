@@ -29,11 +29,16 @@ in its error messages. So:
 percent-encoded (also twice), JSON slash and ``uXXXX`` escapes, HTML entities,
 stripped padding, base64url -- and any fragment of 8 or more of its
 base64 characters that covers at least 4 password bytes, plus 12 or more hex
-characters of a Digest ``response`` hash in either case. The Basic token built
-from the configured credentials always counts: in AUTO mode a Basic attempt can
-precede the Digest request that produced the response, and ``VapixAuth`` reuses
-one ``Request``, so neither ``response.request`` nor ``response.history`` still
-holds it. Decision record: ``docs/plans/2026-10-15-secrets-boundary-decision.md``.
+characters of a Digest ``response`` hash in either case. The client passes
+every ``Authorization`` value it sent (``VapixAuth.sent``), not only the one of
+the request at hand: a reply can replay an earlier request's Digest hash, a
+download is decoded after its response is gone, and in AUTO mode a Basic attempt
+precedes the Digest request that produced the response (``VapixAuth`` reuses one
+``Request``, so neither ``response.request`` nor ``response.history`` still
+holds it). The Basic token built from the configured credentials always counts
+as well, for a caller without that record. Redirects are checked before they
+are followed: a target URL that carries the token is never requested. Decision
+record: ``docs/plans/2026-10-15-secrets-boundary-decision.md``.
 
 Stated limits: a peer that already holds the credential and deliberately
 re-encodes it (reversed, base32) defeats any text check. The configured password
@@ -51,7 +56,7 @@ import urllib.parse
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Iterable, Mapping
 
     import httpx
 
@@ -74,6 +79,10 @@ EXCERPT_LIMIT = 200
 
 #: The hex ``response`` value inside a Digest ``Authorization`` header.
 _DIGEST_RESPONSE = re.compile(r'(?i)\bresponse\s*=\s*"?([0-9a-f]{8,})"?')
+#: A run of hex digits (lower case) long enough to hold a Digest fragment.
+_HEX_RUN = re.compile(rf"[0-9a-f]{{{HEX_FRAGMENT},}}")
+#: One percent escape, for the lower-case-hex spellings of a password.
+_PERCENT = re.compile(r"%[0-9A-F]{2}")
 #: The escapes an echo commonly applies. Undone twice, for double encoding.
 _ESCAPE = re.compile(
     r"%(?P<pct>[0-9A-Fa-f]{2})"
@@ -146,9 +155,15 @@ def token_windows(token: str) -> set[str]:
 
 
 class _SentCredentials:
-    """What a request authenticated with: header values, Basic tokens, Digest hashes."""
+    """What the client authenticated with: header values, Basic tokens, Digest hashes."""
 
-    def __init__(self, response: httpx.Response | None, username: object, password: object) -> None:
+    def __init__(
+        self,
+        response: httpx.Response | None,
+        username: object,
+        password: object,
+        sent: Iterable[object] = (),
+    ) -> None:
         self.headers: set[str] = set()
         self.tokens: set[str] = set()
         self.hashes: set[str] = set()
@@ -157,15 +172,21 @@ class _SentCredentials:
         except (AttributeError, RuntimeError):  # None, or no request attached (httpx raises)
             header = None
         if isinstance(header, str) and header.strip():
-            self.headers.add(header)
-            scheme, _, rest = header.partition(" ")
-            if scheme.lower() == "basic" and rest.strip():
-                self.tokens.add(rest.strip())
-            elif scheme.lower() == "digest":
-                self.hashes.update(m.group(1).lower() for m in _DIGEST_RESPONSE.finditer(rest))
+            self.headers.add(header)  # this request's, also matched verbatim
+        for value in (header, *sent):
+            self._add(value)
         if isinstance(username, str) and isinstance(password, str) and password:
             # Sent in AUTO mode before a Digest retry; see the module docstring.
             self.tokens.add(base64.b64encode(f"{username}:{password}".encode()).decode())
+
+    def _add(self, header: object) -> None:
+        if not isinstance(header, str):
+            return
+        scheme, _, rest = header.strip().partition(" ")
+        if scheme.lower() == "basic" and rest.strip():
+            self.tokens.add(rest.strip())
+        elif scheme.lower() == "digest":
+            self.hashes.update(m.group(1).lower() for m in _DIGEST_RESPONSE.finditer(rest))
 
     def found_in(self, text: str) -> bool:
         if any(header in text for header in self.headers):
@@ -178,12 +199,24 @@ class _SentCredentials:
             needles = token_windows(token) | {token, token.rstrip("=")}
             if any(needle in folded for needle in needles):
                 return True
-        lowered = decoded.lower()
-        for digest in self.hashes:
-            windows = {digest[i : i + HEX_FRAGMENT] for i in range(len(digest) - HEX_FRAGMENT + 1)}
-            if any(window in lowered for window in windows):
-                return True
-        return False
+        return bool(self.hashes) and _holds_hex_window(decoded.lower(), self.hashes)
+
+
+def _holds_hex_window(lowered: str, hashes: set[str]) -> bool:
+    """Whether ``lowered`` holds 12 or more hex characters of any hash, in one pass.
+
+    Each window of each hex run in the text is looked up in a set, so the cost
+    does not grow with the number of hashes (a client remembers every Digest
+    request it sent). A window inside a longer run counts.
+    """
+    windows = {h[i : i + HEX_FRAGMENT] for h in hashes for i in range(len(h) - HEX_FRAGMENT + 1)}
+    for run in _HEX_RUN.finditer(lowered):
+        digits = run.group()
+        if any(
+            digits[i : i + HEX_FRAGMENT] in windows for i in range(len(digits) - HEX_FRAGMENT + 1)
+        ):
+            return True
+    return False
 
 
 def quotes_sent_auth(
@@ -192,37 +225,45 @@ def quotes_sent_auth(
     *,
     username: object = None,
     password: object = None,
+    sent: Iterable[object] = (),
 ) -> bool:
-    """Whether a reply quotes the credentials its request sent, in any common spelling.
+    """Whether a reply quotes credentials the client sent, in any common spelling.
 
-    ``response`` supplies the request's ``Authorization`` header; ``username``
-    and ``password`` add the Basic token they make (see the module docstring).
-    The configured *plain* password does not count -- a device legitimately
-    stores it in other parameters (an administrator password reused as the
-    proxy password), so it would refuse real data. Non-string text and mocks
-    answer ``False``.
+    ``response`` supplies its request's ``Authorization`` header; ``sent`` adds
+    every other value the client sent (``VapixAuth.sent``), so a reply that
+    replays an earlier request's Digest hash, or a download decoded after the
+    response is gone, is recognised too; ``username`` and ``password`` add the
+    Basic token they make (see the module docstring). The configured *plain*
+    password does not count -- a device legitimately stores it in other
+    parameters (an administrator password reused as the proxy password), so it
+    would refuse real data. Non-string text and mocks answer ``False``.
     """
     if not isinstance(text, str):
         return False
-    return _SentCredentials(response, username, password).found_in(text)
+    return _SentCredentials(response, username, password, sent).found_in(text)
 
 
 def contains_password(text: str, password: object) -> bool:
     """Whether ``text`` holds the configured password in a common spelling.
 
-    Literal, percent-encoded (path and form style, UTF-8), JSON-escaped (ASCII or
-    not) and HTML-escaped forms, and anything :func:`_decoded` undoes. Passwords
-    under 4 characters are not hunted: they match ordinary words.
+    Literal, percent-encoded (path and form style, UTF-8, upper- or lower-case
+    hex), JSON-escaped (ASCII or not) and HTML-escaped forms, and anything
+    :func:`_decoded` undoes. Passwords under 4 characters are not hunted: they
+    match ordinary words.
     """
     if not isinstance(text, str) or not isinstance(password, str):
         return False
     if len(password) < MIN_PASSWORD:
         return False
-    spellings = {
-        password,
+    percent = {
         urllib.parse.quote(password, safe=""),
         urllib.parse.quote(password),
         urllib.parse.quote_plus(password),
+    }
+    spellings = {
+        password,
+        *percent,
+        *(_PERCENT.sub(lambda m: m.group().lower(), spelling) for spelling in percent),
         json.dumps(password)[1:-1],
         json.dumps(password, ensure_ascii=False)[1:-1],
         html.escape(password),

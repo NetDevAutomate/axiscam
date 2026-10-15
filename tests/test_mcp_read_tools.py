@@ -10,6 +10,7 @@ import json
 import logging
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
 from mcp import Client
@@ -23,6 +24,9 @@ from axis_cam.exceptions import (
 )
 from axis_cam.mcp_server.server import TOOL_NAMES, build_server
 from tests.mcp_fakes import CANARY, CANARY_BASIC, SSH, FakeDevice, FakeModule, two_cameras
+
+if TYPE_CHECKING:
+    from typing import NoReturn
 
 # --- 1: tools/list deterministic, nothing on stdout -------------------------------
 
@@ -305,6 +309,32 @@ class TestUnexpectedErrors:
         captured = capfd.readouterr()
         assert result.is_error is True
         assert "internal error: ValidationError" in wire
+        for surface in (wire, caplog.text, captured.out, captured.err):
+            assert CANARY not in surface
+        assert "Traceback" not in caplog.text
+
+    async def test_a_sync_tool_never_shows_or_logs_its_exception(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        capfd: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Opus F3: three tools are sync (list_devices, backup_list, backup_verify);
+        # the wrapper's sync branch needs its own test.
+        caplog.set_level(logging.DEBUG)
+        resolver = two_cameras()
+        server = build_server(resolver)
+
+        def explode(name: str) -> NoReturn:
+            raise RuntimeError(f"describe saw {CANARY} for {name}")
+
+        monkeypatch.setattr(resolver, "describe", explode)
+        async with Client(server) as client:
+            result = await client.call_tool("list_devices", {})
+        wire = "".join(getattr(item, "text", "") for item in result.content)
+        captured = capfd.readouterr()
+        assert result.is_error is True
+        assert "internal error: RuntimeError" in wire
         for surface in (wire, caplog.text, captured.out, captured.err):
             assert CANARY not in surface
         assert "Traceback" not in caplog.text
