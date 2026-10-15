@@ -79,6 +79,15 @@ FAULT_NOT_SUPPORTED = _reply(
     '</SOAP-ENV:Code><SOAP-ENV:Reason><SOAP-ENV:Text xml:lang="en">Optional action not '
     "implemented</SOAP-ENV:Text></SOAP-ENV:Reason></SOAP-ENV:Fault>"
 )
+# SetUser with a weak password (HTTP 400): the leaf subcode is ter:PasswordTooWeak.
+FAULT_PASSWORD_WEAK = _reply(
+    "<SOAP-ENV:Fault><SOAP-ENV:Code><SOAP-ENV:Value>SOAP-ENV:Sender</SOAP-ENV:Value>"
+    "<SOAP-ENV:Subcode><SOAP-ENV:Value>ter:InvalidArgVal</SOAP-ENV:Value>"
+    "<SOAP-ENV:Subcode><SOAP-ENV:Value>ter:PasswordTooWeak</SOAP-ENV:Value></SOAP-ENV:Subcode>"
+    "</SOAP-ENV:Subcode></SOAP-ENV:Code>"
+    '<SOAP-ENV:Reason><SOAP-ENV:Text xml:lang="en">Too weak</SOAP-ENV:Text>'
+    "</SOAP-ENV:Reason></SOAP-ENV:Fault>"
+)
 
 
 def _response(body: str, status: int = 200) -> MagicMock:
@@ -455,3 +464,14 @@ class TestSentCredentialNeverReachesTheError:
             await api.list()
         assert caught.value.subcodes == ["ter:InvalidArgVal", "ter:UsernameMissing"]
         assert "no user with that name" in str(caught.value)
+
+    async def test_a_fault_meaning_survives_a_password_that_is_a_substring_of_a_code(self):
+        # Fix-review finding 3: password "Password" is a substring of the subcode
+        # ter:PasswordTooWeak. Codes are a controlled vocabulary, so they are
+        # quoted verbatim and the fault's meaning is not lost.
+        api, client = _api([_response(FAULT_PASSWORD_WEAK, 400)])
+        client.password = "Password"  # pragma: allowlist secret
+        with pytest.raises(AxisSoapFault) as caught:
+            await api.list()
+        assert caught.value.subcodes[-1] == "ter:PasswordTooWeak"
+        assert "the device rejected the password as too weak" in str(caught.value)

@@ -21,7 +21,7 @@ from axis_cam.exceptions import (
     AxisEchoError,
     AxisPermissionError,
 )
-from axis_cam.secrets import error_excerpt, quotes_sent_auth
+from axis_cam.secrets import contains_password, error_excerpt, quotes_sent_auth
 
 
 def _version_sort_key(version: str) -> tuple[int, int]:
@@ -504,30 +504,36 @@ class VapixClient:
         """Response hook: refuse a redirect whose target quotes the credentials.
 
         httpx follows a redirect -- requesting the target and logging its URL --
-        before ``_check_response`` sees the final reply. A target that carries
-        the token is an echo like any other, so it is refused here and never
-        requested.
+        before ``_check_response`` sees the final reply. A ``Location`` that
+        carries the token, or the plain password decoded out of it, is an echo:
+        it is not stored device data (where the password can legitimately
+        appear), so the plain password counts here. The redirect is refused and
+        never requested. The message names no path: on a later hop that path is
+        one the peer chose.
 
         Raises:
             AxisEchoError: The redirect's ``Location`` quotes credentials this
-                client sent.
+                client sent (or the configured password).
         """
         location = response.headers.get("location")
         if (
             response.is_redirect
             and isinstance(location, str)
-            and quotes_sent_auth(
-                location,
-                response,
-                username=self.username,
-                password=self.password,
-                sent=self._sent(),
+            and (
+                quotes_sent_auth(
+                    location,
+                    response,
+                    username=self.username,
+                    password=self.password,
+                    sent=self._sent(),
+                )
+                or contains_password(location, self.password)
             )
         ):
             raise AxisEchoError(
-                f"Refused a redirect from {self.host} at {_path_of(response)} "
-                f"(HTTP {response.status_code}): its target quotes this request's "
-                "credentials, so a proxy or peer is echoing requests."
+                f"Refused a redirect from {self.host} (HTTP {response.status_code}): "
+                "its target quotes this request's credentials, so a proxy or peer "
+                "is echoing requests."
             )
 
     def refuse_echo(self, text: str) -> None:

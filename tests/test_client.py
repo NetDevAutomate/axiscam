@@ -517,7 +517,7 @@ class TestEchoBeyondTheReplyBody:
             with pytest.raises(AxisEchoError) as caught:
                 await client.get("/start")
         assert not target.called  # never requested, so never logged
-        assert "/start" in str(caught.value)
+        assert "192.0.2.10" in str(caught.value)  # host named
         assert token[:8] not in str(caught.value)
 
     @respx.mock
@@ -531,6 +531,43 @@ class TestEchoBeyondTheReplyBody:
                 await client.get("/start")
         assert "/start" in str(caught.value)
         assert "/elsewhere" not in str(caught.value)
+
+    @respx.mock
+    async def test_a_redirect_whose_target_carries_the_plain_password_is_refused(self):
+        # A debug proxy that decodes Basic and redirects to /login?p=<pw>. The
+        # plain password is excluded from the echo check for stored data, but a
+        # Location is not stored data, so it counts here.
+        respx.get("https://192.0.2.10:443/start").mock(
+            return_value=httpx.Response(
+                302, headers={"Location": f"/login?u=root&p={self.PASSWORD}"}
+            )
+        )
+        target = respx.route(path__startswith="/login").mock(
+            return_value=httpx.Response(200, json={"ok": True})
+        )
+        async with self._basic() as client:
+            with pytest.raises(AxisEchoError) as caught:
+                await client.get("/start")
+        assert not target.called
+        assert self.PASSWORD not in str(caught.value)
+
+    @respx.mock
+    async def test_a_redirect_refusal_names_no_peer_chosen_path(self):
+        # Two hops: the refusal fires on the second response, whose request path
+        # is one the first peer chose. The message names no path, so that
+        # peer-chosen path cannot reach it.
+        token = base64.b64encode(f"root:{self.PASSWORD}".encode()).decode()
+        respx.get("https://192.0.2.10:443/start").mock(
+            return_value=httpx.Response(302, headers={"Location": "/peer-chosen-hop"})
+        )
+        respx.get("https://192.0.2.10:443/peer-chosen-hop").mock(
+            return_value=httpx.Response(302, headers={"Location": f"/r/{token}/x"})
+        )
+        async with self._basic() as client:
+            with pytest.raises(AxisEchoError) as caught:
+                await client.get("/start")
+        assert "peer-chosen-hop" not in str(caught.value)
+        assert token[:8] not in str(caught.value)
 
     @respx.mock
     async def test_a_download_labelled_as_an_http_message_is_scanned(self):

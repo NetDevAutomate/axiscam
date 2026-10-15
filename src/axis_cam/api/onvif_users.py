@@ -114,9 +114,14 @@ def user_element(username: str, level: OnvifUserLevel, password: str) -> str:
 def parse_fault(xml: str, status_code: int, *, password: object = None) -> AxisSoapFault | None:
     """Return the fault in a response body, or ``None`` if the body is not a fault.
 
-    The code, subcodes and reason are quoted through
-    :func:`~axis_cam.secrets.error_excerpt`: one that holds the configured
-    ``password`` is withheld, and the fault itself still reaches the caller.
+    Fault *codes* are QNames from a controlled vocabulary (the SOAP envelope and
+    ONVIF ``ter:*`` sets), never free device text, and any reply that quoted the
+    sent credentials was already refused upstream -- so codes are quoted
+    verbatim, and the fault's meaning survives even when the configured password
+    happens to be a substring of a code (``Password`` in ``ter:PasswordTooWeak``).
+    Only the *reason* -- free device text -- goes through
+    :func:`~axis_cam.secrets.error_excerpt`, so a reason that holds the password
+    is withheld while the fault still reaches the caller.
     """
     try:
         root = DefusedElementTree.fromstring(xml.strip())
@@ -126,17 +131,16 @@ def parse_fault(xml: str, status_code: int, *, password: object = None) -> AxisS
     if fault is None:
         return None
 
-    def quoted(node: Element, path: str) -> str:
-        text = node.findtext(path, default="", namespaces=_NS).strip()
-        return error_excerpt(text, password=password)
+    def text_of(node: Element, path: str) -> str:
+        return node.findtext(path, default="", namespaces=_NS).strip()
 
-    code = quoted(fault, "s:Code/s:Value")
+    code = text_of(fault, "s:Code/s:Value")
     subcodes: list[str] = []
     node = fault.find("s:Code/s:Subcode", _NS)
     while node is not None:
-        subcodes.append(quoted(node, "s:Value"))
+        subcodes.append(text_of(node, "s:Value"))
         node = node.find("s:Subcode", _NS)
-    reason = quoted(fault, "s:Reason/s:Text")
+    reason = error_excerpt(text_of(fault, "s:Reason/s:Text"), password=password)
     leaf = subcodes[-1] if subcodes else code
     meaning = _FAULT_MEANINGS.get(leaf)
     detail = f"{reason} ({leaf})" if reason else leaf

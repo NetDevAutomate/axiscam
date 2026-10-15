@@ -528,7 +528,9 @@ async def test_every_tool_and_resource_over_the_wire_leaks_no_credential(
     assert applied["status"] == "applied"
     assert camera.params["root.Image.I0.Name"] == "View Area 1"
     assert len(human.seen) == 1 and SERIAL in human.seen[0]
-    assert any(r.name == "httpx" for r in caplog.records)
+    # httpx request logging is pinned to WARNING in MCP mode (it would otherwise log
+    # request URLs, which carry param values in the query string): nothing below it.
+    assert not any(r.name == "httpx" and r.levelno < logging.WARNING for r in caplog.records)
 
     captured = capfd.readouterr()
     assert captured.out == ""

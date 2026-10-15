@@ -338,3 +338,21 @@ class TestUnexpectedErrors:
         for surface in (wire, caplog.text, captured.out, captured.err):
             assert CANARY not in surface
         assert "Traceback" not in caplog.text
+
+
+class TestRequestLoggingIsQuiet:
+    """In MCP mode httpx must not log request URLs (they carry query-string values)."""
+
+    def test_building_the_server_pins_httpx_logging_to_warning(self) -> None:
+        # The SDK leaves the root logger at INFO; httpx then logs every request
+        # URL. A GET carries param values in its query string, so pin it back.
+        httpx_logger = logging.getLogger("httpx")
+        root = logging.getLogger()
+        original_root = root.level
+        httpx_logger.setLevel(logging.NOTSET)
+        root.setLevel(logging.INFO)  # the condition the SDK leaves behind
+        try:
+            build_server(two_cameras())
+            assert httpx_logger.getEffectiveLevel() >= logging.WARNING
+        finally:
+            root.setLevel(original_root)

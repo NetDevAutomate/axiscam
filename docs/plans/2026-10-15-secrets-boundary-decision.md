@@ -231,3 +231,32 @@ crash test (read tools).
   quote device text uncut and do not call `error_excerpt`. They sit outside D2's two sinks and
   only fire on a genuine device error that holds the configured password. Route them through
   `error_excerpt`.
+
+### Confirmation review of `fac5e2a`
+
+One opus seat confirmed each fix closes its finding with no genuine-device regression
+(verdict MERGE), and found three residuals, all demonstrated and fixed here (test-first,
+each mutation-checked):
+
+- **A redirect whose `Location` carries the *plain* password is now refused.** The echo check
+  excludes the plain password (device parameters may legitimately hold it), but a `Location`
+  is not stored data, so the redirect hook also calls `contains_password(location, ...)`. A
+  debug proxy that decodes Basic and redirects to `/login?p=<pw>` is refused before the target
+  is requested.
+- **In MCP mode, httpx request logging is pinned to `WARNING`.** Constructing the server leaves
+  the root logger at INFO, at which httpx logs every request URL — and a GET carries parameter
+  values in its query string (`param.set`), so a non-secret parameter holding the password
+  would reach the host log. `build_server` sets `logging.getLogger("httpx")` to `WARNING`. This
+  also closes **F13** (filed and fixed together): the httpx request-URL sink in MCP mode.
+- **The redirect refusal names no path.** On a second hop the request path is one the peer
+  chose, so the message names only the host and the reason.
+- **An ONVIF fault keeps its meaning when the password is a substring of a code.** Fault
+  *codes* are QNames from a controlled vocabulary (and any reply quoting the sent credentials
+  is already refused), so they are quoted verbatim; only the *reason*, free device text, goes
+  through `error_excerpt`. Previously a password such as `Password` — a substring of
+  `ter:PasswordTooWeak` — withheld the subcode and lost the fault's meaning.
+
+Non-blocking confirmations the seat recorded: D9 refuses an earlier same-connection Digest
+hash in every spelling tried, the `sent` record stays bounded at 64 and adds no false
+positive against 3.6 MB of genuine hex, and F10–F12 are agreed non-blocking (F11 needs a
+deliberate re-encoding peer and the MCP `Scrubber` removes the whole token from tool output).
