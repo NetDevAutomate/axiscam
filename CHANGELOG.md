@@ -14,6 +14,9 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   and plan tools over the library, no device writes (`docs/mcp-server.md`).
   Device arguments are an enum of configured names; outputs are scrubbed of the
   device password and credential-like parameter values are redacted.
+- MCP resources: `axiscam://checks`, `axiscam://schemas/{module}`,
+  `axiscam://backups/{backup_id}/manifest` (read-only, immutable).
+- `axis_cam.audit.check_catalogue()`: the audit's checks, derived from `run_audit`.
 - `apply_plan`: applies a stored plan only after the server asks the human through
   MCP elicitation; fails closed on hosts without it (kiro-cli 2.30.0 declares none).
   Single-use, serial-bound, refused on drift, one write at a time per device.

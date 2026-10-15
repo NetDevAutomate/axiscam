@@ -266,6 +266,19 @@ def _device(*, params=None, **readers):
 
 
 class TestRunAudit:
+    async def test_catalogue_covers_every_check_the_audit_can_emit(self):
+        from axis_cam.audit import DATA_DEPENDENT_CHECKS, check_catalogue
+
+        catalogue = await check_catalogue()
+        ids = [c["id"] for c in catalogue]
+        assert len(ids) == len(set(ids))
+        emitted = {f.check_id for f in (await run_audit(_device())).findings}
+        assert emitted <= set(ids) | set(DATA_DEPENDENT_CHECKS), emitted - set(ids)
+        assert set(DATA_DEPENDENT_CHECKS).isdisjoint(ids)
+        assert {c["id"] for c in catalogue if "parameter" in c} == {
+            c.check_id for c in PARAM_CHECKS
+        }
+
     async def test_report_shape_and_counts(self):
         report = await run_audit(_device(), device_name="cam")
 

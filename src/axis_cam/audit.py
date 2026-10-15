@@ -27,7 +27,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from axis_cam.exceptions import (
     AxisApiNotSupportedError,
@@ -921,3 +921,62 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
         )
 
     return report
+
+
+# --- catalogue: what the audit checks, without a device ----------------------------
+
+#: Checks that appear only when their data is readable (one per item, or a second
+#: finding about the same setting). The catalogue names them so nobody reads it
+#: as the exhaustive per-device list.
+DATA_DEPENDENT_CHECKS: tuple[str, ...] = (
+    "accounts.administrators",
+    "snmp.default_community",
+    "cert.self_signed",
+)
+
+
+class _Unread:
+    """A stand-in module whose every read answers 'not read'."""
+
+    async def read(self) -> Any:
+        raise AxisApiNotSupportedError("catalogue: not read")
+
+    async def export(self) -> Any:
+        raise AxisApiNotSupportedError("catalogue: not read")
+
+
+class _CatalogueDevice:
+    """Enough of AxisDevice for :func:`run_audit` with nothing readable."""
+
+    class client:
+        host = "catalogue"
+        username = ""
+
+    def __getattr__(self, name: str) -> _Unread:
+        return _Unread()
+
+
+async def check_catalogue() -> list[dict[str, Any]]:
+    """Every check the audit runs, with id, title, severity and guide reference.
+
+    Derived by running :func:`run_audit` against a device on which nothing can
+    be read, so the list cannot drift from the checks themselves. Parameter
+    checks also carry the parameter and the guide's hardened values. Checks in
+    :data:`DATA_DEPENDENT_CHECKS` are added only when data is readable.
+    """
+    report = await run_audit(cast("AxisDevice", _CatalogueDevice()))
+    params = {c.check_id: c for c in PARAM_CHECKS}
+    catalogue: list[dict[str, Any]] = []
+    for finding in report.findings:
+        entry: dict[str, Any] = {
+            "id": finding.check_id,
+            "title": finding.title,
+            "severity": finding.severity.value,
+            "reference": finding.reference,
+        }
+        check = params.get(finding.check_id)
+        if check is not None:
+            entry["parameter"] = check.param
+            entry["hardened_values"] = list(check.hardened)
+        catalogue.append(entry)
+    return catalogue

@@ -10,7 +10,8 @@ Layout:
 * ``deps.py`` -- constants, annotations, the per-server bundle (resolver, plan
   store, backup root, device/module enums, scrubbing and opening helpers);
 * ``schemas.py`` -- result models;
-* ``tools/read.py``, ``audit.py``, ``backup.py``, ``write.py`` -- the tools.
+* ``tools/read.py``, ``audit.py``, ``backup.py``, ``write.py`` -- the tools;
+* ``resources.py`` -- read-only, immutable resources.
 
 Boundary rules every module holds to:
 
@@ -31,6 +32,7 @@ from mcp.server import CacheHint, MCPServer
 
 from axis_cam import __version__
 from axis_cam.config import get_data_dir
+from axis_cam.mcp_server import resources
 from axis_cam.mcp_server.deps import build_deps, resource_module_names
 from axis_cam.mcp_server.devices import ConfigResolver
 from axis_cam.mcp_server.plans import PlanStore
@@ -70,7 +72,9 @@ INSTRUCTIONS = (
     "parameter queries (credentials redacted), backups on the server's own disk, "
     "and change plans. Only apply_plan writes to a device, and only after the "
     "server has asked the human to confirm the stored plan; on hosts that cannot "
-    "ask, it refuses and writes nothing."
+    "ask, it refuses and writes nothing. Resources: axiscam://checks (what the "
+    "audit checks), axiscam://schemas/{module} (a module's result schema), "
+    "axiscam://backups/{backup_id}/manifest (a backup's manifest)."
 )
 
 
@@ -110,6 +114,7 @@ def build_server(
     for tool_name in sorted(deps.registered):
         fn, annotations = deps.registered[tool_name]
         server.add_tool(fn, annotations=annotations)
+    resources.register(server, deps)
     return server
 
 
