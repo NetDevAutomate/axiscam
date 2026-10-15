@@ -1,9 +1,12 @@
 """Tests for Logs API module."""
 
+import base64
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
 from axis_cam.api.logs import (
     LOG_FILE_PATTERNS,
@@ -12,7 +15,8 @@ from axis_cam.api.logs import (
     parse_log_content,
     parse_log_line,
 )
-from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
+from axis_cam.client import VapixClient
+from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError, AxisEchoError
 from axis_cam.models import LogEntry, LogLevel, LogType
 
 
@@ -611,3 +615,25 @@ class TestDedicatedLogEndpoints:
 
         assert len(report.entries) == 1 and "auth failed" in report.entries[0].raw
         assert report.source == "systemlog.cgi"
+
+
+class TestServerReportEcho:
+    """The server-report fallback decodes a binary download: it is checked once decoded."""
+
+    PASSWORD = "Logs-Echo~T3st?"  # pragma: allowlist secret
+
+    @respx.mock
+    async def test_a_server_report_that_quotes_the_credentials_is_refused(self):
+        token = base64.b64encode(f"root:{self.PASSWORD}".encode()).decode()
+        respx.get("https://192.0.2.10:443/axis-cgi/serverreport.cgi").mock(
+            return_value=httpx.Response(
+                200,
+                content=f"2026-10-15 kernel: authorization: Basic {token}\n".encode(),
+                headers={"Content-Type": "application/octet-stream"},  # not scanned as text
+            )
+        )
+        async with VapixClient(
+            "192.0.2.10", "root", self.PASSWORD, port=443, use_https=True, auth_mode="basic"
+        ) as client:
+            with pytest.raises(AxisEchoError):
+                await LogsAPI(client).get_log_files()

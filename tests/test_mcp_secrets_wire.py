@@ -286,16 +286,13 @@ class Camera:
 
     @property
     def marker(self) -> str:
-        """A substring that reaches the output only if a reflected page did."""
-        return {
-            # Withheld whole: the notice is the evidence the page was handled.
-            "httpbin": "quotes the request headers",
-            "straddle": self.PAD * 8,
-            "urlencoded": self.PAD * 8,
-            "json-slash": "reflected-by-peer",
-            "replay": self.PAD * 8,
-            "ok-echo": "quotes this request's credentials",
-        }.get(self.reflect or "", "")
+        """A substring that reaches the output only if a reflected page did.
+
+        Every reflection is refused by the client (``AxisEchoError``), whatever
+        the status, so the refusal is the evidence the page arrived and was
+        handled -- never a part of the page itself.
+        """
+        return "quotes this request's credentials" if self.reflect else ""
 
     @staticmethod
     def _secret_of(header: str) -> str:
@@ -608,3 +605,30 @@ async def test_failures_on_the_wire_leak_no_credential(
     assert captured.out == ""
     surfaces = {**s.surfaces, "logs": caplog.text, "stderr": captured.err}
     _assert_nothing_leaked(surfaces, camera.needles())
+
+
+# --- a peer that echoes into every reply ---------------------------------------------
+
+
+def _echo_everything(request: httpx.Request) -> httpx.Response:
+    """A proxy that reflects the request into every 200, not only into param.cgi."""
+    if request.headers.get("Authorization") != f"Basic {BASIC_TOKEN}":
+        return httpx.Response(401, headers={"WWW-Authenticate": f'Basic realm="{REALM}"'})
+    lines = "".join(f"{k}: {v}\n" for k, v in request.headers.items())
+    return httpx.Response(200, text=f"{request.method} {request.url.path}\n{lines}")
+
+
+@pytest.mark.parametrize("module", resource_module_names())
+async def test_a_peer_echoing_every_reply_never_reads_as_ok(
+    module: str, config_dir: Path, tmp_path: Path
+) -> None:
+    # Module methods that turn a device error into "API absent" defaults must not
+    # swallow the refusal: a value read through an echoing peer is never "ok".
+    server = build_server(ConfigResolver(), backup_root=tmp_path / "backups")
+    with respx.mock(assert_all_called=False) as router:
+        router.route(host=HOST).mock(side_effect=_echo_everything)
+        async with Client(server) as client:
+            result = await client.call_tool("read_module", {"device": "cam", "module": module})
+    status = (result.structured_content or {}).get("status")
+    assert result.is_error or status != "ok", result.structured_content
+    assert leaked(_text(result), [BASIC_TOKEN, CANARY]) == []

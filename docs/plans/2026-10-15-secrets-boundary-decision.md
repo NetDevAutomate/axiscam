@@ -95,3 +95,70 @@ credential-named parameters.
 - **F7 (opus): `audit.py:727` truncates library messages again** (`str(exc)[:120]`). After
   D1/D2 the library's own messages carry no credential spellings, so the remaining
   exposure is a secret request value (F6). It gets fixed together with F6.
+
+## Milestone 2: implementation review (commit `9199ad8`)
+
+Brief: `docs/plans/2026-10-15-secrets-boundary-m2-council-brief.md`. The three seats are
+recorded verbatim under `docs/plans/council/2026-10-15-secrets-m2-seat-*.md`.
+
+| Seat | Verdict | Rating | Why |
+|---|---|---|---|
+| claude-opus-5.5 | COMMIT-WITH-CHANGES | useful | 8 findings, 12 probes; the coordinator re-ran 6 of them and they match; proposed the simplification adopted as D6 |
+| gpt-5.6-sol | COMMIT-WITH-CHANGES | useful | 4 findings; its probes were not saved, so the coordinator rebuilt all 4 and each one reproduced |
+| deepseek-3.2 | COMMIT-WITH-CHANGES | noisy | 26 leaked tool-call markers despite the instruction; its main finding is moot for real input; it missed all of the above |
+
+**D6. Any reply that quotes the request's credentials is refused, whatever its status,
+with `AxisEchoError(AxisConnectionError)`.**
+
+- Opus F1 and GPT F2 were both demonstrated: about 60 module methods turn `AxisDeviceError`
+  into defaults, and so does `discover_apis`. So the D1 refusal still read as "the API is
+  absent", and 16 of 26 modules came back from `read_module` as `ok` with made-up values.
+- A connection-class error is never caught by those fallbacks. The audit already re-raises
+  it, fleet shows one error row, and `read_module` reports `error`.
+- An echo in a 4xx/5xx page is the same evidence, so the same rule applies there. That
+  makes span redaction at the sinks unnecessary. Opus proposed this simplification as a
+  follow-up; it is adopted now, because without it a 404 echo page would still become an
+  `AxisDeviceError` and be swallowed.
+- The position-mapping view, span merging and replacement are deleted, along with the
+  header-dump rule, which Opus F8 showed fires on an ordinary JSON key.
+- What is left at the sinks: genuine device text is quoted verbatim, cut to 200
+  characters. An excerpt that contains the configured password, in any common spelling,
+  is withheld (GPT F3).
+
+**D7. The MCP tool boundary.** GPT F1 was demonstrated: a pydantic `ValidationError` from a
+composed tool (`device_report`) went past `deps.opened`, and the SDK logged its traceback
+with the rejected input. Every registered tool is now wrapped. An unexpected exception
+becomes `ToolError("internal error: <Class>")` raised `from None`, so the SDK logs one line
+and no traceback.
+
+**D8. The rest:**
+
+- **Binary downloads:** scanned when the reply is text by `Content-Type`.
+- **Server-report logs:** `get_log_files` checks the decoded log text against the configured
+  credentials (Opus F2, GPT F4).
+- **`backup restore` results table:** no longer prints a credential's target value (Opus F3).
+- **Spellings:** any HTML entity that decodes to a single character, and double URL-encoding
+  (escapes are undone twice), per Opus F5.
+- **Passwords under 4 bytes:** only the whole token counts (Opus F6).
+- **Digest:** `response=` is matched without case (deepseek).
+- **Tests:**
+  - Opus's oracle test for the window boundary and an HTML-entity spelling test (F4).
+  - Opus's every-module echo test.
+  - GPT's no-log test for validation input.
+
+**Stated limits added:**
+
+- A configured password that is reused and stored *base64-encoded* in device data is
+  refused for some username lengths (Opus F7). No Axis parameter is known to store one.
+- A `:` in the username moves the token's password boundary. RFC 7617 forbids it and Axis
+  account names cannot contain it.
+- A short or common password (four characters or more) that appears in a genuine error
+  page gets that excerpt withheld. Only the device's wording is lost.
+
+**Filed (F8, F9):**
+
+- Backup manifests written before this change are not re-checked: `errors` text from an
+  echoing peer could sit in an old manifest (GPT).
+- Pre-existing: module methods that turn a genuine 404 into defaults are reported as `ok`
+  by `read_module` on devices without API discovery (Opus F1's mechanism, outside echoes).
+  Fix it in the modules, not at the MCP layer.

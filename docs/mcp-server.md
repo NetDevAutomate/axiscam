@@ -109,16 +109,23 @@ CLI: `axiscam backup restore` / `axiscam accounts set-role`.
   never its message.
 - **A peer that echoes requests cannot leak the credential.** No Axis device
   echoes request headers, but a proxy, WAF or debug page can. The library (not
-  only this server) handles it in `axis_cam.secrets`: a success reply that
-  quotes the request's credentials is refused (`Refused the reply ... it quotes
-  this request's credentials`), and error text is redacted *before* it is cut
-  -- the Basic token in every common spelling (URL-encoded, JSON-escaped,
-  unpadded, base64url) and as fragments, every Digest `response` hash, the
-  configured password -- and a body that dumps the request headers is withheld.
+  only this server) handles it in `axis_cam.secrets`: any reply that quotes the
+  request's credentials -- the Basic token in every common spelling
+  (URL-encoded, JSON- or HTML-escaped, unpadded, base64url) and as fragments,
+  any Digest `response` hash -- is refused, whatever its status, with
+  `AxisEchoError` (`Refused the reply ... it quotes this request's
+  credentials`). Nothing downstream sees it, and no "API absent" fallback can
+  turn it into made-up defaults. Genuine error text is quoted verbatim; an
+  excerpt that holds the configured password is withheld.
   `tests/test_mcp_secrets_wire.py` drives every tool and resource over the real
-  HTTP stack against a respx device in each of those behaviours. The limit, by
-  design: a peer that already holds the password and deliberately re-encodes it
-  defeats any text filter (`docs/plans/2026-10-15-secrets-boundary-decision.md`).
+  HTTP stack against a respx device in each of those behaviours, and checks that
+  no module reads as `ok` through an echoing peer. The limit, by design: a peer
+  that already holds the password and deliberately re-encodes it defeats any
+  text check (`docs/plans/2026-10-15-secrets-boundary-decision.md`).
+- **An unexpected exception never shows its text.** Every tool is wrapped: an
+  exception that is not an `AxisError` is reported as `internal error: <Class>`
+  and the SDK logs one line without a traceback, so a validation error that
+  quotes device data cannot put it in the server log.
 - **Nothing on stdout but the protocol.** The server never imports the CLI
   (which owns the Rich console); a subprocess test runs the real entry point and
   checks the session works.

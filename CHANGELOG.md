@@ -28,17 +28,23 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   could carry the request's credentials into error messages and MCP output:
   the 200-character error excerpt could cut the Basic token in half, past the
   MCP scrubber, and a Digest `response` hash or a re-spelled token was never
-  recognised at all. The client now refuses a success reply that quotes the
-  request's credentials, and redacts error text before cutting it -- every
-  common spelling of the token and its fragments, Digest hashes, the configured
-  password, including the Basic token AUTO mode sent before falling back to
-  Digest. Found by the new `tests/test_mcp_secrets_wire.py`, which drives the MCP
-  server over the real HTTP stack. Reviewed by a four-model council
+  recognised at all. The client now refuses every reply that quotes the
+  request's credentials, whatever its status, with `AxisEchoError` (a
+  connection-class error, so no "API absent" fallback can swallow it) -- the
+  token in every common spelling and as fragments, Digest hashes, including the
+  Basic token AUTO mode sent before falling back to Digest. Genuine error text is
+  quoted verbatim; an excerpt that holds the configured password is withheld.
+  Found by the new `tests/test_mcp_secrets_wire.py`, which drives the MCP server
+  over the real HTTP stack. Reviewed at two milestones by a model council
   (`docs/plans/2026-10-15-secrets-boundary-decision.md`).
+- MCP: an unexpected exception inside any tool is reported as `internal error:
+  <Class>` and logged without its traceback; a pydantic validation error used to
+  put the rejected device value (which can be the password) in the server log.
 - `ParamAPI.set` withholds a credential parameter's value from the device's
   refusal message, without garbling it for short values (`1`, `e`) or turning an
   `OK` into an error when the value spells part of it. `backup restore` no longer
-  prints the read-back value of a credential parameter.
+  prints a credential parameter's value, neither the one written nor the one
+  read back.
 - `backup restore` re-reads the device before writing and refuses, writing
   nothing, if the serial number differs or a planned parameter changed since the
   plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.

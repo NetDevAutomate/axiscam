@@ -1,5 +1,6 @@
 """Tests for VapixClient."""
 
+import base64
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -11,6 +12,7 @@ from axis_cam.exceptions import (
     AxisAuthenticationError,
     AxisConnectionError,
     AxisDeviceError,
+    AxisEchoError,
 )
 
 
@@ -399,3 +401,66 @@ class TestForbiddenIsPermissionError:
             with pytest.raises(AxisPermissionError, match="oauth-ccgrant") as excinfo:
                 await client.get("/config/rest/oauth-ccgrant/v1beta")
         assert isinstance(excinfo.value, AxisAuthenticationError)
+
+
+class TestEchoRefusal:
+    """A reply that quotes the request's credentials is refused, whatever the path."""
+
+    PASSWORD = "Client-Echo~T3st?"  # pragma: allowlist secret
+
+    def _client(self) -> VapixClient:
+        return VapixClient(
+            "192.0.2.10", "root", self.PASSWORD, port=443, use_https=True, auth_mode="basic"
+        )
+
+    @staticmethod
+    def _echo(status: int = 200, content_type: str = "text/plain"):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                status,
+                text=f"seen {request.headers['Authorization']}",
+                headers={"Content-Type": content_type},
+            )
+
+        return handler
+
+    @respx.mock
+    async def test_discovery_does_not_swallow_the_refusal(self):
+        # discover_apis turns a device error into "no discovery"; an echo is not one.
+        respx.get("https://192.0.2.10:443/config/discover/apis").mock(side_effect=self._echo())
+        async with self._client() as client:
+            with pytest.raises(AxisEchoError):
+                await client.discover_apis()
+            assert client._discovery is None  # nothing cached
+
+    @respx.mock
+    async def test_an_error_page_that_echoes_is_refused_not_quoted(self):
+        respx.get("https://192.0.2.10:443/x").mock(side_effect=self._echo(404, "text/html"))
+        async with self._client() as client:
+            with pytest.raises(AxisEchoError, match=r"\(HTTP 404\)") as caught:
+                await client.get("/x")
+        assert "seen" not in str(caught.value)
+
+    @respx.mock
+    async def test_a_binary_download_that_says_it_is_text_is_scanned(self):
+        respx.get("https://192.0.2.10:443/img").mock(side_effect=self._echo(200, "text/html"))
+        async with self._client() as client:
+            with pytest.raises(AxisEchoError):
+                await client.get_raw("/img")
+            with pytest.raises(AxisEchoError):
+                await client.get_binary("/img")
+
+    @respx.mock
+    async def test_a_binary_download_is_not_scanned(self):
+        respx.get("https://192.0.2.10:443/img").mock(
+            side_effect=self._echo(200, "application/octet-stream")
+        )
+        async with self._client() as client:
+            assert (await client.get_raw("/img")).startswith(b"seen Basic ")
+
+    async def test_refuse_echo_checks_decoded_text_against_the_configured_token(self):
+        client = self._client()
+        token = base64.b64encode(f"root:{self.PASSWORD}".encode()).decode()
+        client.refuse_echo("ordinary log line")
+        with pytest.raises(AxisEchoError):
+            client.refuse_echo(f"debug: authorization={token}")

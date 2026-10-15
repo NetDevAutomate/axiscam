@@ -45,6 +45,20 @@ class AxisConnectionError(AxisError):
     pass
 
 
+class AxisEchoError(AxisConnectionError):
+    """A reply quoted the credentials its request sent: the device did not answer as sent.
+
+    No Axis device echoes request headers, so such a reply comes from a proxy,
+    WAF, captive portal or hostile peer that echoes requests. It is a
+    connection-class error on purpose: the module methods that turn an
+    ``AxisDeviceError`` into "this API is absent" must not swallow it, and the
+    audit, the fleet runner and the MCP tools treat the device as unusable
+    through this path. The message never quotes the reply.
+    """
+
+    pass
+
+
 class AxisAuthenticationError(AxisError):
     """Raised when authentication fails.
 

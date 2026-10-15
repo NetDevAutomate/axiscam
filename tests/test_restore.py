@@ -14,7 +14,7 @@ from axis_cam.api.param import ParamAPI, ParamDefinition, parse_param_definition
 from axis_cam.backup import MANIFEST_FILE, BackupFile, BackupManifest
 from axis_cam.client import VapixClient
 from axis_cam.devices.base import AxisDevice
-from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
+from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError, AxisEchoError
 from axis_cam.restore import (
     SERIAL_PARAM,
     ChangeResult,
@@ -298,9 +298,7 @@ class TestParamApiSet:
         async with VapixClient(
             "192.0.2.10", "root", password, port=443, use_https=True, auth_mode="basic"
         ) as client:
-            with pytest.raises(
-                AxisDeviceError, match="quotes this request's credentials"
-            ) as caught:
+            with pytest.raises(AxisEchoError, match="quotes this request's credentials") as caught:
                 await ParamAPI(client).set("Image.I0.Name", "Hall")
         fragments = [token[i : i + 8] for i in range(len(token) - 7)]
         assert [f for f in fragments if f in str(caught.value)] == []

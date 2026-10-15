@@ -25,6 +25,7 @@ from axis_cam.api.onvif_users import (
 from axis_cam.client import VapixClient
 from axis_cam.exceptions import (
     AxisAuthenticationError,
+    AxisEchoError,
     AxisLockoutError,
     AxisPermissionError,
     AxisSoapFault,
@@ -392,7 +393,9 @@ class TestSentCredentialNeverReachesTheError:
     """A peer that echoes the request headers must not put the credential in an error.
 
     No Axis device does this; a proxy or a broken or hostile peer can. The client
-    sends HTTP Basic, so the echoed header carries the base64 credential.
+    sends HTTP Basic, so the echoed header carries the base64 credential. The
+    client refuses such a reply before the SOAP layer sees it, whatever its
+    status, so neither a fault reason nor an excerpt can quote it.
     """
 
     @staticmethod
@@ -409,15 +412,16 @@ class TestSentCredentialNeverReachesTheError:
                 "192.168.1.10", "admin", ECHO_PASSWORD, use_https=True, port=443, auth_mode="basic"
             )
             async with client:
-                with pytest.raises((AxisUserError, AxisSoapFault)) as caught:
+                with pytest.raises((AxisUserError, AxisSoapFault, AxisEchoError)) as caught:
                     await OnvifUsersAPI(client).list()
         return caught.value
 
     async def test_a_non_fault_body_cut_across_the_credential(self):
-        # Pad so the 200-character snippet ends in the middle of the token.
+        # Pad so a 200-character snippet would end in the middle of the token.
         pad = "." * (200 - len("Basic ") - len(ECHO_TOKEN) // 2)
         error = await self._call(self._echo(500, lambda auth: pad + auth))
-        assert "without a SOAP fault" in str(error)
+        assert isinstance(error, AxisEchoError)
+        assert "quotes this request's credentials" in str(error)
         assert _token_fragments_in(str(error)) == []
 
     async def test_a_fault_reason_that_echoes_the_credential(self):
@@ -425,6 +429,16 @@ class TestSentCredentialNeverReachesTheError:
             return FAULT_INVALID_ARGS.replace("Invalid argument", f"Invalid argument: {auth}")
 
         error = await self._call(self._echo(400, fault))
-        assert isinstance(error, AxisSoapFault)
+        assert isinstance(error, AxisEchoError)
         assert _token_fragments_in(str(error)) == []
-        assert _token_fragments_in(error.reason) == []
+
+    async def test_a_fault_holding_the_configured_password_is_withheld(self):
+        # The plain password is not an echo of the request (data may hold it),
+        # but a fault that carries it is quoted by nothing, reason included.
+        def fault(_: str) -> str:
+            return FAULT_INVALID_ARGS.replace("Invalid argument", f"bad pwd {ECHO_PASSWORD}")
+
+        error = await self._call(self._echo(400, fault))
+        assert isinstance(error, AxisUserError)
+        assert ECHO_PASSWORD not in str(error)
+        assert "withheld: the reply contains the configured password" in str(error)

@@ -1,16 +1,17 @@
 """``axis_cam.secrets``: credential parameter names, and the request's own credentials.
 
-The library quotes device text in its error messages. A peer that echoes the
-request (a proxy, a WAF, a debug page, a broken or hostile device) can put the
-credentials this client sent into that text, in any of the usual spellings, and
-a truncation can cut them in half past any later whole-string scrubber. These
-tests build real ``httpx`` requests, so the header is exactly what the client
-sends. Decision record: ``docs/plans/2026-10-15-secrets-boundary-decision.md``.
+The library refuses any device reply that quotes the credentials its request
+sent, and withholds an error excerpt that contains the configured password.
+These tests pin what counts as "quotes": the header, the Basic token in every
+common spelling and as fragments, the Digest ``response`` hash. They build real
+``httpx`` requests so the header is exactly what the client sends. Decision
+record: ``docs/plans/2026-10-15-secrets-boundary-decision.md`` (D1, D2, D6).
 """
 
 from __future__ import annotations
 
 import base64
+import html
 import json
 import urllib.parse
 from unittest.mock import MagicMock
@@ -18,7 +19,14 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from axis_cam.secrets import REDACTED, error_excerpt, quotes_sent_auth, redact_sent_auth
+from axis_cam.secrets import (
+    BASE64_FRAGMENT,
+    MIN_PASSWORD,
+    contains_password,
+    error_excerpt,
+    quotes_sent_auth,
+    token_windows,
+)
 
 USER = "root"
 #: Chosen so the Basic token contains ``+``, ``/`` and ``=`` padding (asserted below).
@@ -33,7 +41,7 @@ DIGEST = (
 )
 
 
-def _response(authorization: str | None, status: int = 500) -> httpx.Response:
+def _response(authorization: str | None, status: int = 200) -> httpx.Response:
     headers = {"Authorization": authorization} if authorization else {}
     request = httpx.Request("GET", "https://192.0.2.10/axis-cgi/param.cgi", headers=headers)
     return httpx.Response(status, text="", request=request)
@@ -43,29 +51,16 @@ def _fragments(secret: str, size: int) -> list[str]:
     return [secret[i : i + size] for i in range(len(secret) - size + 1)]
 
 
-def _leaks(text: str, secret: str, size: int = 8) -> list[str]:
-    folded = text.lower()
-    return [f for f in _fragments(secret.lower(), size) if f in folded]
-
-
 def test_the_canary_token_exercises_every_base64_special_character():
     assert "+" in TOKEN and "/" in TOKEN and TOKEN.endswith("=")
 
 
 class TestBasic:
-    def test_the_echoed_header_is_redacted_whole(self):
-        text = f"<p>you sent: Authorization: {BASIC}</p>"
-        assert redact_sent_auth(text, _response(BASIC)) == (
-            f"<p>you sent: Authorization: {REDACTED}</p>"
-        )
-
-    def test_the_bare_token_is_redacted(self):
-        text = f'{{"auth": "{TOKEN}"}}'
-        assert redact_sent_auth(text, _response(BASIC)) == f'{{"auth": "{REDACTED}"}}'
-
     @pytest.mark.parametrize(
         ("label", "spelling"),
         [
+            ("the header", BASIC),
+            ("the bare token", TOKEN),
             ("url-encoded", urllib.parse.quote(TOKEN, safe="")),
             (
                 "url-encoded, lower-case escapes",
@@ -74,187 +69,193 @@ class TestBasic:
                 .replace("%2F", "%2f")
                 .replace("%3D", "%3d"),
             ),
+            ("url-encoded twice", urllib.parse.quote(urllib.parse.quote(TOKEN, safe=""), safe="")),
             ("json, escaped slashes", TOKEN.replace("/", "\\/")),
             ("json, unicode escapes", TOKEN.replace("/", "\\u002f").replace("+", "\\u002b")),
+            ("html, numeric entities", TOKEN.replace("/", "&#x2F;").replace("+", "&#43;")),
+            ("html5, named entities", TOKEN.replace("/", "&sol;").replace("+", "&plus;")),
             ("padding stripped", TOKEN.rstrip("=")),
             ("base64url", TOKEN.replace("+", "-").replace("/", "_")),
         ],
     )
-    def test_every_common_spelling_of_the_token_is_redacted(self, label: str, spelling: str):
-        out = redact_sent_auth(f"echo: {spelling}.", _response(BASIC))
-        assert _leaks(out, TOKEN) == [], label
-        assert out.startswith("echo: ") and out.endswith(".")
-
-    def test_a_base64url_echo_of_a_token_with_no_plain_window_is_redacted(self):
-        # Every 8-character window past the username part holds a "+" or "/",
-        # so only folding base64url back onto base64 can match it: the canary
-        # above cannot show that (its plain windows match without folding).
-        password = "~1?~~AA~?~"  # pragma: allowlist secret
-        token = base64.b64encode(f"{USER}:{password}".encode()).decode()
-        body = token[4:]
-        assert all(set(body[i : i + 8]) & {"+", "/"} for i in range(len(body) - 7))
-        url_form = token.replace("+", "-").replace("/", "_")
-        out = redact_sent_auth(f"tok={url_form}", _response(f"Basic {token}"))
-        assert _leaks(out, url_form[4:]) == []
+    def test_every_common_spelling_of_the_token_is_detected(self, label: str, spelling: str):
+        assert quotes_sent_auth(f"echo: {spelling}.", _response(BASIC)), label
 
     @pytest.mark.parametrize(
         ("password", "encode"),
         [
             ("-?A~A~~~??A~1>", lambda t: urllib.parse.quote(t, safe="")),
+            (">>--~-", lambda t: urllib.parse.quote(urllib.parse.quote(t, safe=""), safe="")),
             ("A-1?1?", lambda t: t.replace("/", "\\/")),
             ("~11?-A", lambda t: t.replace("+", "\\u002b").replace("/", "\\u002f")),
+            ("~11?-A", lambda t: t.replace("+", "&plus;").replace("/", "&sol;")),
+            ("~1?~~AA~?~", lambda t: t.replace("+", "-").replace("/", "_")),
         ],
-        ids=["url-encoded", "json-slash", "json-unicode"],
+        ids=[
+            "url-encoded",
+            "url-encoded-twice",
+            "json-slash",
+            "json-unicode",
+            "html5-entities",
+            "base64url",
+        ],
     )
-    def test_an_escaped_echo_of_a_dense_token_is_redacted(self, password, encode):
+    def test_an_escaped_echo_of_a_dense_token_is_detected(self, password, encode):
         # Each password is chosen so that no 8-character window of its token
-        # survives the escaping (asserted): only undoing the escapes can match.
+        # survives the re-spelling (asserted): only undoing it can match. For
+        # the twice-encoded case not even one decode leaves a window.
         token = base64.b64encode(f"{USER}:{password}".encode()).decode()
-        body = token.rstrip("=")[4:]
         echo = encode(token)
-        assert not any(window in echo for window in _fragments(token[4:], 8))
-        out = redact_sent_auth(f"echo {echo} end", _response(f"Basic {token}"))
-        decoded = urllib.parse.unquote(out).replace("\\/", "/")
-        decoded = decoded.replace("\\u002b", "+").replace("\\u002f", "/")
-        assert _leaks(decoded, body) == []
-        assert out.startswith("echo ") and out.endswith(" end")
+        assert not any(window in echo for window in _fragments(token[4:], BASE64_FRAGMENT))
+        if "%25" in echo:
+            once = urllib.parse.unquote(echo)
+            assert not any(w in once for w in _fragments(token[4:], BASE64_FRAGMENT))
+        assert quotes_sent_auth(f"echo {echo} end", _response(f"Basic {token}"))
 
-    def test_no_fragment_survives_a_truncation_across_the_token(self):
-        # The worst case: the cut falls in the middle of the token.
-        text = "." * (200 - len("Basic ") - len(TOKEN) // 2) + BASIC
-        assert TOKEN[:8] in text[:200]  # the precondition: unredacted, it leaks
-        cut = redact_sent_auth(text, _response(BASIC))[:200]
-        assert _leaks(cut, TOKEN) == []
+    def test_a_token_the_peer_already_cut_short_is_detected(self):
+        assert quotes_sent_auth(f"x {TOKEN[8:22]} y", _response(BASIC))
 
-    def test_a_token_the_peer_already_cut_short_is_redacted(self):
-        fragment = TOKEN[8:22]  # 14 characters of the password part, no header
-        out = redact_sent_auth(f"x {fragment} y", _response(BASIC))
-        assert _leaks(out, TOKEN[8:]) == []
-        assert out.startswith("x ") and out.endswith(" y")
-
-    def test_fragments_below_the_bar_are_left_alone(self):
+    def test_fragments_below_the_bar_are_not(self):
         # 7 base64 characters (about 5 bytes) is below the 8-character bar.
-        out = redact_sent_auth(f"x {TOKEN[9:16]} y", _response(BASIC))
-        assert TOKEN[9:16] in out
+        assert not quotes_sent_auth(f"x {TOKEN[9:16]} y", _response(BASIC))
 
     def test_the_username_part_of_the_token_is_not_a_credential(self):
-        # The first characters encode only "root:" and the start of the password.
         # Another credential for the same user (legitimate data) whose password
-        # starts with the same three letters shares them, and must not be hit.
+        # starts with the same three letters shares the token's first characters.
         other = base64.b64encode(b"root:Unix-other-thing").decode()
         assert other[:10] == TOKEN[:10]
-        out = redact_sent_auth(f"value={other}", _response(BASIC))
-        assert out == f"value={other}"
+        assert not quotes_sent_auth(f"value={other}", _response(BASIC))
 
-    def test_the_configured_token_is_redacted_when_this_request_sent_digest(self):
+    def test_the_configured_token_counts_when_this_request_sent_digest(self):
         # AUTO mode sends Basic first and retries with Digest on the same Request,
         # so the final request no longer carries the Basic token it sent.
-        text = "." * 180 + BASIC
-        out = redact_sent_auth(text, _response(DIGEST), username=USER, password=PASSWORD)
-        assert _leaks(out, TOKEN) == []
+        response = _response(DIGEST)
+        assert not quotes_sent_auth(f"seen: {BASIC}", response)
+        assert quotes_sent_auth(f"seen: {BASIC}", response, username=USER, password=PASSWORD)
+
+    def test_the_configured_token_counts_without_any_response(self):
+        assert quotes_sent_auth(TOKEN, None, username=USER, password=PASSWORD)
+
+
+class TestTokenWindows:
+    """The fragment bar, against an oracle computed from bit offsets."""
+
+    @staticmethod
+    def _oracle(username: str, password: str) -> set[str]:
+        raw = f"{username}:{password}".encode()
+        token = base64.b64encode(raw).decode()
+        first = raw.index(b":") + 1  # the first password byte
+        if len(raw) - first < MIN_PASSWORD:
+            return set()
+        expected = set()
+        for i in range(len(token) - BASE64_FRAGMENT + 1):
+            lo, hi = 6 * i, 6 * (i + BASE64_FRAGMENT)  # the bits the window encodes
+            whole = [j for j in range(first, len(raw)) if 8 * j >= lo and 8 * j + 8 <= hi]
+            if len(whole) >= MIN_PASSWORD:
+                expected.add(token[i : i + BASE64_FRAGMENT])
+        return expected
+
+    @pytest.mark.parametrize("username", ["", "a", "ab", "root", "admin", "jöhn", "用户"])
+    @pytest.mark.parametrize(
+        "password", ["abcd", "abcde", "Pa55-w0rd!", "pässwörd-用户", "a:b:c:d"]
+    )
+    def test_every_window_covering_four_password_bytes_and_no_other(self, username, password):
+        token = base64.b64encode(f"{username}:{password}".encode()).decode()
+        assert token_windows(token) == self._oracle(username, password)
+
+    @pytest.mark.parametrize("password", ["", "a", "abc"])
+    def test_a_password_under_four_bytes_has_no_fragments(self, password):
+        # Only the whole token counts: a window would be mostly username.
+        assert token_windows(base64.b64encode(f"abc:{password}".encode()).decode()) == set()
 
 
 class TestDigest:
-    def test_the_echoed_header_is_redacted_whole(self):
-        text = f"Authorization: {DIGEST}"
-        assert redact_sent_auth(text, _response(DIGEST)) == f"Authorization: {REDACTED}"
+    def test_the_echoed_header_is_detected(self):
+        assert quotes_sent_auth(f"Authorization: {DIGEST}", _response(DIGEST))
 
-    def test_the_response_hash_is_redacted_on_its_own(self):
-        # A JSON echo escapes the header's quotes, so only the hash itself matches.
-        text = f'{{"response": "{DIGEST_RESPONSE}"}}'
-        assert redact_sent_auth(text, _response(DIGEST)) == f'{{"response": "{REDACTED}"}}'
-
-    def test_an_upper_cased_hash_is_redacted(self):
-        out = redact_sent_auth(f"response={DIGEST_RESPONSE.upper()}", _response(DIGEST))
-        assert _leaks(out, DIGEST_RESPONSE, 12) == []
-
-    def test_a_hash_fragment_of_twelve_hex_characters_is_redacted(self):
-        out = redact_sent_auth(f"r={DIGEST_RESPONSE[:16]}", _response(DIGEST))
-        assert _leaks(out, DIGEST_RESPONSE, 12) == []
-
-    def test_the_rest_of_a_digest_header_is_not_a_credential(self):
-        # nonce, cnonce, realm and username are not secret: only the hash is removed.
-        text = 'nonce="0001c2d3" realm="AXIS_ACCC8E0000AA"'
-        assert redact_sent_auth(text, _response(DIGEST)) == text
-
-
-class TestConfiguredPassword:
     @pytest.mark.parametrize(
         "spelling",
-        [PASSWORD, urllib.parse.quote(PASSWORD, safe=""), urllib.parse.quote_plus(PASSWORD)],
+        [DIGEST_RESPONSE, DIGEST_RESPONSE.upper(), DIGEST_RESPONSE[:16], DIGEST_RESPONSE[10:22]],
+        ids=["whole", "upper-case", "first-16", "middle-12"],
     )
-    def test_the_password_is_redacted_in_its_common_spellings(self, spelling: str):
-        out = redact_sent_auth(f"user root pass {spelling}", _response(BASIC), password=PASSWORD)
-        assert _leaks(out, PASSWORD) == []
+    def test_the_hash_and_its_fragments_are_detected(self, spelling: str):
+        assert quotes_sent_auth(f'{{"r": "{spelling}"}}', _response(DIGEST))
 
-    def test_a_password_shorter_than_four_characters_is_not_hunted(self):
-        # Three characters match ordinary words; no substring rule can protect them.
-        out = redact_sent_auth("abc abcdef", _response(None), password="abc")
-        assert out == "abc abcdef"
+    def test_eleven_hex_characters_are_below_the_bar(self):
+        assert not quotes_sent_auth(f"r={DIGEST_RESPONSE[:11]}", _response(DIGEST))
 
+    def test_the_parameter_name_is_matched_without_case(self):
+        header = DIGEST.replace("response=", "RESPONSE=")
+        assert quotes_sent_auth(f"r={DIGEST_RESPONSE}", _response(header))
 
-class TestNothingToRedact:
-    def test_genuine_device_text_is_unchanged(self):
-        text = "# Error: Error setting 'Image.I0.Name' to 'Hall'!"
-        assert redact_sent_auth(text, _response(BASIC), username=USER, password=PASSWORD) == text
-
-    def test_a_request_without_authorization(self):
-        assert redact_sent_auth(f"echo {TOKEN}", _response(None)) == f"echo {TOKEN}"
-
-    def test_a_response_built_without_a_request(self):
-        # httpx raises RuntimeError from Response.request when none was attached.
-        response = httpx.Response(500, text="oops")
-        assert redact_sent_auth("oops", response) == "oops"
-
-    def test_mocks_pass_through(self):
-        # Unit tests across the suite pass MagicMock responses and clients.
-        mock = MagicMock()
-        out = redact_sent_auth("oops", mock, username=mock.username, password=mock.password)
-        assert out == "oops"
+    def test_the_rest_of_a_digest_header_is_not_a_credential(self):
+        # nonce, cnonce, realm and username are not secret: only the hash counts.
+        text = 'nonce="0001c2d3" realm="AXIS_ACCC8E0000AA" username="root"'
+        assert not quotes_sent_auth(text, _response(DIGEST))
 
 
-class TestQuotesSentAuth:
-    """The refusal test for a success reply: does it quote what this request sent?"""
-
-    @pytest.mark.parametrize(
-        "text",
-        [
-            f"root.Echo={BASIC}",
-            urllib.parse.quote(TOKEN, safe=""),
-            json.dumps({"seen": TOKEN.replace("/", "\\/")}),
-            TOKEN[8:20],
-            DIGEST_RESPONSE.upper(),
-        ],
-    )
-    def test_any_spelling_or_fragment_of_a_sent_credential(self, text: str):
-        response = _response(BASIC if "Basic" in text or "%" in text else DIGEST, 200)
-        assert quotes_sent_auth(text, response, username=USER, password=PASSWORD)
+class TestNothingToDetect:
+    def test_genuine_device_text(self):
+        text = "root.Image.I0.Name=Hall\n# Error: Error setting 'Image.I0.Name' to 'x'!\n"
+        assert not quotes_sent_auth(text, _response(BASIC), username=USER, password=PASSWORD)
 
     def test_the_plain_password_alone_is_data_not_an_echo(self):
         # An administrator password reused as the proxy password is legitimate
         # device data; refusing it would break backups. (A stated limit.)
         text = f"root.Network.Proxy.Password={PASSWORD}\n"
-        assert not quotes_sent_auth(text, _response(BASIC, 200), username=USER, password=PASSWORD)
+        assert not quotes_sent_auth(text, _response(BASIC), username=USER, password=PASSWORD)
 
-    def test_genuine_text_and_mocks(self):
-        assert not quotes_sent_auth("root.Image.I0.Name=Hall\n", _response(BASIC, 200))
-        assert not quotes_sent_auth(MagicMock(), MagicMock())  # type: ignore[arg-type]
+    def test_a_response_built_without_a_request(self):
+        # httpx raises RuntimeError from Response.request when none was attached.
+        assert not quotes_sent_auth(f"echo {TOKEN}", httpx.Response(200, text="x"))
+
+    def test_mocks_pass_through(self):
+        mock = MagicMock()
+        assert not quotes_sent_auth("oops", mock, username=mock.username, password=mock.password)
+        assert not quotes_sent_auth(mock, mock)  # type: ignore[arg-type]
+
+
+class TestContainsPassword:
+    @pytest.mark.parametrize(
+        ("password", "spelling"),
+        [
+            (PASSWORD, PASSWORD),
+            (PASSWORD, urllib.parse.quote(PASSWORD, safe="")),
+            ("ab cd-pw", "ab+cd-pw"),  # form encoding
+            ("päss-word", urllib.parse.quote("päss-word")),  # UTF-8 percent-encoding
+            ('ab"cd-pw', 'ab\\"cd-pw'),  # JSON string escape
+            ("ab\U0001f600cd", "ab\\ud83d\\ude00cd"),  # JSON surrogate pair
+            ("a<b&c-pw", html.escape("a<b&c-pw")),
+            ("a+b-pw", "a&plus;b-pw"),  # HTML5 named entity
+        ],
+    )
+    def test_every_common_spelling(self, password: str, spelling: str):
+        assert contains_password(f"pass={spelling};", password)
+
+    def test_json_dumps_round_trip(self):
+        assert contains_password(json.dumps({"pass": PASSWORD}), PASSWORD)
+
+    def test_a_password_shorter_than_four_characters_is_not_hunted(self):
+        assert not contains_password("abc abcdef", "abc")
+
+    def test_mocks_and_missing_values(self):
+        assert not contains_password("text", None)
+        assert not contains_password("text", MagicMock())
+        assert not contains_password(MagicMock(), "secret-value")  # type: ignore[arg-type]
 
 
 class TestErrorExcerpt:
-    def test_a_dump_of_the_request_headers_is_withheld(self):
-        body = json.dumps({"headers": {"Authorization": BASIC, "Accept": "*/*"}})
-        out = error_excerpt(body, _response(BASIC, 404))
-        assert _leaks(out, TOKEN) == []
-        assert "withheld" in out and "request headers" in out
-        assert str(len(body)) in out
+    def test_genuine_text_is_kept_and_cut(self):
+        text = "<h1>Not Found</h1>" + "." * 300
+        assert error_excerpt(text, password=PASSWORD) == text[:200]
 
-    def test_ordinary_text_is_redacted_then_cut(self):
-        text = "." * 190 + BASIC
-        out = error_excerpt(text, _response(BASIC, 404), limit=200)
-        assert len(out) <= 200
-        assert _leaks(out, TOKEN) == []
+    def test_an_excerpt_holding_the_configured_password_is_withheld(self):
+        body = "." * 190 + f"user=root&pass={urllib.parse.quote_plus(PASSWORD)}"
+        out = error_excerpt(body, password=PASSWORD)
+        assert (
+            out == f"[{len(body)} characters withheld: the reply contains the configured password]"
+        )
 
-    def test_genuine_axis_text_is_kept(self):
-        text = "<h1>Not Found</h1>"
-        assert error_excerpt(text, _response(BASIC, 404)) == text
+    def test_without_a_configured_password(self):
+        assert error_excerpt("<h1>Not Found</h1>") == "<h1>Not Found</h1>"
+        assert error_excerpt(MagicMock()) == ""  # type: ignore[arg-type]

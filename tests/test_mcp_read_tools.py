@@ -7,6 +7,7 @@ names the production change it forced.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
 
@@ -270,3 +271,40 @@ class TestListModules:
         assert result.is_error is True
         text = "".join(getattr(c, "text", "") for c in result.content)
         assert "401" in text and CANARY not in text and CANARY_BASIC not in text
+
+
+class TestUnexpectedErrors:
+    """An exception that is not an ``AxisError`` never shows its text, anywhere."""
+
+    @staticmethod
+    def _validation_error_holding_the_canary() -> Exception:
+        from pydantic import BaseModel, ValidationError
+
+        class Strict(BaseModel):
+            enabled: bool
+
+        try:
+            Strict.model_validate({"enabled": CANARY})
+        except ValidationError as exc:
+            assert CANARY in str(exc)  # precondition: pydantic quotes the input
+            return exc
+        raise AssertionError("unreachable")
+
+    async def test_device_report_never_shows_or_logs_validation_input(
+        self, caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        error = self._validation_error_holding_the_canary()
+        device = FakeDevice("192.0.2.1", [FakeModule("ssh", error, api_id="ssh")])
+        server = build_server(two_cameras(back_of_house=device))
+        async with Client(server) as client:
+            result = await client.call_tool(
+                "device_report", {"device": "back_of_house", "full": True}
+            )
+        wire = "".join(getattr(item, "text", "") for item in result.content)
+        captured = capfd.readouterr()
+        assert result.is_error is True
+        assert "internal error: ValidationError" in wire
+        for surface in (wire, caplog.text, captured.out, captured.err):
+            assert CANARY not in surface
+        assert "Traceback" not in caplog.text

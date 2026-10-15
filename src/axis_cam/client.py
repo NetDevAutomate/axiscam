@@ -18,6 +18,7 @@ from axis_cam.exceptions import (
     AxisAuthenticationError,
     AxisConnectionError,
     AxisDeviceError,
+    AxisEchoError,
     AxisPermissionError,
 )
 from axis_cam.secrets import error_excerpt, quotes_sent_auth
@@ -37,6 +38,19 @@ def _path_of(response: httpx.Response) -> str:
         return response.url.path
     except (AttributeError, RuntimeError):
         return "a request"
+
+
+#: Content types an echo page can come back as; binary downloads are scanned only then.
+_TEXT_TYPES = re.compile(r"^\s*(?:text/|application/(?:[\w.+-]*\+)?(?:json|xml)\b)", re.I)
+
+
+def _is_text(response: httpx.Response) -> bool:
+    """Whether the reply says it is text (``text/*``, JSON or XML)."""
+    try:
+        content_type = response.headers.get("content-type", "")
+    except AttributeError:
+        return False
+    return isinstance(content_type, str) and bool(_TEXT_TYPES.match(content_type))
 
 
 class VapixClient:
@@ -417,31 +431,38 @@ class VapixClient:
     ) -> None:
         """Check HTTP response for errors.
 
-        A reply below 400 that quotes the credentials this request sent, in any
-        spelling (:func:`~axis_cam.secrets.quotes_sent_auth`), is refused: no
-        Axis device echoes request headers, so such a body is a proxy or peer
-        echoing the request and is not device data. Refusing it keeps every
-        data path faithful -- what the device sent, or a loud failure -- and
-        keeps the credentials out of anything that parses or quotes the body.
+        A reply that quotes the credentials this request sent, in any common
+        spelling (:func:`~axis_cam.secrets.quotes_sent_auth`), is refused first,
+        whatever its status: no Axis device echoes request headers, so such a
+        body is a proxy or peer echoing the request. It is not device data, and
+        nothing downstream ever sees, parses or quotes it.
 
         Args:
             response: HTTP response to check.
             raise_on_error_status: Raise ``AxisDeviceError`` for any other
                 4xx/5xx. ``False`` leaves those to a caller that can read the
-                body (SOAP faults); that caller must quote it only through
-                :func:`~axis_cam.secrets.error_excerpt` or
-                :func:`~axis_cam.secrets.redact_sent_auth`.
-            scan_reply: Scan a reply below 400 for the request's credentials.
-                ``False`` only for binary downloads (snapshots, server reports):
-                an echo is text, and decoding megabytes of binary costs time.
+                body (SOAP faults); that caller quotes it only through
+                :func:`~axis_cam.secrets.error_excerpt`.
+            scan_reply: Scan the reply for the request's credentials. ``False``
+                for binary downloads (snapshots, server reports), which are
+                still scanned when the reply says it is text: an echo page
+                always is.
 
         Raises:
+            AxisEchoError: The reply quotes the request's credentials.
             AxisConnectionError: Plain HTTP was sent to a port that expects TLS.
             AxisAuthenticationError: If authentication failed (401).
             AxisPermissionError: If the account may not use the path (403).
-            AxisDeviceError: If device returned an error status, or a reply that
-                quotes the request's credentials.
+            AxisDeviceError: If device returned an error status.
         """
+        if (scan_reply or _is_text(response)) and quotes_sent_auth(
+            response.text, response, username=self.username, password=self.password
+        ):
+            raise AxisEchoError(
+                f"Refused the reply from {self.host} to {_path_of(response)} "
+                f"(HTTP {response.status_code}): it quotes this request's credentials, "
+                "so a proxy or peer is echoing requests."
+            )
         if response.status_code == 400 and "plain http" in response.text.lower():
             # Apache: "You're speaking plain HTTP to an SSL-enabled server port";
             # nginx: "The plain HTTP request was sent to HTTPS port".
@@ -459,24 +480,26 @@ class VapixClient:
                 f"Access denied to {self.host}: this account may not use {response.url.path} (403)."
             )
         if response.status_code >= 400 and raise_on_error_status:
-            # Redacted before the cut: a cut through an echoed credential would
-            # leave a fragment no later whole-string scrubber can match.
-            excerpt = error_excerpt(
-                response.text, response, username=self.username, password=self.password
-            )
+            excerpt = error_excerpt(response.text, password=self.password)
             raise AxisDeviceError(
                 f"Device error {response.status_code} from {self.host}: {excerpt}"
             )
-        if (
-            response.status_code < 400
-            and scan_reply
-            and quotes_sent_auth(
-                response.text, response, username=self.username, password=self.password
-            )
-        ):
-            raise AxisDeviceError(
-                f"Refused the reply from {self.host} to {_path_of(response)}: it quotes this "
-                "request's credentials, so a proxy or peer is echoing requests."
+
+    def refuse_echo(self, text: str) -> None:
+        """Refuse device text that quotes this client's credentials.
+
+        For text the client only sees after decoding a binary download (a log
+        file inside the server-report tarball). Without the request at hand only
+        the configured Basic token is known, which is what a Basic request and
+        AUTO mode's first attempt send.
+
+        Raises:
+            AxisEchoError: ``text`` quotes the configured credentials.
+        """
+        if quotes_sent_auth(text, None, username=self.username, password=self.password):
+            raise AxisEchoError(
+                f"Refused content from {self.host}: it quotes this client's credentials, "
+                "so a proxy or peer is echoing requests."
             )
 
     DISCOVERY_PATH = "/config/discover/apis"
