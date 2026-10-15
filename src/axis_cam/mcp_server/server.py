@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server import CacheHint, MCPServer
+from mcp.server.elicitation import AcceptedElicitation, ElicitationResult
+from mcp.server.mcpserver import Context, Elicit, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
@@ -40,15 +42,16 @@ from axis_cam.devices.base import AxisDevice
 from axis_cam.exceptions import (
     AxisApiNotSupportedError,
     AxisError,
+    AxisLockoutError,
     AxisPermissionError,
 )
 from axis_cam.fleet import fleet_json, run_fleet
 from axis_cam.mcp_server.devices import ConfigResolver, DeviceResolver, DeviceSummary, device_enum
-from axis_cam.mcp_server.plans import PlanStore
+from axis_cam.mcp_server.plans import PlanStore, StoredPlan
 from axis_cam.mcp_server.redact import REDACTED, Scrubber, is_secret_name, redact_params
 from axis_cam.models import UserRole
 from axis_cam.report import collect_report
-from axis_cam.restore import plan_param_restore
+from axis_cam.restore import ParamChange, RestorePlan, apply_param_restore, plan_param_restore
 
 #: Every tool this server registers, in the order they are documented.
 TOOL_NAMES: tuple[str, ...] = (
@@ -64,6 +67,7 @@ TOOL_NAMES: tuple[str, ...] = (
     "backup_verify",
     "plan_restore",
     "plan_account_change",
+    "apply_plan",
 )
 
 #: tools/list is fixed for the life of the process; let clients cache it.
@@ -76,6 +80,10 @@ BACKUP_ID = re.compile(r"^backup-[A-Za-z0-9_.-]+$")
 READ = ToolAnnotations(read_only_hint=True, destructive_hint=False, open_world_hint=False)
 #: Mints server-side state (a plan, a backup on the server's disk); never writes a device.
 STATEFUL = ToolAnnotations(read_only_hint=False, destructive_hint=False, open_world_hint=False)
+#: The one tool that writes to a device -- only after the human confirms.
+WRITE = ToolAnnotations(
+    read_only_hint=False, destructive_hint=True, idempotent_hint=False, open_world_hint=False
+)
 
 
 def resource_module_names() -> list[str]:
@@ -152,7 +160,30 @@ class PlanResult(BaseModel):
     serial: str
     expires_in_seconds: int
     plan: dict[str, Any]
-    note: str = "Plan only. This server cannot apply plans yet; nothing was written to the device."
+    note: str = (
+        "Plan only: nothing was written to the device. To apply it, call apply_plan; "
+        "the server asks the human to confirm and refuses on hosts that cannot ask."
+    )
+
+
+class Confirmation(BaseModel):
+    """What the human is asked. Rendered by the host as a form."""
+
+    approve: bool = Field(description="Apply exactly this change to the device now.")
+
+
+class AppliedChange(BaseModel):
+    name: str
+    ok: bool
+    detail: str
+
+
+class ApplyResult(BaseModel):
+    plan_id: str
+    device: str
+    status: Literal["applied", "partial", "failed", "declined", "refused"]
+    reason: str | None = None
+    results: list[AppliedChange] = Field(default_factory=list)
 
 
 # --- server -------------------------------------------------------------------------
@@ -488,7 +519,12 @@ def build_server(
                 for c in plan.changes
             ]
             payload = {"backup_id": backup_id, "changes": changes, "skipped": plan.skip_counts()}
-            stored = store.mint("param_restore", name, serial, payload)
+            private = {
+                "changes": [
+                    {"name": c.name, "current": c.current, "target": c.target} for c in plan.changes
+                ]
+            }
+            stored = store.mint("param_restore", name, serial, payload, private=private)
             return PlanResult(
                 plan_id=stored.plan_id,
                 kind=stored.kind,
@@ -550,6 +586,151 @@ def build_server(
             )
 
         return await guarded(name, run)
+
+    # -- apply (the only device write; needs a human confirmation) --------------
+
+    locks: dict[str, asyncio.Lock] = {}
+
+    def describe_plan(plan: StoredPlan) -> str:
+        """The confirmation text, rendered from the STORED plan (never from model input)."""
+        head = f"Apply this change to {plan.device} (serial {plan.serial})?"
+        if plan.kind == "param_restore":
+            lines = [
+                f"  {c['name']}: {c['current']!r} -> {c['target']!r}"
+                for c in plan.payload["changes"]
+            ]
+            body = f"Restore {len(lines)} parameter(s) from {plan.payload['backup_id']}:"
+            return "\n".join([head, body, *lines])
+        p = plan.payload
+        what = "remove" if p["action"] == "remove" else f"set role to {p['new_role']}"
+        return f"{head}\nAccount {p['account']} (now {p['current_role']}): {what}."
+
+    def confirm_plan(plan_id: str, ctx: Context) -> Elicit[Confirmation]:
+        """Resolver: refuse hosts that cannot ask a human, then ask."""
+        capabilities = ctx.client_capabilities
+        if capabilities is None or capabilities.elicitation is None:
+            raise ToolError(
+                "this MCP host cannot show a confirmation (no elicitation capability), "
+                "so apply_plan is disabled here; the plan is unchanged. Apply it with the "
+                "axiscam CLI instead."
+            )
+        plan = store.get(plan_id)
+        if plan is None:
+            raise ToolError(f"no such plan (unknown or expired): {plan_id}")
+        return Elicit(describe_plan(plan), Confirmation)
+
+    async def apply_restore(dev: AxisDevice, plan: StoredPlan) -> ApplyResult:
+        wanted = plan.private["changes"]
+        live = await dev.params.export()
+        drifted = [c["name"] for c in wanted if live.get(c["name"]) != c["current"]]
+        if drifted:
+            return ApplyResult(
+                plan_id=plan.plan_id,
+                device=plan.device,
+                status="refused",
+                reason="the device changed since the plan was made: " + ", ".join(drifted),
+            )
+        restore = RestorePlan(
+            changes=[ParamChange(c["name"], c["current"], c["target"]) for c in wanted]
+        )
+        results = [
+            AppliedChange(
+                name=r.change.name,
+                ok=r.ok,
+                detail=r.detail
+                if not is_secret_name(r.change.name)
+                else ("verified" if r.ok else "failed (credential: detail withheld)"),
+            )
+            for r in await apply_param_restore(dev, restore)
+        ]
+        failed = sum(not r.ok for r in results)
+        status = "applied" if not failed else ("failed" if failed == len(results) else "partial")
+        return ApplyResult(plan_id=plan.plan_id, device=plan.device, status=status, results=results)
+
+    async def apply_account(dev: AxisDevice, plan: StoredPlan) -> ApplyResult:
+        p = plan.payload
+        if p["would_be_refused"]:
+            return ApplyResult(
+                plan_id=plan.plan_id,
+                device=plan.device,
+                status="refused",
+                reason=p["would_be_refused"],
+            )
+        current = (await dev.users.list()).get(p["account"])
+        now = current.role.value if current and current.role else None
+        if current is None or now != p["current_role"]:
+            return ApplyResult(
+                plan_id=plan.plan_id,
+                device=plan.device,
+                status="refused",
+                reason=f"the account changed since the plan was made (now {now})",
+            )
+        try:
+            if p["action"] == "remove":
+                await dev.users.remove(p["account"])
+            else:
+                await dev.users.set_role(p["account"], UserRole(p["new_role"]))
+        except AxisLockoutError as exc:
+            return ApplyResult(
+                plan_id=plan.plan_id, device=plan.device, status="refused", reason=str(exc)
+            )
+        except AxisError as exc:
+            return ApplyResult(
+                plan_id=plan.plan_id,
+                device=plan.device,
+                status="failed",
+                results=[AppliedChange(name=p["account"], ok=False, detail=str(exc))],
+            )
+        return ApplyResult(
+            plan_id=plan.plan_id,
+            device=plan.device,
+            status="applied",
+            results=[AppliedChange(name=p["account"], ok=True, detail="verified")],
+        )
+
+    @tool(WRITE)
+    async def apply_plan(
+        plan_id: str,
+        answer: Annotated[ElicitationResult[Confirmation], Resolve(confirm_plan)],
+    ) -> ApplyResult:
+        """Apply a plan from plan_restore or plan_account_change, after the human confirms.
+
+        The server shows the human the stored plan and asks; a declined answer
+        writes nothing. The plan is single-use, bound to the device's serial
+        number, and refused if the device changed since it was made. Hosts
+        that cannot ask the human get an error and nothing is written.
+        """
+        plan = store.get(plan_id)
+        if plan is None:
+            raise ToolError(f"no such plan (unknown or expired): {plan_id}")
+        if not isinstance(answer, AcceptedElicitation) or not answer.data.approve:
+            return ApplyResult(
+                plan_id=plan_id,
+                device=plan.device,
+                status="declined",
+                reason="the human did not approve; nothing was written (the plan is kept)",
+            )
+        plan = store.take(plan_id)  # single use from here on, whatever the outcome
+        if plan is None:
+            raise ToolError(f"plan already used or expired: {plan_id}")
+        lock = locks.setdefault(plan.device, asyncio.Lock())
+        async with lock:
+
+            async def run(dev: AxisDevice) -> ApplyResult:
+                serial = (await dev.get_info()).serial_number
+                if serial.upper() != plan.serial.upper():
+                    return ApplyResult(
+                        plan_id=plan_id,
+                        device=plan.device,
+                        status="refused",
+                        reason=f"device serial is {serial}, the plan was made for {plan.serial}",
+                    )
+                if plan.kind == "param_restore":
+                    return await apply_restore(dev, plan)
+                return await apply_account(dev, plan)
+
+            result = await guarded(plan.device, run)
+        return ApplyResult.model_validate(scrubber(plan.device).data(result.model_dump()))
 
     if set(registered) != set(TOOL_NAMES):
         raise RuntimeError(

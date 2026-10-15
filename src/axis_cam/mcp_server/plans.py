@@ -37,6 +37,9 @@ class StoredPlan:
     digest: str
     created: float
     expires: float
+    #: What apply needs that must never be returned to the client (unredacted
+    #: values, the backup path). Excluded from repr.
+    private: dict[str, Any] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -52,13 +55,31 @@ class PlanStore:
     clock: Callable[[], float] = time.monotonic
     _plans: dict[str, StoredPlan] = field(default_factory=dict)
 
-    def mint(self, kind: str, device: str, serial: str, payload: dict[str, Any]) -> StoredPlan:
-        """Store a new plan and return it."""
+    def mint(
+        self,
+        kind: str,
+        device: str,
+        serial: str,
+        payload: dict[str, Any],
+        *,
+        private: dict[str, Any] | None = None,
+    ) -> StoredPlan:
+        """Store a new plan and return it.
+
+        ``payload`` is what the client sees; ``private`` is what apply needs and
+        the client must not see (it still counts towards the digest).
+        """
         self._expire()
         now = self.clock()
         digest = hashlib.sha256(
             json.dumps(
-                {"kind": kind, "device": device, "serial": serial, "payload": payload},
+                {
+                    "kind": kind,
+                    "device": device,
+                    "serial": serial,
+                    "payload": payload,
+                    "private": private or {},
+                },
                 sort_keys=True,
             ).encode()
         ).hexdigest()
@@ -71,6 +92,7 @@ class PlanStore:
             digest=digest,
             created=now,
             expires=now + self.ttl,
+            private=dict(private or {}),
         )
         self._plans[plan.plan_id] = plan
         return plan
