@@ -36,23 +36,27 @@ class TestToolsList:
         assert names == sorted(names)
         assert names == [t.name for t in second.tools]
         assert names == sorted(TOOL_NAMES)
-        assert len(names) == 12
+        assert len(names) == 13
         assert first.ttl_ms is not None and first.ttl_ms > 0
         assert capsys.readouterr().out == ""
 
-    async def test_every_tool_is_annotated_read_only_except_plans(self) -> None:
+    async def test_only_apply_plan_is_destructive(self) -> None:
         server = build_server(two_cameras())
         async with Client(server) as client:
             tools = (await client.list_tools()).tools
         for tool in tools:
             assert tool.annotations is not None, tool.name
+            assert tool.annotations.open_world_hint is False, tool.name
+            if tool.name == "apply_plan":
+                assert tool.annotations.destructive_hint is True
+                assert tool.annotations.read_only_hint is False
+                continue
             assert tool.annotations.destructive_hint is False, tool.name
             if tool.name.startswith("plan_") or tool.name == "backup_create":
                 # a plan is server-side state; a backup writes to the server's disk
                 assert tool.annotations.read_only_hint is False, tool.name
             else:
                 assert tool.annotations.read_only_hint is True, tool.name
-            assert tool.annotations.open_world_hint is False, tool.name
 
     async def test_no_tool_input_property_names_a_secret(self) -> None:
         server = build_server(two_cameras())

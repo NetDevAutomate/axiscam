@@ -295,5 +295,5 @@ def test_stdio_subprocess_emits_only_json_rpc(tmp_path: Path) -> None:
         [sys.executable, "-c", script], capture_output=True, text=True, env=env, timeout=60
     )
     assert out.returncode == 0, out.stderr[-2000:]
-    assert out.stdout.strip() == "12 cam"
+    assert out.stdout.strip() == "13 cam"
     assert CANARY not in out.stdout and CANARY not in out.stderr
