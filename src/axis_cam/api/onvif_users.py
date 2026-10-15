@@ -41,8 +41,11 @@ from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisLockoutError, AxisSoapFault, AxisUserError
 from axis_cam.models import OnvifAccount, OnvifAccounts, OnvifUserLevel
+from axis_cam.secrets import error_excerpt
 
 if TYPE_CHECKING:
+    from xml.etree.ElementTree import Element
+
     import httpx
 
 SOAP_ENV = "http://www.w3.org/2003/05/soap-envelope"
@@ -108,8 +111,18 @@ def user_element(username: str, level: OnvifUserLevel, password: str) -> str:
     )
 
 
-def parse_fault(xml: str, status_code: int) -> AxisSoapFault | None:
-    """Return the fault in a response body, or ``None`` if the body is not a fault."""
+def parse_fault(xml: str, status_code: int, *, password: object = None) -> AxisSoapFault | None:
+    """Return the fault in a response body, or ``None`` if the body is not a fault.
+
+    Fault *codes* are QNames from a controlled vocabulary (the SOAP envelope and
+    ONVIF ``ter:*`` sets), never free device text, and any reply that quoted the
+    sent credentials was already refused upstream -- so codes are quoted
+    verbatim, and the fault's meaning survives even when the configured password
+    happens to be a substring of a code (``Password`` in ``ter:PasswordTooWeak``).
+    Only the *reason* -- free device text -- goes through
+    :func:`~axis_cam.secrets.error_excerpt`, so a reason that holds the password
+    is withheld while the fault still reaches the caller.
+    """
     try:
         root = DefusedElementTree.fromstring(xml.strip())
     except (DefusedElementTree.ParseError, ValueError):
@@ -117,13 +130,17 @@ def parse_fault(xml: str, status_code: int) -> AxisSoapFault | None:
     fault = root.find("s:Body/s:Fault", _NS)
     if fault is None:
         return None
-    code = fault.findtext("s:Code/s:Value", default="", namespaces=_NS).strip()
+
+    def text_of(node: Element, path: str) -> str:
+        return node.findtext(path, default="", namespaces=_NS).strip()
+
+    code = text_of(fault, "s:Code/s:Value")
     subcodes: list[str] = []
     node = fault.find("s:Code/s:Subcode", _NS)
     while node is not None:
-        subcodes.append(node.findtext("s:Value", default="", namespaces=_NS).strip())
+        subcodes.append(text_of(node, "s:Value"))
         node = node.find("s:Subcode", _NS)
-    reason = fault.findtext("s:Reason/s:Text", default="", namespaces=_NS).strip()
+    reason = error_excerpt(text_of(fault, "s:Reason/s:Text"), password=password)
     leaf = subcodes[-1] if subcodes else code
     meaning = _FAULT_MEANINGS.get(leaf)
     detail = f"{reason} ({leaf})" if reason else leaf
@@ -291,12 +308,18 @@ class OnvifUsersAPI(BaseAPI):
             self.SERVICE_PATH, soap_envelope(body), content_type=SOAP_CONTENT_TYPE
         )
         if response.status_code >= 400:
-            fault = parse_fault(response.text, response.status_code)
+            # The client has already refused any reply that quotes this request's
+            # credentials. What is quoted from the rest passes error_excerpt: a
+            # fault field or an excerpt that holds the configured password is
+            # withheld, while the fault's class and codes still reach the caller.
+            text = response.text
+            password = getattr(self._client, "password", None)
+            fault = parse_fault(text, response.status_code, password=password)
             if fault is not None:
                 raise fault
             raise AxisUserError(
                 f"HTTP {response.status_code} from {self.SERVICE_PATH} without a SOAP fault: "
-                f"{response.text[:200]!r}"
+                f"{error_excerpt(text, password=password)!r}"
             )
         return response
 

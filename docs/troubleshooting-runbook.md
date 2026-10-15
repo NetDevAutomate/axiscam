@@ -645,7 +645,10 @@ flowchart TD
 
 **Symptoms**: `AxisDeviceError: Device error <status> from <host>: <body>`
 
-Raised by `_check_response()` for any status >= 400 that isn't 401 or 403.
+Raised by `_check_response()` for any status >= 400 that isn't 401 or 403. The
+`<body>` excerpt is the device's own text, at most 200 characters. If it holds
+the configured password it is replaced by `[N characters withheld: the reply
+contains the configured password]` -- see 5.6.
 
 | Status | Meaning | Action |
 |--------|---------|--------|
@@ -654,6 +657,31 @@ Raised by `_check_response()` for any status >= 400 that isn't 401 or 403.
 | 405 | Method not allowed | API module using wrong HTTP method |
 | 500 | Device-side error | Check device system logs: `axiscam logs system --device X` |
 | 503 | Device busy/overloaded | Wait and retry; device may be rebooting |
+
+### 5.6 "Refused the reply ... it quotes this request's credentials"
+
+**Symptoms**: `AxisEchoError: Refused the reply from <host> to <path> (HTTP
+<status>): it quotes this request's credentials, so a proxy or peer is echoing
+requests.`
+
+A reply -- of any status -- contained the credentials the request sent (the
+HTTP Basic token in some spelling, or the Digest `response` hash). No Axis
+device does that, so the reply did not come from the device as sent: a proxy, a
+WAF or a captive portal is answering, or the address is not the device. The
+library refuses the reply rather than use it or pass it on, and stops the
+operation: it is a connection-class error, so it is never mistaken for "this
+API is not supported". The `withheld: ... configured password` excerpt in 5.5
+points the same way.
+
+1. Check that `address` in the config is the device itself (no proxy, no load
+   balancer, no port forward to something else): `curl -skI https://<address>/`
+   should show an Axis `Server` header.
+2. Check for an HTTP proxy in the environment (`env | grep -i proxy`); `httpx`
+   honours `HTTPS_PROXY`/`HTTP_PROXY`.
+3. Change the device password if the path is untrusted: whatever echoed the
+   credentials has seen them.
+4. A very short or common device password can, rarely, match genuine device data
+   (stored base64 that starts with the same characters); a longer password ends it.
 
 ---
 

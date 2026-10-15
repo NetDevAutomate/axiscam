@@ -4,6 +4,8 @@ Reply bodies are the ones AXIS OS 12.11.118 returned on 2026-10-13, with the
 namespace preamble trimmed to the prefixes the parser needs.
 """
 
+import base64
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -23,6 +25,7 @@ from axis_cam.api.onvif_users import (
 from axis_cam.client import VapixClient
 from axis_cam.exceptions import (
     AxisAuthenticationError,
+    AxisEchoError,
     AxisLockoutError,
     AxisPermissionError,
     AxisSoapFault,
@@ -75,6 +78,15 @@ FAULT_NOT_SUPPORTED = _reply(
     "<SOAP-ENV:Subcode><SOAP-ENV:Value>ter:ActionNotSupported</SOAP-ENV:Value></SOAP-ENV:Subcode>"
     '</SOAP-ENV:Code><SOAP-ENV:Reason><SOAP-ENV:Text xml:lang="en">Optional action not '
     "implemented</SOAP-ENV:Text></SOAP-ENV:Reason></SOAP-ENV:Fault>"
+)
+# SetUser with a weak password (HTTP 400): the leaf subcode is ter:PasswordTooWeak.
+FAULT_PASSWORD_WEAK = _reply(
+    "<SOAP-ENV:Fault><SOAP-ENV:Code><SOAP-ENV:Value>SOAP-ENV:Sender</SOAP-ENV:Value>"
+    "<SOAP-ENV:Subcode><SOAP-ENV:Value>ter:InvalidArgVal</SOAP-ENV:Value>"
+    "<SOAP-ENV:Subcode><SOAP-ENV:Value>ter:PasswordTooWeak</SOAP-ENV:Value></SOAP-ENV:Subcode>"
+    "</SOAP-ENV:Subcode></SOAP-ENV:Code>"
+    '<SOAP-ENV:Reason><SOAP-ENV:Text xml:lang="en">Too weak</SOAP-ENV:Text>'
+    "</SOAP-ENV:Reason></SOAP-ENV:Fault>"
 )
 
 
@@ -374,3 +386,92 @@ class TestPostRaw:
                 await client.post_raw("/vapix/services", "x", content_type=SOAP_CONTENT_TYPE)
             with pytest.raises(AxisPermissionError):
                 await client.post_raw("/vapix/services", "x", content_type=SOAP_CONTENT_TYPE)
+
+
+ECHO_PASSWORD = "Onvif-Echo-T3st!"  # pragma: allowlist secret
+ECHO_TOKEN = base64.b64encode(f"admin:{ECHO_PASSWORD}".encode()).decode()
+
+
+def _token_fragments_in(text: str) -> list[str]:
+    return [
+        ECHO_TOKEN[i : i + 8] for i in range(len(ECHO_TOKEN) - 7) if ECHO_TOKEN[i : i + 8] in text
+    ]
+
+
+class TestSentCredentialNeverReachesTheError:
+    """A peer that echoes the request headers must not put the credential in an error.
+
+    No Axis device does this; a proxy or a broken or hostile peer can. The client
+    sends HTTP Basic, so the echoed header carries the base64 credential. The
+    client refuses such a reply before the SOAP layer sees it, whatever its
+    status, so neither a fault reason nor an excerpt can quote it.
+    """
+
+    @staticmethod
+    def _echo(status: int, wrap: Callable[[str], str]) -> Callable[[httpx.Request], httpx.Response]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, text=wrap(request.headers["Authorization"]))
+
+        return handler
+
+    async def _call(self, handler: Callable[[httpx.Request], httpx.Response]) -> Exception:
+        with respx.mock:
+            respx.post("https://192.168.1.10:443/vapix/services").mock(side_effect=handler)
+            client = VapixClient(
+                "192.168.1.10", "admin", ECHO_PASSWORD, use_https=True, port=443, auth_mode="basic"
+            )
+            async with client:
+                with pytest.raises((AxisUserError, AxisSoapFault, AxisEchoError)) as caught:
+                    await OnvifUsersAPI(client).list()
+        return caught.value
+
+    async def test_a_non_fault_body_cut_across_the_credential(self):
+        # Pad so a 200-character snippet would end in the middle of the token.
+        pad = "." * (200 - len("Basic ") - len(ECHO_TOKEN) // 2)
+        error = await self._call(self._echo(500, lambda auth: pad + auth))
+        assert isinstance(error, AxisEchoError)
+        assert "quotes this request's credentials" in str(error)
+        assert _token_fragments_in(str(error)) == []
+
+    async def test_a_fault_reason_that_echoes_the_credential(self):
+        def fault(auth: str) -> str:
+            return FAULT_INVALID_ARGS.replace("Invalid argument", f"Invalid argument: {auth}")
+
+        error = await self._call(self._echo(400, fault))
+        assert isinstance(error, AxisEchoError)
+        assert _token_fragments_in(str(error)) == []
+
+    async def test_a_fault_reason_holding_the_configured_password_is_withheld(self):
+        # The plain password is not an echo of the request (data may hold it),
+        # but a fault reason that carries it is not quoted. The fault itself --
+        # its class and codes -- still reaches the caller.
+        def fault(_: str) -> str:
+            return FAULT_INVALID_ARGS.replace("Invalid argument", f"bad pwd {ECHO_PASSWORD}")
+
+        error = await self._call(self._echo(400, fault))
+        assert isinstance(error, AxisSoapFault)
+        assert error.subcodes == ["ter:InvalidArgs"]
+        assert ECHO_PASSWORD not in str(error)
+        assert ECHO_PASSWORD not in error.reason
+        assert "withheld: the reply contains the configured password" in str(error)
+
+    async def test_a_genuine_fault_survives_a_password_that_appears_in_the_envelope(self):
+        # Opus F6: "2003" is in the SOAP 1.2 namespace of every reply. The fault
+        # quotes only its codes and reason, so nothing needs withholding.
+        api, client = _api([_response(FAULT_USERNAME_MISSING, 400)])
+        client.password = "2003"  # pragma: allowlist secret
+        with pytest.raises(AxisSoapFault) as caught:
+            await api.list()
+        assert caught.value.subcodes == ["ter:InvalidArgVal", "ter:UsernameMissing"]
+        assert "no user with that name" in str(caught.value)
+
+    async def test_a_fault_meaning_survives_a_password_that_is_a_substring_of_a_code(self):
+        # Fix-review finding 3: password "Password" is a substring of the subcode
+        # ter:PasswordTooWeak. Codes are a controlled vocabulary, so they are
+        # quoted verbatim and the fault's meaning is not lost.
+        api, client = _api([_response(FAULT_PASSWORD_WEAK, 400)])
+        client.password = "Password"  # pragma: allowlist secret
+        with pytest.raises(AxisSoapFault) as caught:
+            await api.list()
+        assert caught.value.subcodes[-1] == "ter:PasswordTooWeak"
+        assert "the device rejected the password as too weak" in str(caught.value)

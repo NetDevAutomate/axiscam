@@ -240,8 +240,15 @@ class LogsAPI(BaseAPI):
     async def get_log_files(self) -> dict[str, str]:
         """Get all log files from the server report tarball.
 
+        The tarball is a binary download, so the client does not scan it; each
+        file is checked once decoded (``VapixClient.refuse_echo``), before it
+        becomes log text.
+
         Returns:
             Dictionary mapping log file names to their content.
+
+        Raises:
+            AxisEchoError: A file quotes this client's credentials.
         """
         content = await self.get_server_report(ServerReportMode.TAR_ALL)
 
@@ -262,6 +269,8 @@ class LogsAPI(BaseAPI):
             # If not a valid tar, try to parse as plain text
             log_files["serverreport.txt"] = content.decode("utf-8", errors="replace")
 
+        for text in log_files.values():
+            self._client.refuse_echo(text)
         return log_files
 
     def _find_log_content(

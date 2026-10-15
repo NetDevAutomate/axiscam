@@ -11,6 +11,8 @@ dataclass is introspected at runtime.
 
 import asyncio
 import contextlib
+import functools
+import inspect
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
@@ -19,6 +21,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.shared.exceptions import MCPError
 from mcp.types import ToolAnnotations
 
 from axis_cam.api.registry import registered_modules
@@ -48,6 +51,47 @@ ToolFn = Callable[..., Any]
 def resource_module_names() -> list[str]:
     """Registered modules that can ``read()`` into one model, sorted."""
     return sorted(name for name, cls in registered_modules().items() if hasattr(cls, "read"))
+
+
+def contained(fn: ToolFn) -> ToolFn:
+    """``fn`` with every unexpected exception turned into a class-only ``ToolError``.
+
+    The SDK logs an unexpected exception with its traceback, and some exceptions
+    carry device data in their text -- a pydantic ``ValidationError`` quotes the
+    rejected input, which can be the configured password. Raised ``from None``,
+    the ``ToolError`` makes the SDK log one line and no traceback, and the model
+    reads ``internal error: <Class>``. ``ToolError`` and protocol errors
+    (``MCPError``, e.g. an elicitation round) pass through unchanged. The
+    wrapper keeps ``fn``'s signature (``functools.wraps``) and its sync or async
+    form, which the SDK reads to build the tool's schema and to call it.
+    """
+
+    def internal(exc: Exception) -> ToolError:
+        return ToolError(f"internal error: {type(exc).__name__}")
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def run_async(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await fn(*args, **kwargs)
+            except (ToolError, MCPError):
+                raise
+            except Exception as exc:
+                raise internal(exc) from None
+
+        return run_async
+
+    @functools.wraps(fn)
+    def run(*args: Any, **kwargs: Any) -> Any:
+        try:
+            return fn(*args, **kwargs)
+        except (ToolError, MCPError):
+            raise
+        except Exception as exc:
+            raise internal(exc) from None
+
+    return run
 
 
 @dataclass
@@ -83,7 +127,7 @@ class ServerDeps:
         def collect(fn: ToolFn) -> ToolFn:
             if fn.__name__ in self.registered:
                 raise RuntimeError(f"tool {fn.__name__!r} registered twice")
-            self.registered[fn.__name__] = (fn, annotations)
+            self.registered[fn.__name__] = (contained(fn), annotations)
             return fn
 
         return collect

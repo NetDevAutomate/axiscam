@@ -347,7 +347,12 @@ def backup_restore(
             table.add_column("Result", style="white")
             for result in results:
                 status = "[green]verified[/green]" if result.ok else f"[red]{result.detail}[/red]"
-                table.add_row(result.change.name, result.change.target, status)
+                value = (
+                    "(credential, value not shown)"
+                    if is_secret_name(result.change.name)
+                    else result.change.target
+                )
+                table.add_row(result.change.name, value, status)
             console.print(table)
             if failed:
                 raise typer.Exit(1)

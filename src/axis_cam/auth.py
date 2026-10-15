@@ -13,10 +13,15 @@ with that and remembers the decision for the rest of the session. Basic over
 plain HTTP is never chosen automatically.
 """
 
+from collections import deque
 from collections.abc import Generator
 from enum import Enum
 
 import httpx
+
+#: How many distinct ``Authorization`` values a :class:`VapixAuth` remembers.
+#: Basic sends one value; Digest a new one per request (nonce count, cnonce).
+SENT_MEMORY = 64
 
 
 class AuthMode(str, Enum):
@@ -65,6 +70,11 @@ class VapixAuth(httpx.Auth):
         self._basic = httpx.BasicAuth(username, password)
         self._digest = httpx.DigestAuth(username, password)
         self._chosen: httpx.Auth | None = None
+        #: Every distinct ``Authorization`` value sent, oldest first, at most
+        #: :data:`SENT_MEMORY`. A reply or a download decoded later that quotes
+        #: any of them is an echo (:mod:`axis_cam.secrets`); the ``Request``
+        #: itself keeps only the last value, because the flows mutate it.
+        self.sent: deque[str] = deque(maxlen=SENT_MEMORY)
 
     @property
     def scheme(self) -> str | None:
@@ -82,19 +92,27 @@ class VapixAuth(httpx.Auth):
             return self._digest
         return self._basic if self.https else self._digest
 
-    @staticmethod
     def _run(
-        auth: httpx.Auth, request: httpx.Request
+        self, auth: httpx.Auth, request: httpx.Request
     ) -> Generator[httpx.Request, httpx.Response, httpx.Response]:
-        """Drive another Auth's flow to completion and return its final response."""
+        """Drive another Auth's flow to completion and return its final response.
+
+        Records each ``Authorization`` value as it goes out (:attr:`sent`).
+        """
         flow = auth.auth_flow(request)
         outgoing = next(flow)
         while True:
+            self._remember(outgoing)
             response = yield outgoing
             try:
                 outgoing = flow.send(response)
             except StopIteration:
                 return response
+
+    def _remember(self, request: httpx.Request) -> None:
+        value = request.headers.get("Authorization")
+        if value and value not in self.sent:
+            self.sent.append(value)
 
     def auth_flow(self, request: httpx.Request) -> Generator[httpx.Request, httpx.Response, None]:
         """Authenticate ``request``, switching scheme when the device demands it.

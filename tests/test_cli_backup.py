@@ -230,6 +230,21 @@ class TestRestore:
         with patch.object(DeviceContext, "open", return_value=device):
             return runner.invoke(app, ["backup", "restore", *args, *HOST_ARGS], input=input)
 
+    def test_the_results_table_never_prints_a_credential(self, no_config, tmp_path):
+        # The plan view says "(credential, value not shown)"; the results table
+        # printed the restored value in clear (milestone-2 council, Opus F3).
+        community = "zq-rotated-9Xk"  # pragma: allowlist secret
+        root = self._backup(tmp_path, dict(self.CURRENT, **{"root.SNMP.ReadCommunity": community}))
+        device = self._device()
+        device.params.export.return_value = dict(  # type: ignore[attr-defined]
+            self.CURRENT, **{"root.SNMP.ReadCommunity": "public"}
+        )
+        result = self._run(device, [str(root), "--yes", "--include-secrets"])
+        text = _text(result)
+        assert result.exit_code == 0, text
+        assert "SNMP.ReadCommunity" in text
+        assert community not in text
+
     def test_dry_run_shows_the_plan_and_writes_nothing(self, no_config, tmp_path):
         root = self._backup(tmp_path, dict(self.CURRENT, **{"root.Audio.MaxListeners": "20"}))
         device = self._device()

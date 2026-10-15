@@ -7,8 +7,10 @@ names the production change it forced.
 from __future__ import annotations
 
 import json
+import logging
 import subprocess
 import sys
+from typing import TYPE_CHECKING
 
 import pytest
 from mcp import Client
@@ -22,6 +24,9 @@ from axis_cam.exceptions import (
 )
 from axis_cam.mcp_server.server import TOOL_NAMES, build_server
 from tests.mcp_fakes import CANARY, CANARY_BASIC, SSH, FakeDevice, FakeModule, two_cameras
+
+if TYPE_CHECKING:
+    from typing import NoReturn
 
 # --- 1: tools/list deterministic, nothing on stdout -------------------------------
 
@@ -270,3 +275,84 @@ class TestListModules:
         assert result.is_error is True
         text = "".join(getattr(c, "text", "") for c in result.content)
         assert "401" in text and CANARY not in text and CANARY_BASIC not in text
+
+
+class TestUnexpectedErrors:
+    """An exception that is not an ``AxisError`` never shows its text, anywhere."""
+
+    @staticmethod
+    def _validation_error_holding_the_canary() -> Exception:
+        from pydantic import BaseModel, ValidationError
+
+        class Strict(BaseModel):
+            enabled: bool
+
+        try:
+            Strict.model_validate({"enabled": CANARY})
+        except ValidationError as exc:
+            assert CANARY in str(exc)  # precondition: pydantic quotes the input
+            return exc
+        raise AssertionError("unreachable")
+
+    async def test_device_report_never_shows_or_logs_validation_input(
+        self, caplog: pytest.LogCaptureFixture, capfd: pytest.CaptureFixture[str]
+    ) -> None:
+        caplog.set_level(logging.DEBUG)
+        error = self._validation_error_holding_the_canary()
+        device = FakeDevice("192.0.2.1", [FakeModule("ssh", error, api_id="ssh")])
+        server = build_server(two_cameras(back_of_house=device))
+        async with Client(server) as client:
+            result = await client.call_tool(
+                "device_report", {"device": "back_of_house", "full": True}
+            )
+        wire = "".join(getattr(item, "text", "") for item in result.content)
+        captured = capfd.readouterr()
+        assert result.is_error is True
+        assert "internal error: ValidationError" in wire
+        for surface in (wire, caplog.text, captured.out, captured.err):
+            assert CANARY not in surface
+        assert "Traceback" not in caplog.text
+
+    async def test_a_sync_tool_never_shows_or_logs_its_exception(
+        self,
+        caplog: pytest.LogCaptureFixture,
+        capfd: pytest.CaptureFixture[str],
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Opus F3: three tools are sync (list_devices, backup_list, backup_verify);
+        # the wrapper's sync branch needs its own test.
+        caplog.set_level(logging.DEBUG)
+        resolver = two_cameras()
+        server = build_server(resolver)
+
+        def explode(name: str) -> NoReturn:
+            raise RuntimeError(f"describe saw {CANARY} for {name}")
+
+        monkeypatch.setattr(resolver, "describe", explode)
+        async with Client(server) as client:
+            result = await client.call_tool("list_devices", {})
+        wire = "".join(getattr(item, "text", "") for item in result.content)
+        captured = capfd.readouterr()
+        assert result.is_error is True
+        assert "internal error: RuntimeError" in wire
+        for surface in (wire, caplog.text, captured.out, captured.err):
+            assert CANARY not in surface
+        assert "Traceback" not in caplog.text
+
+
+class TestRequestLoggingIsQuiet:
+    """In MCP mode httpx must not log request URLs (they carry query-string values)."""
+
+    def test_building_the_server_pins_httpx_logging_to_warning(self) -> None:
+        # The SDK leaves the root logger at INFO; httpx then logs every request
+        # URL. A GET carries param values in its query string, so pin it back.
+        httpx_logger = logging.getLogger("httpx")
+        root = logging.getLogger()
+        original_root = root.level
+        httpx_logger.setLevel(logging.NOTSET)
+        root.setLevel(logging.INFO)  # the condition the SDK leaves behind
+        try:
+            build_server(two_cameras())
+            assert httpx_logger.getEffectiveLevel() >= logging.WARNING
+        finally:
+            root.setLevel(original_root)

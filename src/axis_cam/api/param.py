@@ -22,8 +22,27 @@ from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
+from axis_cam.secrets import MIN_PASSWORD, REDACTED, is_secret_name
 
 ROOT_PREFIX = "root."
+
+
+def _withhold_value(body: str, name: str, value: str) -> str:
+    """``body`` with a credential parameter's sent value withheld.
+
+    The documented refusal quotes the name and the value exactly
+    (``Error setting '<name>' to '<value>'!``). That phrase is rebuilt with the
+    value replaced, so the parameter name stays readable whatever the value is
+    (a community string ``SNMP`` must not turn ``SNMP.ReadCommunity`` into
+    ``[redacted].ReadCommunity``). Elsewhere the value is replaced only when it
+    is 4 characters or more: shorter values match ordinary text (``e``, ``1``),
+    and no substring rule can protect them anyway.
+    """
+    refusal = f"'{name}' to '{value}'"
+    parts = body.split(refusal)
+    if len(value) >= MIN_PASSWORD:
+        parts = [part.replace(value, REDACTED) for part in parts]
+    return f"'{name}' to '{REDACTED}'".join(parts)
 
 
 def parse_param_list(text: str) -> dict[str, str]:
@@ -294,14 +313,20 @@ class ParamAPI(BaseAPI):
 
         Raises:
             AxisDeviceError: The device refused the update (``# Error`` body).
+                For a credential-named parameter the value is withheld from the
+                message: the device's refusal quotes it.
             AxisAuthenticationError / AxisConnectionError: Propagate.
         """
         params: dict[str, Any] = {"action": "update", short_name(param_name): value}
-        body = (await self._get_text(self.CGI_PATH, params)).strip()
-        if body.startswith("# Error"):
-            raise AxisDeviceError(f"param.cgi: {body.lstrip('# ')}")
-        if body != "OK":
-            raise AxisDeviceError(f"param.cgi: unexpected reply to update: {body[:120]!r}")
+        raw = (await self._get_text(self.CGI_PATH, params)).strip()
+        if raw == "OK":  # decided before any redaction: a value can spell "OK"
+            return
+        body = raw
+        if value and is_secret_name(param_name):
+            body = _withhold_value(body, short_name(param_name), value)
+        if raw.startswith("# Error"):
+            raise AxisDeviceError(f"param.cgi: {body.removeprefix('#').strip()}")
+        raise AxisDeviceError(f"param.cgi: unexpected reply to update: {body[:120]!r}")
 
     # Convenience methods for common parameters
 

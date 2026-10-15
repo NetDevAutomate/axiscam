@@ -1,16 +1,20 @@
 """Tests for the params-only restore path (Phase 5, narrowed)."""
 
+import base64
 import json
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
+import respx
 
 from axis_cam.api.param import ParamAPI, ParamDefinition, parse_param_definitions
 from axis_cam.backup import MANIFEST_FILE, BackupFile, BackupManifest
+from axis_cam.client import VapixClient
 from axis_cam.devices.base import AxisDevice
-from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
+from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError, AxisEchoError
 from axis_cam.restore import (
     SERIAL_PARAM,
     ChangeResult,
@@ -216,6 +220,88 @@ class TestParamApiSet:
 
         with pytest.raises(AxisDeviceError, match="unexpected reply"):
             await ParamAPI(client).set("Audio.MaxListeners", "5")
+
+    async def test_a_refused_credential_value_is_not_echoed_into_the_error(self):
+        # The device's refusal quotes the value it was sent. For a credential
+        # parameter that value is a secret, and restore prints the error.
+        community = "rd-9fQ2zX7kLm"  # pragma: allowlist secret
+        client = MagicMock()
+        client.host = "h"
+        client.get = AsyncMock(
+            return_value=MagicMock(
+                text=f"# Error: Error setting 'SNMP.ReadCommunity' to '{community}'!\n"
+            )
+        )
+
+        with pytest.raises(AxisDeviceError) as caught:
+            await ParamAPI(client).set("root.SNMP.ReadCommunity", community)
+        assert community not in str(caught.value)
+        assert "Error setting 'SNMP.ReadCommunity' to '[redacted]'" in str(caught.value)
+
+    async def test_an_ordinary_value_is_still_quoted(self):
+        client = MagicMock()
+        client.host = "h"
+        client.get = AsyncMock(
+            return_value=MagicMock(text="# Error: Error setting 'Image.I0.Name' to 'Hall'!\n")
+        )
+
+        with pytest.raises(AxisDeviceError, match="to 'Hall'"):
+            await ParamAPI(client).set("Image.I0.Name", "Hall")
+
+    @staticmethod
+    def _replying(text: str) -> MagicMock:
+        client = MagicMock()
+        client.host = "h"
+        client.get = AsyncMock(return_value=MagicMock(text=text))
+        return client
+
+    @pytest.mark.parametrize("value", ["OK", "K", "O"])
+    async def test_a_secret_value_that_spells_part_of_ok_still_succeeds(self, value: str):
+        # Replacing before checking for "OK" turned these successes into errors.
+        await ParamAPI(self._replying("OK\n")).set("root.SNMP.ReadCommunity", value)
+
+    @pytest.mark.parametrize(
+        ("name", "value"),
+        [
+            ("SNMP.ReadCommunity", "e"),
+            ("SNMP.ReadCommunity", "E"),
+            ("SNMP.ReadCommunity", "#"),
+            ("SNMP.ReadCommunity", "SNMP"),
+            ("Network.Interface.I0.dot1x.EAPOL.KeyPassword", "1"),
+        ],
+    )
+    async def test_a_short_secret_value_leaves_the_refusal_readable(self, name: str, value: str):
+        refusal = f"# Error: Error setting '{name}' to '{value}'!\n"
+        with pytest.raises(AxisDeviceError) as caught:
+            await ParamAPI(self._replying(refusal)).set(f"root.{name}", value)
+        assert str(caught.value) == f"param.cgi: Error: Error setting '{name}' to '[redacted]'!"
+
+    async def test_a_secret_quoted_outside_the_refusal_context_is_redacted(self):
+        community = "rd-9fQ2zX7kLm"  # pragma: allowlist secret
+        reply = f"<html>bad value {community} for SNMP</html>"
+        with pytest.raises(AxisDeviceError, match="unexpected reply") as caught:
+            await ParamAPI(self._replying(reply)).set("root.SNMP.ReadCommunity", community)
+        assert community not in str(caught.value)
+
+    @respx.mock
+    async def test_an_echoed_credential_in_a_success_reply_is_refused(self):
+        # A peer that echoes the request headers in its 200 reply. The client
+        # refuses the reply rather than letting set() quote any of it.
+        password = "Param-Echo-T3st!"  # pragma: allowlist secret
+        token = base64.b64encode(f"root:{password}".encode()).decode()
+        pad = "." * (120 - len("Basic ") - len(token) // 2)
+        respx.get("https://192.0.2.10:443/axis-cgi/param.cgi").mock(
+            side_effect=lambda request: httpx.Response(
+                200, text=pad + request.headers["Authorization"]
+            )
+        )
+        async with VapixClient(
+            "192.0.2.10", "root", password, port=443, use_https=True, auth_mode="basic"
+        ) as client:
+            with pytest.raises(AxisEchoError, match="quotes this request's credentials") as caught:
+                await ParamAPI(client).set("Image.I0.Name", "Hall")
+        fragments = [token[i : i + 8] for i in range(len(token) - 7)]
+        assert [f for f in fragments if f in str(caught.value)] == []
 
 
 class TestDiff:
@@ -468,6 +554,23 @@ class TestApply:
         assert results == [
             ChangeResult(plan.changes[0], False, "device accepted the update but reads back '10'")
         ]
+
+    async def test_a_secret_read_back_is_not_quoted(self):
+        # restore --include-secrets prints this detail; a credential's read-back
+        # value is a secret even when it is the wrong one.
+        current = {"root.SNMP.ReadCommunity": "old-c0mmunity"}  # pragma: allowlist secret
+        target = {"root.SNMP.ReadCommunity": "new-c0mmunity"}  # pragma: allowlist secret
+        plan = diff_params(current, target, include_secrets=True)
+        assert plan.changes, "precondition: the credential is in the plan"
+        device = _device(current, set_results={"root.SNMP.ReadCommunity": "other-c0mm"})
+
+        results = await apply_param_restore(device, plan)
+
+        assert results[0].ok is False
+        assert "other-c0mm" not in results[0].detail
+        assert results[0].detail == (
+            "device accepted the update but reads back a different value (withheld: a credential)"
+        )
 
     async def test_auth_error_aborts(self):
         plan = diff_params(CURRENT, dict(CURRENT, **{"root.Audio.MaxListeners": "20"}))
