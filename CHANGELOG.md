@@ -24,6 +24,21 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   (progress callback, per-device timeout), extracted from the CLI.
 
 ### Fixed
+- A peer that echoes requests (a proxy, WAF or debug page; no Axis device does)
+  could carry the request's credentials into error messages and MCP output:
+  the 200-character error excerpt could cut the Basic token in half, past the
+  MCP scrubber, and a Digest `response` hash or a re-spelled token was never
+  recognised at all. The client now refuses a success reply that quotes the
+  request's credentials, and redacts error text before cutting it -- every
+  common spelling of the token and its fragments, Digest hashes, the configured
+  password, including the Basic token AUTO mode sent before falling back to
+  Digest. Found by the new `tests/test_mcp_secrets_wire.py`, which drives the MCP
+  server over the real HTTP stack. Reviewed by a four-model council
+  (`docs/plans/2026-10-15-secrets-boundary-decision.md`).
+- `ParamAPI.set` withholds a credential parameter's value from the device's
+  refusal message, without garbling it for short values (`1`, `e`) or turning an
+  `OK` into an error when the value spells part of it. `backup restore` no longer
+  prints the read-back value of a credential parameter.
 - `backup restore` re-reads the device before writing and refuses, writing
   nothing, if the serial number differs or a planned parameter changed since the
   plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.

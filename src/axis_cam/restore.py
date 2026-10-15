@@ -275,6 +275,16 @@ async def apply_param_restore(device: AxisDevice, plan: RestorePlan) -> list[Cha
         after = await device.params.get(change.name)
         if after == change.target:
             results.append(ChangeResult(change, True, "verified"))
+        elif is_secret_name(change.name):
+            # Printed by restore; the read-back of a credential is a secret too.
+            results.append(
+                ChangeResult(
+                    change,
+                    False,
+                    "device accepted the update but reads back a different value "
+                    "(withheld: a credential)",
+                )
+            )
         else:
             results.append(
                 ChangeResult(change, False, f"device accepted the update but reads back {after!r}")

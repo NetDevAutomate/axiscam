@@ -41,6 +41,7 @@ from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisLockoutError, AxisSoapFault, AxisUserError
 from axis_cam.models import OnvifAccount, OnvifAccounts, OnvifUserLevel
+from axis_cam.secrets import error_excerpt, redact_sent_auth
 
 if TYPE_CHECKING:
     import httpx
@@ -291,12 +292,20 @@ class OnvifUsersAPI(BaseAPI):
             self.SERVICE_PATH, soap_envelope(body), content_type=SOAP_CONTENT_TYPE
         )
         if response.status_code >= 400:
-            fault = parse_fault(response.text, response.status_code)
+            # A fault reason or an excerpt must not carry the credentials this
+            # request sent: redacted (every spelling) before parsing or cutting.
+            username = getattr(self._client, "username", None)
+            password = getattr(self._client, "password", None)
+            fault = parse_fault(
+                redact_sent_auth(response.text, response, username=username, password=password),
+                response.status_code,
+            )
             if fault is not None:
                 raise fault
+            excerpt = error_excerpt(response.text, response, username=username, password=password)
             raise AxisUserError(
                 f"HTTP {response.status_code} from {self.SERVICE_PATH} without a SOAP fault: "
-                f"{response.text[:200]!r}"
+                f"{excerpt!r}"
             )
         return response
 

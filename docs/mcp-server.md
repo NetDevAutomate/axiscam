@@ -107,6 +107,18 @@ CLI: `axiscam backup restore` / `axiscam accounts set-role`.
   credentials (`*Password*`, `*Community*`, `*PSK*`, `*Secret*`, `*Token*`) are
   `[redacted]`. A bug inside a module is reported as `internal error: <Class>`,
   never its message.
+- **A peer that echoes requests cannot leak the credential.** No Axis device
+  echoes request headers, but a proxy, WAF or debug page can. The library (not
+  only this server) handles it in `axis_cam.secrets`: a success reply that
+  quotes the request's credentials is refused (`Refused the reply ... it quotes
+  this request's credentials`), and error text is redacted *before* it is cut
+  -- the Basic token in every common spelling (URL-encoded, JSON-escaped,
+  unpadded, base64url) and as fragments, every Digest `response` hash, the
+  configured password -- and a body that dumps the request headers is withheld.
+  `tests/test_mcp_secrets_wire.py` drives every tool and resource over the real
+  HTTP stack against a respx device in each of those behaviours. The limit, by
+  design: a peer that already holds the password and deliberately re-encodes it
+  defeats any text filter (`docs/plans/2026-10-15-secrets-boundary-decision.md`).
 - **Nothing on stdout but the protocol.** The server never imports the CLI
   (which owns the Rich console); a subprocess test runs the real entry point and
   checks the session works.

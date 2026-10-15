@@ -144,7 +144,9 @@ class BaseAPI:
 
         For legacy CGIs that answer ``text/plain``. HTTP-level errors are
         raised by the client; a CGI that reports failure with a 200 body is
-        the caller's job to inspect.
+        the caller's job to inspect. The text is what the device sent: the
+        client refuses a reply that quotes the request's credentials before it
+        gets here, so callers may parse and quote it.
         """
         response = await self._client.get(path, params)
         return response.text
@@ -154,7 +156,8 @@ class BaseAPI:
 
         Use this for CGIs that take credentials or other secrets: form data
         travels in the request body, never in the URL (device access logs,
-        proxies, shell history).
+        proxies, shell history). The text is what the device sent, as for
+        :meth:`_get_text`.
         """
         response = await self._client.post(path, data=data)
         return response.text

@@ -20,6 +20,7 @@ from axis_cam.exceptions import (
     AxisDeviceError,
     AxisPermissionError,
 )
+from axis_cam.secrets import error_excerpt, quotes_sent_auth
 
 
 def _version_sort_key(version: str) -> tuple[int, int]:
@@ -28,6 +29,14 @@ def _version_sort_key(version: str) -> tuple[int, int]:
     if not match:
         return (-1, 0)
     return (int(match.group(1)), 0 if match.group(2) else 1)
+
+
+def _path_of(response: httpx.Response) -> str:
+    """The request path, for messages; ``httpx`` raises without an attached request."""
+    try:
+        return response.url.path
+    except (AttributeError, RuntimeError):
+        return "a request"
 
 
 class VapixClient:
@@ -330,8 +339,17 @@ class VapixClient:
             AxisAuthenticationError: If authentication fails.
             AxisDeviceError: If device returns an error.
         """
-        response = await self.get(path, params)
-        return response.content
+        client = self._ensure_connected()
+        url = f"{self.base_url}{path}"
+        try:
+            response = await client.get(url, params=params)
+            # Binary: not scanned for echoed credentials (see _check_response).
+            self._check_response(response, scan_reply=False)
+            return response.content
+        except httpx.ConnectError as e:
+            raise self._connection_error(e) from e
+        except httpx.TimeoutException as e:
+            raise AxisConnectionError(f"Connection timeout to {self.host}: {e}") from e
 
     async def get_binary(
         self,
@@ -365,7 +383,8 @@ class VapixClient:
 
         try:
             response = await client.get(url, params=params, timeout=request_timeout)
-            self._check_response(response)
+            # Binary: not scanned for echoed credentials (see _check_response).
+            self._check_response(response, scan_reply=False)
             return response.content
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -390,21 +409,38 @@ class VapixClient:
         return AxisConnectionError(f"Failed to connect to {self.host}: {exc}")
 
     def _check_response(
-        self, response: httpx.Response, *, raise_on_error_status: bool = True
+        self,
+        response: httpx.Response,
+        *,
+        raise_on_error_status: bool = True,
+        scan_reply: bool = True,
     ) -> None:
         """Check HTTP response for errors.
+
+        A reply below 400 that quotes the credentials this request sent, in any
+        spelling (:func:`~axis_cam.secrets.quotes_sent_auth`), is refused: no
+        Axis device echoes request headers, so such a body is a proxy or peer
+        echoing the request and is not device data. Refusing it keeps every
+        data path faithful -- what the device sent, or a loud failure -- and
+        keeps the credentials out of anything that parses or quotes the body.
 
         Args:
             response: HTTP response to check.
             raise_on_error_status: Raise ``AxisDeviceError`` for any other
                 4xx/5xx. ``False`` leaves those to a caller that can read the
-                body (SOAP faults).
+                body (SOAP faults); that caller must quote it only through
+                :func:`~axis_cam.secrets.error_excerpt` or
+                :func:`~axis_cam.secrets.redact_sent_auth`.
+            scan_reply: Scan a reply below 400 for the request's credentials.
+                ``False`` only for binary downloads (snapshots, server reports):
+                an echo is text, and decoding megabytes of binary costs time.
 
         Raises:
             AxisConnectionError: Plain HTTP was sent to a port that expects TLS.
             AxisAuthenticationError: If authentication failed (401).
             AxisPermissionError: If the account may not use the path (403).
-            AxisDeviceError: If device returned an error status.
+            AxisDeviceError: If device returned an error status, or a reply that
+                quotes the request's credentials.
         """
         if response.status_code == 400 and "plain http" in response.text.lower():
             # Apache: "You're speaking plain HTTP to an SSL-enabled server port";
@@ -423,8 +459,24 @@ class VapixClient:
                 f"Access denied to {self.host}: this account may not use {response.url.path} (403)."
             )
         if response.status_code >= 400 and raise_on_error_status:
+            # Redacted before the cut: a cut through an echoed credential would
+            # leave a fragment no later whole-string scrubber can match.
+            excerpt = error_excerpt(
+                response.text, response, username=self.username, password=self.password
+            )
             raise AxisDeviceError(
-                f"Device error {response.status_code} from {self.host}: {response.text[:200]}"
+                f"Device error {response.status_code} from {self.host}: {excerpt}"
+            )
+        if (
+            response.status_code < 400
+            and scan_reply
+            and quotes_sent_auth(
+                response.text, response, username=self.username, password=self.password
+            )
+        ):
+            raise AxisDeviceError(
+                f"Refused the reply from {self.host} to {_path_of(response)}: it quotes this "
+                "request's credentials, so a proxy or peer is echoing requests."
             )
 
     DISCOVERY_PATH = "/config/discover/apis"

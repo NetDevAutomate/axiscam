@@ -16,9 +16,7 @@ from __future__ import annotations
 import base64
 from typing import Any
 
-from axis_cam.secrets import SECRET_NAME, is_secret_name
-
-REDACTED = "[redacted]"
+from axis_cam.secrets import REDACTED, SECRET_NAME, is_secret_name
 
 
 def redact_params(params: dict[str, str]) -> dict[str, str]:

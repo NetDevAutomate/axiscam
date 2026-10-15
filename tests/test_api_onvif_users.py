@@ -4,6 +4,8 @@ Reply bodies are the ones AXIS OS 12.11.118 returned on 2026-10-13, with the
 namespace preamble trimmed to the prefixes the parser needs.
 """
 
+import base64
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -374,3 +376,55 @@ class TestPostRaw:
                 await client.post_raw("/vapix/services", "x", content_type=SOAP_CONTENT_TYPE)
             with pytest.raises(AxisPermissionError):
                 await client.post_raw("/vapix/services", "x", content_type=SOAP_CONTENT_TYPE)
+
+
+ECHO_PASSWORD = "Onvif-Echo-T3st!"  # pragma: allowlist secret
+ECHO_TOKEN = base64.b64encode(f"admin:{ECHO_PASSWORD}".encode()).decode()
+
+
+def _token_fragments_in(text: str) -> list[str]:
+    return [
+        ECHO_TOKEN[i : i + 8] for i in range(len(ECHO_TOKEN) - 7) if ECHO_TOKEN[i : i + 8] in text
+    ]
+
+
+class TestSentCredentialNeverReachesTheError:
+    """A peer that echoes the request headers must not put the credential in an error.
+
+    No Axis device does this; a proxy or a broken or hostile peer can. The client
+    sends HTTP Basic, so the echoed header carries the base64 credential.
+    """
+
+    @staticmethod
+    def _echo(status: int, wrap: Callable[[str], str]) -> Callable[[httpx.Request], httpx.Response]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(status, text=wrap(request.headers["Authorization"]))
+
+        return handler
+
+    async def _call(self, handler: Callable[[httpx.Request], httpx.Response]) -> Exception:
+        with respx.mock:
+            respx.post("https://192.168.1.10:443/vapix/services").mock(side_effect=handler)
+            client = VapixClient(
+                "192.168.1.10", "admin", ECHO_PASSWORD, use_https=True, port=443, auth_mode="basic"
+            )
+            async with client:
+                with pytest.raises((AxisUserError, AxisSoapFault)) as caught:
+                    await OnvifUsersAPI(client).list()
+        return caught.value
+
+    async def test_a_non_fault_body_cut_across_the_credential(self):
+        # Pad so the 200-character snippet ends in the middle of the token.
+        pad = "." * (200 - len("Basic ") - len(ECHO_TOKEN) // 2)
+        error = await self._call(self._echo(500, lambda auth: pad + auth))
+        assert "without a SOAP fault" in str(error)
+        assert _token_fragments_in(str(error)) == []
+
+    async def test_a_fault_reason_that_echoes_the_credential(self):
+        def fault(auth: str) -> str:
+            return FAULT_INVALID_ARGS.replace("Invalid argument", f"Invalid argument: {auth}")
+
+        error = await self._call(self._echo(400, fault))
+        assert isinstance(error, AxisSoapFault)
+        assert _token_fragments_in(str(error)) == []
+        assert _token_fragments_in(error.reason) == []
