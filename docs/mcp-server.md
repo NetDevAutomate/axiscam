@@ -27,6 +27,19 @@ Host configuration (Kiro `mcp.json` shape):
 }
 ```
 
+## Layout
+
+```
+src/axis_cam/mcp_server/
+  server.py      composition root: build_server(), TOOL_NAMES, main()
+  deps.py        per-server bundle: resolver, plan store, backup root, enums, helpers
+  schemas.py     result models
+  devices.py     DeviceResolver protocol, ConfigResolver, device-name enum
+  plans.py       single-use plan store
+  redact.py      Scrubber and parameter redaction
+  tools/read.py, audit.py, backup.py, write.py   each exposes register(deps)
+```
+
 ## Tools
 
 | Tool | What it does | Writes |
