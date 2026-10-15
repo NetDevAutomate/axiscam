@@ -16,6 +16,7 @@ A powerful CLI tool for managing AXIS cameras, recorders, intercoms, and speaker
 - **Account Management**: list, add, rotate passwords, change roles, remove — with plan/confirm/verify and a lockout guard
 - **Authentication**: Digest (default) and Basic authentication support
 - **Async**: httpx-based async client; read-only commands fan out across the fleet (`--all` / `--group`)
+- **MCP Server**: `axiscam-mcp` (extra `[mcp]`) gives an MCP host read-and-plan tools with credentials kept out of every result — see [docs/mcp-server.md](docs/mcp-server.md)
 - **Configuration Management**: YAML config with environment variable interpolation
 - **Legacy Support**: Automatic migration from `~/.config/axis/` to `~/.config/axiscam/`
 

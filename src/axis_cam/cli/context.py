@@ -2,79 +2,30 @@
 
 Every device command takes the same options (``--device``/``--host``,
 credentials, ``--port``, ``--auth``). :func:`resolve_device_config` turns
-them, plus the config file, into one :class:`DeviceContext`; ``open()`` on
-that context is the single place the device class is instantiated, so
-transport settings (``https``, ``ssl_verify``, ``timeout``) cannot be dropped
-on the way.
+them, plus the config file, into one :class:`DeviceContext` — the library's
+:class:`~axis_cam.connection.DeviceConnection`, whose ``open()`` is the single
+place the device class is instantiated, so transport settings (``https``,
+``ssl_verify``, ``timeout``) cannot be dropped on the way. This module adds
+only what is CLI-specific: option precedence and console error messages.
 """
-
-from dataclasses import dataclass
 
 import typer
 
-from axis_cam import AxisCamera, AxisIntercom, AxisRecorder, AxisSpeaker
 from axis_cam.auth import AuthMode
 from axis_cam.cli.app import console
 from axis_cam.config import DeviceConfig, load_config
-from axis_cam.devices.base import AxisDevice
+from axis_cam.connection import DeviceConnection, get_device_class
 
+__all__ = [
+    "DeviceContext",
+    "get_device_class",
+    "resolve_device_config",
+    "select_targets",
+]
 
-def get_device_class(device_type: str) -> type[AxisDevice]:
-    """Get the appropriate device class for a device type.
-
-    Args:
-        device_type: Device type string.
-
-    Returns:
-        Device class for the type; ``AxisCamera`` for unknown types.
-    """
-    type_map: dict[str, type[AxisDevice]] = {
-        "camera": AxisCamera,
-        "recorder": AxisRecorder,
-        "intercom": AxisIntercom,
-        "speaker": AxisSpeaker,
-    }
-    return type_map.get(device_type.lower(), AxisCamera)
-
-
-@dataclass(frozen=True)
-class DeviceContext:
-    """Everything needed to open one device, resolved from options and config.
-
-    Attributes:
-        host: Device address.
-        username: Authentication username.
-        password: Authentication password.
-        port: TCP port.
-        device_type: ``camera`` / ``recorder`` / ``intercom`` / ``speaker``.
-        https: Use HTTPS (never inferred from the port).
-        ssl_verify: Verify the device certificate.
-        timeout: Request timeout in seconds.
-        auth_mode: ``auto`` (follow the device's challenge), ``basic`` or ``digest``.
-    """
-
-    host: str
-    username: str
-    password: str
-    port: int
-    device_type: str
-    https: bool = True
-    ssl_verify: bool = False
-    timeout: float = 30.0
-    auth_mode: AuthMode = AuthMode.AUTO
-
-    def open(self) -> AxisDevice:
-        """Instantiate the device class for ``device_type`` with these parameters."""
-        return get_device_class(self.device_type)(
-            self.host,
-            self.username,
-            self.password,
-            self.port,
-            ssl_verify=self.ssl_verify,
-            timeout=self.timeout,
-            auth_mode=self.auth_mode,
-            https=self.https,
-        )
+#: The CLI's name for a resolved device: the library's connection type. Kept as
+#: an alias so every command module (and its tests) reads the same way.
+DeviceContext = DeviceConnection
 
 
 def _from_config(
@@ -87,15 +38,12 @@ def _from_config(
     auth_mode: AuthMode,
 ) -> DeviceContext:
     """Build a DeviceContext from a config entry plus CLI overrides."""
-    return DeviceContext(
-        host=config.host,
-        username=username or config.username,
-        password=password or config.password.get_secret_value(),
-        port=port if port is not None else config.port,
-        device_type=config.device_type,
-        https=config.https,
-        ssl_verify=config.ssl_verify,
+    return DeviceContext.from_config(
+        config,
         timeout=timeout,
+        username=username,
+        password=password,
+        port=port,
         auth_mode=auth_mode,
     )
 

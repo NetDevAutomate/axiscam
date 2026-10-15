@@ -10,6 +10,15 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
 ## [Unreleased]
 
 ### Added
+- MCP server (`axiscam-mcp`, extra `axis-cam[mcp]`, `mcp==2.3.0`): twelve read
+  and plan tools over the library, no device writes (`docs/mcp-server.md`).
+  Device arguments are an enum of configured names; outputs are scrubbed of the
+  device password and credential-like parameter values are redacted.
+- `axis_cam.connection.DeviceConnection` and console-free `axis_cam.fleet.run_fleet`
+  (progress callback, per-device timeout), extracted from the CLI.
+
+### Fixed
+- The resolved device connection no longer prints the password in its `repr`.
 - API module registry (`axis_cam.api.registry`) and the structural `ResourceModule`
   protocol; `AxisDevice.modules`, `.resources`, `.available_resources()` gated by
   API discovery.
