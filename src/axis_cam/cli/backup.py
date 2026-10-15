@@ -38,6 +38,7 @@ from axis_cam.cli.options import (
     YesOption,
 )
 from axis_cam.restore import RestorePlan, apply_param_restore, plan_param_restore
+from axis_cam.secrets import is_secret_name
 
 BackupDirArgument = Annotated[
     Path,
@@ -81,6 +82,14 @@ def _print_manifest(manifest: BackupManifest, backup_dir: Path) -> None:
             console.print(f"  {section}: {message}")
     if manifest.skipped:
         console.print(f"[dim]Not advertised by the device: {', '.join(manifest.skipped)}[/dim]")
+
+    if manifest.contains_credentials:
+        console.print(
+            f"[yellow]Contains {len(manifest.contains_credentials)} credential(s) in clear text "
+            "in params.json — keep this directory private:[/yellow]"
+        )
+        for name in manifest.contains_credentials:
+            console.print(f"  • {name}")
 
     console.print("[bold]Not included — VAPIX offers no way to read these:[/bold]")
     for line in manifest.not_included.get("by_design", []):
@@ -235,11 +244,21 @@ def _plan_lines(plan: RestorePlan, *, verbose: bool) -> tuple[tuple[str, ...], t
     for reason, count in plan.skip_counts().items():
         context.append(f"{count} skipped: {reason}")
     if verbose:
-        context.extend(f"  {c.name}: {c.current!r} -> {c.target!r}" for c in plan.changes)
+        context.extend(
+            f"  {c.name}: (credential, value not shown)"
+            if is_secret_name(c.name)
+            else f"  {c.name}: {c.current!r} -> {c.target!r}"
+            for c in plan.changes
+        )
     warnings: list[str] = []
     if any(c.group == "Network" for c in plan.changes):
         warnings.append(
             "network parameters are included; a wrong address or VLAN cuts this connection"
+        )
+    if any(is_secret_name(c.name) for c in plan.changes):
+        warnings.append(
+            "credentials are included; anything using the current values "
+            "(SNMP managers, proxies, 802.1X) must be updated to match"
         )
     return tuple(context), tuple(warnings)
 
@@ -260,6 +279,13 @@ def backup_restore(
             help="Also restore the Network parameter group (can cut this connection).",
         ),
     ] = False,
+    include_secrets: Annotated[
+        bool,
+        typer.Option(
+            "--include-secrets",
+            help="Also restore credential parameters (SNMP communities, proxy/802.1X passwords).",
+        ),
+    ] = False,
     verbose: Annotated[
         bool, typer.Option("--verbose", "-v", help="List every parameter change in the plan.")
     ] = False,
@@ -273,13 +299,20 @@ def backup_restore(
     change is written individually and read back; the device's refusals
     (read-only parameters) are reported per parameter, not as a failure of
     the whole run. A backup from a different serial number is refused.
+    Network and credential parameters are left alone unless --include-network
+    / --include-secrets; credential values are never printed.
     """
     target = resolve_device_config(device, host, username, password, port, auth_mode=auth)
 
     async def _restore() -> None:
         async with target.open() as dev:
             try:
-                plan = await plan_param_restore(dev, backup_dir, include_network=include_network)
+                plan = await plan_param_restore(
+                    dev,
+                    backup_dir,
+                    include_network=include_network,
+                    include_secrets=include_secrets,
+                )
             except (FileNotFoundError, ValueError) as exc:
                 console.print(f"[red]Error:[/red] {exc}", style="bold")
                 raise typer.Exit(1) from None

@@ -274,6 +274,25 @@ class TestRestore:
         assert "Restore 1 parameter(s)" in _text(result)
         assert "cuts this connection" in _text(result)
 
+    def test_credentials_excluded_by_default_and_included_on_request(self, no_config, tmp_path):
+        root = self._backup(
+            tmp_path, dict(self.CURRENT, **{"root.SNMP.ReadCommunity": "zq-rotated"})
+        )
+        device = self._device()
+        device.params.export.return_value = dict(  # type: ignore[attr-defined]
+            self.CURRENT, **{"root.SNMP.ReadCommunity": "public"}
+        )
+
+        result = self._run(device, [str(root), "--dry-run", "-v"])
+        assert result.exit_code == 0 and "Nothing to restore" in _text(result)
+        assert "credential" in _text(result)
+        assert "zq-rotated" not in _text(result)
+
+        result = self._run(device, [str(root), "--dry-run", "-v", "--include-secrets"])
+        assert "Restore 1 parameter(s)" in _text(result)
+        assert "zq-rotated" not in _text(result) and "value not shown" in _text(result)
+        assert "credentials are included" in _text(result)
+
     def test_backup_from_another_device_is_refused(self, no_config, tmp_path):
         root = self._backup(tmp_path, self.CURRENT, serial="ACCC8E000001")
 

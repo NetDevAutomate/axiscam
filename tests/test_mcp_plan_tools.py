@@ -217,11 +217,8 @@ class TestPlans:
             "current": "Changed",
             "target": "View Area 1",
         }
-        assert changes["root.SNMP.WriteCommunity"] == {
-            "name": "root.SNMP.WriteCommunity",
-            "current": REDACTED,
-            "target": REDACTED,
-        }
+        assert "root.SNMP.WriteCommunity" not in changes  # credentials are not restored by default
+        assert body["plan"]["skipped"]["credential (excluded; pass include_secrets=True)"] == 1
         text = _all_text(result)
         assert (
             "new-community" not in text and "s3cret-community" not in text

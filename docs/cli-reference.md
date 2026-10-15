@@ -807,7 +807,7 @@ flowchart LR
 axiscam backup create [-o PARENT_DIR] [--with-server-report] [OPTIONS]
 axiscam backup show BACKUP_DIR [--json]
 axiscam backup verify BACKUP_DIR
-axiscam backup restore BACKUP_DIR [--include-network] [-v] [--yes] [--dry-run] [OPTIONS]
+axiscam backup restore BACKUP_DIR [--include-network] [--include-secrets] [-v] [--yes] [--dry-run] [OPTIONS]
 ```
 
 | Option | Description |
@@ -852,7 +852,9 @@ flowchart LR
 - Skipped with a reason: unchanged; read-only on this device (the plan asks
   `param.cgi?action=listdefinitions` which parameters the device lets anyone
   write — `Brand.*`, most of `Properties.*`, `*.NbrOfConfigs`, …); `Network`
-  unless `--include-network` (a wrong address cuts this connection); parameters
+  unless `--include-network` (a wrong address cuts this connection); credential
+  parameters (`*Password*`, `*Community*`, `*PSK*`, …) unless `--include-secrets`
+  — their values are never printed, even with `-v`; parameters
   the device no longer has.
 - `params.json` is checked against the manifest's hash before anything is read
   from it; a damaged or hand-edited file is refused with exit 1.
