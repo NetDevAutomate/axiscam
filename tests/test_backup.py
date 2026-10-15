@@ -141,11 +141,45 @@ class TestCreateBackup:
         assert manifest.not_included["by_design"] == list(NOT_INCLUDED_BY_DESIGN)
         assert manifest.not_included["not_implemented"] == list(NOT_IMPLEMENTED)
         assert any("passwords" in line for line in manifest.not_included["by_design"])
+
+    async def test_manifest_declares_credentials_params_json_contains(self, tmp_path):
+        params = dict(
+            PARAMS,
+            **{
+                "root.SNMP.ReadCommunity": "public",
+                "root.Network.Proxy.Password": "pw",  # pragma: allowlist secret
+                "root.SNMP.WriteCommunity": "",  # not set: nothing to declare
+            },
+        )
+        device = _device(FakeModule("ssh", SshConfig(), api_id="ssh"), params=params)
+
+        backup_dir, manifest = await create_backup(device, tmp_path)
+
+        assert manifest.contains_credentials == [
+            "root.Network.Proxy.Password",
+            "root.SNMP.ReadCommunity",
+        ]
+        assert load_manifest(backup_dir).contains_credentials == manifest.contains_credentials
+
+    async def test_manifest_without_credentials_says_none(self, tmp_path):
+        device = _device(FakeModule("ssh", SshConfig(), api_id="ssh"), params=PARAMS)
+        _, manifest = await create_backup(device, tmp_path)
+        assert manifest.contains_credentials == []
+
+    async def test_manifest_lists_more_of_what_is_missing(self, tmp_path):
+        device = _device(FakeModule("ssh", SshConfig(), api_id="ssh"), params=PARAMS)
+        _, manifest = await create_backup(device, tmp_path)
         assert any("private keys" in line for line in manifest.not_included["by_design"])
         assert any("ACAP" in line for line in manifest.not_included["by_design"])
         assert any("recordings" in line for line in manifest.not_included["by_design"])
         assert any("ONVIF" in line for line in manifest.not_included["not_implemented"])
         assert "not implemented" in manifest.restore
+
+    def test_old_manifest_without_the_field_loads(self):
+        manifest = BackupManifest.from_dict(
+            {"format_version": MANIFEST_VERSION, "created_at": "x", "tool": {}, "device": {}}
+        )
+        assert manifest.contains_credentials == []
 
     async def test_module_errors_and_skips_are_recorded_not_fatal(self, tmp_path):
         class Unadvertised(FakeDevice):

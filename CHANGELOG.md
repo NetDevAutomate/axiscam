@@ -18,6 +18,10 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   (progress callback, per-device timeout), extracted from the CLI.
 
 ### Fixed
+- Backups now say they hold credentials: `manifest.json` lists the credential
+  parameters in `params.json` (`contains_credentials`) and `backup show` warns.
+  `backup restore` leaves them alone unless `--include-secrets` and never prints
+  their values. One rule for all of this lives in `axis_cam.secrets`.
 - The resolved device connection no longer prints the password in its `repr`.
 - API module registry (`axis_cam.api.registry`) and the structural `ResourceModule`
   protocol; `AxisDevice.modules`, `.resources`, `.available_resources()` gated by

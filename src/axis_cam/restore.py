@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 from axis_cam.api.param import ParamDefinition, short_name
 from axis_cam.backup import PARAMS_FILE, load_manifest
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
+from axis_cam.secrets import is_secret_name
 
 if TYPE_CHECKING:
     from axis_cam.devices.base import AxisDevice
@@ -51,6 +52,7 @@ class SkipReason(str, Enum):
     UNCHANGED = "unchanged"
     READ_ONLY = "read-only on this device (listdefinitions securityLevel)"
     NETWORK = "network group (excluded; pass include_network=True)"
+    CREDENTIAL = "credential (excluded; pass include_secrets=True)"
     MISSING_ON_DEVICE = "not present on this device"
 
 
@@ -142,6 +144,7 @@ def diff_params(
     definitions: dict[str, ParamDefinition] | None = None,
     *,
     include_network: bool = False,
+    include_secrets: bool = False,
 ) -> RestorePlan:
     """Compute the changes that would bring ``current`` to ``target``.
 
@@ -149,7 +152,10 @@ def diff_params(
     With ``definitions`` (from :meth:`ParamAPI.definitions`), parameters the
     device declares read-only are skipped up front instead of being tried
     and refused; without them every differing parameter is a change and the
-    device's ``# Error`` reply decides at apply time.
+    device's ``# Error`` reply decides at apply time. Credential parameters
+    (:func:`axis_cam.secrets.is_secret_name`) are skipped unless
+    ``include_secrets``: restoring an old community string or password over
+    a rotated one is rarely what a restore means.
     """
     plan = RestorePlan(skipped={reason: [] for reason in SkipReason})
     for name, wanted in target.items():
@@ -161,6 +167,8 @@ def diff_params(
             plan.skipped[SkipReason.UNCHANGED].append(name)
         elif definition is not None and not definition.writable:
             plan.skipped[SkipReason.READ_ONLY].append(name)
+        elif is_secret_name(name) and not include_secrets:
+            plan.skipped[SkipReason.CREDENTIAL].append(name)
         elif group in NETWORK_GROUPS and not include_network:
             plan.skipped[SkipReason.NETWORK].append(name)
         else:
@@ -173,6 +181,7 @@ async def plan_param_restore(
     backup_dir: str | Path,
     *,
     include_network: bool = False,
+    include_secrets: bool = False,
 ) -> RestorePlan:
     """Read the device's parameters and definitions, diff against a backup. Never writes.
 
@@ -194,7 +203,13 @@ async def plan_param_restore(
                 "refusing to restore across devices"
             )
     definitions = await device.params.definitions()
-    plan = diff_params(current, target, definitions, include_network=include_network)
+    plan = diff_params(
+        current,
+        target,
+        definitions,
+        include_network=include_network,
+        include_secrets=include_secrets,
+    )
     plan.backup_dir = Path(backup_dir)
     plan.device_identity = identity
     return plan

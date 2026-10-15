@@ -37,6 +37,7 @@ from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.files import write_private
 from axis_cam.models import ServerReportFormat
 from axis_cam.report import collect_report
+from axis_cam.secrets import credential_names
 
 if TYPE_CHECKING:
     from axis_cam.devices.base import AxisDevice
@@ -91,6 +92,9 @@ class BackupManifest:
         not_included: What is absent, split by reason.
         restore: Human-readable status of the restore path (which files a
             restore consumes and which it does not).
+        contains_credentials: Credential parameters ``params.json`` holds in
+            clear text (SNMP communities, proxy/802.1X passwords...). Treat the
+            backup directory as a secret when this is not empty.
     """
 
     format_version: int
@@ -110,6 +114,7 @@ class BackupManifest:
         "params.json: `axiscam backup restore DIR` (param.cgi action=update, one parameter "
         "at a time, verified); other sections: not implemented"
     )
+    contains_credentials: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """JSON-ready dictionary."""
@@ -136,6 +141,7 @@ class BackupManifest:
             skipped=list(data.get("skipped", [])),
             not_included={k: list(v) for k, v in data.get("not_included", {}).items()},
             restore=data.get("restore", ""),
+            contains_credentials=list(data.get("contains_credentials", [])),
         )
 
     def get(self, section: str) -> BackupFile | None:
@@ -193,12 +199,14 @@ async def create_backup(
         payloads.append((section, f"{section}.json", _json_bytes(data), source))
 
     errors = dict(report.errors)
+    credentials: list[str] = []
     try:
         params = await device.params.export()
     except (AxisDeviceError, AxisApiNotSupportedError) as exc:
         errors["params"] = str(exc)
     else:
         payloads.append(("params", PARAMS_FILE, _json_bytes(params), "param.cgi"))
+        credentials = credential_names(params)
 
     if include_server_report:
         server_report = await device.serverreport.download_report(
@@ -221,6 +229,7 @@ async def create_backup(
         device=_device_identity(device.host, label, report.sections.get("device_info")),
         errors=errors,
         skipped=list(report.skipped),
+        contains_credentials=credentials,
     )
     for section, file_name, content, source in payloads:
         write_private(backup_dir / file_name, content)

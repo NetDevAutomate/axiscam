@@ -270,6 +270,30 @@ class TestDiff:
 
         assert plan.skipped[SkipReason.MISSING_ON_DEVICE] == ["root.Gone.Param"]
 
+    def test_credentials_excluded_unless_asked(self):
+        current = dict(
+            CURRENT, **{"root.SNMP.WriteCommunity": "old", "root.Audio.MaxListeners": "10"}
+        )
+        target = dict(
+            current, **{"root.SNMP.WriteCommunity": "new", "root.Audio.MaxListeners": "20"}
+        )
+
+        plan = diff_params(current, target)
+        assert [c.name for c in plan.changes] == ["root.Audio.MaxListeners"]
+        assert plan.skipped[SkipReason.CREDENTIAL] == ["root.SNMP.WriteCommunity"]
+
+        plan = diff_params(current, target, include_secrets=True)
+        assert sorted(c.name for c in plan.changes) == [
+            "root.Audio.MaxListeners",
+            "root.SNMP.WriteCommunity",
+        ]
+
+    def test_unchanged_credential_is_unchanged_not_credential(self):
+        current = dict(CURRENT, **{"root.SNMP.WriteCommunity": "same"})
+        plan = diff_params(current, current)
+        assert "root.SNMP.WriteCommunity" in plan.skipped[SkipReason.UNCHANGED]
+        assert plan.skipped[SkipReason.CREDENTIAL] == []
+
     def test_skip_counts_omit_zero_reasons(self):
         plan = diff_params(CURRENT, CURRENT)
         assert plan.skip_counts() == {SkipReason.UNCHANGED.value: len(CURRENT)}

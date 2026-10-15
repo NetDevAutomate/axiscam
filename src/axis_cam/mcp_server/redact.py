@@ -14,22 +14,11 @@ Two mechanisms, because there are two ways a secret could leak:
 from __future__ import annotations
 
 import base64
-import re
 from typing import Any
 
+from axis_cam.secrets import SECRET_NAME, is_secret_name
+
 REDACTED = "[redacted]"
-
-#: Parameter names that hold credentials. Matched case-insensitively against
-#: the whole dotted name, so ``root.SNMP.ReadCommunity`` and
-#: ``root.Network.Interface.I0.dot1x.EAPOL.KeyPassword`` are both caught.
-SECRET_NAME = re.compile(
-    r"(?i)pass(word|wd|phrase)?|secret|community|psk|token|credential|privatekey"
-)
-
-
-def is_secret_name(name: str) -> bool:
-    """Whether a parameter name looks like it holds a credential."""
-    return bool(SECRET_NAME.search(name))
 
 
 def redact_params(params: dict[str, str]) -> dict[str, str]:

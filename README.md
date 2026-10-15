@@ -452,7 +452,10 @@ Restore covers `params.json` only (`param.cgi?action=update`, the one documented
 write path). It refuses a backup whose `params.json` no longer matches the
 manifest or that was taken from a different serial number, skips what the
 device itself declares read-only (`listdefinitions`), excludes the `Network`
-group unless `--include-network`, and verifies every write by reading it back.
+group unless `--include-network` and credential parameters (SNMP communities,
+proxy and 802.1X passwords) unless `--include-secrets`, and verifies every write
+by reading it back. Those credentials are in `params.json` in clear text; the
+manifest lists them under `contains_credentials` and `backup show` warns.
 
 ### Configuration Commands
 
