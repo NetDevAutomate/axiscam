@@ -267,6 +267,14 @@ class TestParamApiSet:
         # Replacing before checking for "OK" turned these successes into errors.
         await ParamAPI(self._replying("OK\n")).set("root.SNMP.ReadCommunity", value)
 
+    #: The refusal as AXIS OS 11 and 12 send it: the FULL name, though set() sends the
+    #: short one (live, 2026-10-22, all four devices with param.cgi). The short spelling
+    #: is kept too: the VAPIX page writes only '<group.name>'.
+    SPELLINGS = pytest.mark.parametrize(
+        "quoted", ["root.{name}", "{name}"], ids=["live-full-name", "short-name"]
+    )
+
+    @SPELLINGS
     @pytest.mark.parametrize(
         ("name", "value"),
         [
@@ -275,13 +283,27 @@ class TestParamApiSet:
             ("SNMP.ReadCommunity", "#"),
             ("SNMP.ReadCommunity", "SNMP"),
             ("Network.Interface.I0.dot1x.EAPOL.KeyPassword", "1"),
+            ("Network.Interface.I0.dot1x.EAPOL.KeyPassword", "abc"),
         ],
     )
-    async def test_a_short_secret_value_leaves_the_refusal_readable(self, name: str, value: str):
-        refusal = f"# Error: Error setting '{name}' to '{value}'!\n"
+    async def test_a_short_secret_value_leaves_the_refusal_readable(
+        self, name: str, value: str, quoted: str
+    ):
+        shown = quoted.format(name=name)
+        refusal = f"# Error: Error setting '{shown}' to '{value}'!\n"
         with pytest.raises(AxisDeviceError) as caught:
             await ParamAPI(self._replying(refusal)).set(f"root.{name}", value)
-        assert str(caught.value) == f"param.cgi: Error: Error setting '{name}' to '[redacted]'!"
+        assert str(caught.value) == f"param.cgi: Error: Error setting '{shown}' to '[redacted]'!"
+
+    @SPELLINGS
+    async def test_a_value_inside_the_name_does_not_garble_it(self, quoted: str):
+        # Live: 'Probe' sent to Axiscam.Probe.Password came back as
+        # 'root.Axiscam.[redacted].Password' before the full-name phrase was matched.
+        shown = quoted.format(name="Axiscam.Probe.Password")
+        refusal = f"# Error: Error setting '{shown}' to 'Probe'!"
+        with pytest.raises(AxisDeviceError) as caught:
+            await ParamAPI(self._replying(refusal)).set("Axiscam.Probe.Password", "Probe")
+        assert str(caught.value) == f"param.cgi: Error: Error setting '{shown}' to '[redacted]'!"
 
     async def test_a_secret_quoted_outside_the_refusal_context_is_redacted(self):
         community = "rd-9fQ2zX7kLm"  # pragma: allowlist secret

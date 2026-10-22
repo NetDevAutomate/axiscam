@@ -85,7 +85,7 @@ credential-named parameters.
 ## Filed, not fixed
 
 - **F6 (opus): `ParamAPI.set` sends values in the GET query string** (fixed 2026-10-22,
-  D12/D13 below), contrary to
+  D13/D14 below), contrary to
   `BaseAPI._post_form`'s own rule. A secret value reaches the device access log and
   httpx's INFO request log, and a peer that echoes the URL on a 4xx can show it
   URL-encoded. Reachable only from the CLI with `restore --include-secrets`; MCP never
@@ -94,7 +94,7 @@ credential-named parameters.
   echoes the `pwd` form field into a pwdgrp error. `pwd` does not match `is_secret_name`
   (CLI-only, the user's own new password).
 - **F7 (opus): `audit.py:727` truncates library messages again** (`str(exc)[:120]`; fixed
-  2026-10-22, D14 below). After
+  2026-10-22, D15 below). After
   D1/D2 the library's own messages carry no credential spellings, so the remaining
   exposure is a secret request value (F6). It gets fixed together with F6.
 
@@ -283,7 +283,7 @@ that ignored bodies would answer every POST that way. After the change, the new
 read-back unchanged), and the speaker's refusal arrived over Digest, so the body is re-sent
 correctly after the challenge.
 
-**D12. `ParamAPI.set` sends `action=update` in a POST form body, for every parameter.** Not
+**D13. `ParamAPI.set` sends `action=update` in a POST form body, for every parameter.** Not
 only for credential-named ones: the name rule is a heuristic (a false negative leaks), one
 path is simpler to test, and POST costs nothing. The URL now carries no parameter name or
 value, so neither reaches the device access log, httpx's INFO request log, a proxy's log or
@@ -292,7 +292,7 @@ query, and httpx's log line names neither the parameter nor the value. The MCP w
 fake camera now reads a form body exactly as the query string (the live contract above) and
 asserts the restore's update carried nothing in its URL.
 
-**D13. An excerpt that quotes a credential the request carried is withheld, like the
+**D14. An excerpt that quotes a credential the request carried is withheld, like the
 configured password.** `error_excerpt(..., secrets=...)`. The caller names the credentials in
 the form (`_post_form(..., secrets=...)` → `VapixClient.post(..., secrets=...)`): a
 credential-named parameter's value in `ParamAPI.set`, and the `pwd` in `UsersAPI.add` and
@@ -302,7 +302,7 @@ form-encoded echo), and `UsersAPI._check_reply`'s 200 `Error` text. The device's
 `# Error: Error setting '<name>' to '<value>'!` keeps the scoped D4 replace, so the parameter
 name stays readable.
 
-**D14 (F7). The audit withholds before it cuts.** `_unreadable` cuts a library message to
+**D15 (F7). The audit withholds before it cuts.** `_unreadable` cuts a library message to
 120 characters for the table. It now goes through `error_excerpt(..., password=<the
 device's configured password>, limit=120)`, so a message that holds the password in any
 spelling is withheld whole. Before, the cut could leave a password fragment that the MCP
@@ -315,16 +315,28 @@ then answers `action must be specified`, and `set()` reports the change as faile
 as a silent success (tested). A 307/308 re-sends the body to the target the first hop chose;
 that hop already received it, so this is a stated limit, not an escalation.
 
-Each defence was proven load-bearing by removing it. 13 mutations, each turning at least one
+Each defence was proven load-bearing by removing it. 15 mutations, each turning at least one
 named test red: `set()` back to GET; the secret not passed on at each of its three hops
 (`set()`, `_post_form`, the client's 4xx excerpt); `error_excerpt` ignoring `secrets`;
 `set()`'s unexpected reply cut plainly; `_check_reply` quoting an echoed `pwd`; `add` and
 `set_password` not naming `pwd`, to the transport or to `_check_reply` (four); the audit
-cutting before withholding, or withholding without the configured password. One mutation
+cutting before withholding, or withholding without the configured password; and (D16) the
+refusal phrase matched by the short name only, or the full name only. One mutation
 first survived: the mutation runner rewrote the same file to the same size within one
 second, and Python reused the previous mutant's `.pyc` (a timestamp `.pyc` is valid when
 the source's whole-second mtime and size match). With a fresh bytecode cache per run
 (`PYTHONDONTWRITEBYTECODE=1`, a new `PYTHONPYCACHEPREFIX`) it is caught.
+
+**D16. The refusal phrase is matched with the full name too.** A live refusal of an
+unknown credential-named parameter showed AXIS OS 12 quotes the *full* name
+(`Error setting 'root.Axiscam.Probe.Password' to '…'!`) although `set()` sends the short
+one. D4's scoped replace looked only for the short spelling the VAPIX page writes, which the
+unit tests had copied. So a value that is part of the name (`Probe`) garbled it
+(`root.Axiscam.[redacted].Password`), and a value under 4 characters was quoted unredacted.
+`_withhold_value` now matches the phrase with or without `root.`; the tests cover both
+spellings, and two mutations (short-only, full-only) each turn them red. This is the same
+lesson as the `param.cgi` single-parameter echo: a fixture copied from the documentation
+encodes a belief about the device, and only the device's own reply settles it.
 
 **Filed (F14), found during the live check:** every device answers **HTTP 401** to an update
 of a parameter nobody may write (`securityLevel` write digit 7), by GET and by POST alike, so

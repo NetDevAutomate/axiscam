@@ -14,6 +14,7 @@ path in :mod:`axis_cam.restore` drives it through the plan → confirm → apply
 verify pattern.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -31,19 +32,28 @@ ROOT_PREFIX = "root."
 def _withhold_value(body: str, name: str, value: str) -> str:
     """``body`` with a credential parameter's sent value withheld.
 
-    The documented refusal quotes the name and the value exactly
-    (``Error setting '<name>' to '<value>'!``). That phrase is rebuilt with the
+    The refusal quotes the name and the value exactly (``Error setting '<name>'
+    to '<value>'!``). AXIS OS 11 and 12 quote the *full* name although
+    :meth:`ParamAPI.set` sends the short one (live, 2026-10-22); the VAPIX page
+    writes the short form. Either spelling of that phrase is rebuilt with the
     value replaced, so the parameter name stays readable whatever the value is
     (a community string ``SNMP`` must not turn ``SNMP.ReadCommunity`` into
     ``[redacted].ReadCommunity``). Elsewhere the value is replaced only when it
     is 4 characters or more: shorter values match ordinary text (``e``, ``1``),
     and no substring rule can protect them anyway.
     """
-    refusal = f"'{name}' to '{value}'"
-    parts = body.split(refusal)
-    if len(value) >= MIN_PASSWORD:
-        parts = [part.replace(value, REDACTED) for part in parts]
-    return f"'{name}' to '{REDACTED}'".join(parts)
+    phrase = re.compile(
+        rf"'((?:{re.escape(ROOT_PREFIX)})?{re.escape(short_name(name))})' to '{re.escape(value)}'"
+    )
+    pieces = []
+    for index, piece in enumerate(phrase.split(body)):
+        if index % 2:  # a captured name: the refusal phrase itself
+            pieces.append(f"'{piece}' to '{REDACTED}'")
+        elif len(value) >= MIN_PASSWORD:
+            pieces.append(piece.replace(value, REDACTED))
+        else:
+            pieces.append(piece)
+    return "".join(pieces)
 
 
 def parse_param_list(text: str) -> dict[str, str]:

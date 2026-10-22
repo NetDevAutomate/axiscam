@@ -56,6 +56,10 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   a password fragment that the MCP scrubber does not recognise. Found on the way and
   filed as F14: every device answers 401 to an update of a parameter nobody may write
   (`Brand.Brand`), so `set()` reports it as an authentication failure.
+- `ParamAPI.set` withholds a refused credential value in the refusal the device
+  actually sends: AXIS OS 12 quotes the parameter's *full* name (`root.…`), not
+  the short one the VAPIX page shows. A value that was part of the name garbled it,
+  and a value under 4 characters was quoted unredacted.
 - `backup restore` re-reads the device before writing and refuses, writing
   nothing, if the serial number differs or a planned parameter changed since the
   plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.
