@@ -1,5 +1,7 @@
 """Tests for the users module (pwdgrp.cgi), the first write surface."""
 
+import urllib.parse
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -13,7 +15,7 @@ from axis_cam.api.users import (
     validate_username,
 )
 from axis_cam.client import VapixClient
-from axis_cam.exceptions import AxisLockoutError, AxisUserError
+from axis_cam.exceptions import AxisDeviceError, AxisLockoutError, AxisUserError
 from axis_cam.models import UserAccount, UserAccounts, UserRole, role_to_sgrp
 
 # The response body documented in VAPIX System settings, example 5.
@@ -389,6 +391,54 @@ class TestTransport:
         assert get_route.call_count == 2
         for call in get_route.calls:
             assert "Sup3r-secret" not in str(call.request.url)
+
+    NEW_PASSWORD = "N3w Pass/w+rd!"  # pragma: allowlist secret
+    #: Both writes that send a ``pwd``: an existing account's new password, a new account.
+    OPS = ("set_password", "add")
+
+    async def _against(self, op: str, reply: Callable[[httpx.Request], httpx.Response]):
+        base = "https://192.168.1.10:443"
+        accounts = [("root", "admin", True)] + ([("ops", "operator", False)] if op != "add" else [])
+        respx.get(f"{base}/axis-cgi/pwdgrp.cgi").mock(
+            return_value=httpx.Response(200, text=_listing(*accounts))
+        )
+        respx.post(f"{base}/axis-cgi/pwdgrp.cgi").mock(side_effect=reply)
+        async with VapixClient(
+            "192.168.1.10", "root", "rootpw", port=443, use_https=True, auth_mode="basic"
+        ) as client:
+            users = UsersAPI(client)
+            if op == "add":
+                await users.add("ops", self.NEW_PASSWORD, UserRole.OPERATOR)
+            else:
+                await users.set_password("ops", self.NEW_PASSWORD)
+
+    def _spellings(self) -> list[str]:
+        new = self.NEW_PASSWORD
+        return [new, urllib.parse.quote_plus(new), urllib.parse.quote(new, safe="")]
+
+    @pytest.mark.parametrize("op", OPS)
+    @respx.mock
+    async def test_an_error_page_quoting_the_new_password_is_withheld(self, op: str):
+        # F6, related: a peer that quotes the form body (pwd) on a 4xx.
+        with pytest.raises(AxisDeviceError, match="withheld") as caught:
+            await self._against(
+                op,
+                lambda request: httpx.Response(400, text=f"bad form: {request.content.decode()}"),
+            )
+        assert not [s for s in self._spellings() if s in str(caught.value)]
+
+    @pytest.mark.parametrize("op", OPS)
+    @respx.mock
+    async def test_an_error_reply_quoting_the_new_password_is_withheld(self, op: str):
+        # The same echo in the CGI's own 200 "Error" form.
+        with pytest.raises(AxisUserError, match="withheld") as caught:
+            await self._against(
+                op,
+                lambda request: httpx.Response(
+                    200, text=f"Error: {request.content.decode()} rejected"
+                ),
+            )
+        assert not [s for s in self._spellings() if s in str(caught.value)]
 
     @respx.mock
     async def test_http_401_is_an_authentication_error_not_a_user_error(self):

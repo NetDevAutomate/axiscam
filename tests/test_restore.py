@@ -2,6 +2,7 @@
 
 import base64
 import json
+import urllib.parse
 from pathlib import Path
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock
@@ -191,22 +192,28 @@ class TestParseDefinitions:
 
 
 class TestParamApiSet:
-    async def test_sends_action_update_with_short_name(self):
+    """``set()`` POSTs a form body (F6); the stub client answers ``post``."""
+
+    async def test_sends_action_update_with_short_name_in_a_form_body(self):
         client = MagicMock()
         client.host = "h"
-        client.get = AsyncMock(return_value=MagicMock(text="OK\n"))
+        client.post = AsyncMock(return_value=MagicMock(text="OK\n"))
+        client.get = AsyncMock()
         api = ParamAPI(client)
 
         await api.set("root.Audio.MaxListeners", "5")
 
-        client.get.assert_awaited_once_with(
-            "/axis-cgi/param.cgi", {"action": "update", "Audio.MaxListeners": "5"}
-        )
+        client.get.assert_not_awaited()
+        assert client.post.await_args.args == ("/axis-cgi/param.cgi",)
+        assert client.post.await_args.kwargs["data"] == {
+            "action": "update",
+            "Audio.MaxListeners": "5",
+        }
 
     async def test_error_body_raises(self):
         client = MagicMock()
         client.host = "h"
-        client.get = AsyncMock(
+        client.post = AsyncMock(
             return_value=MagicMock(text="# Error: Error setting 'Brand.Brand' to 'X'!\n")
         )
 
@@ -216,7 +223,7 @@ class TestParamApiSet:
     async def test_unexpected_body_raises(self):
         client = MagicMock()
         client.host = "h"
-        client.get = AsyncMock(return_value=MagicMock(text="<html>login</html>"))
+        client.post = AsyncMock(return_value=MagicMock(text="<html>login</html>"))
 
         with pytest.raises(AxisDeviceError, match="unexpected reply"):
             await ParamAPI(client).set("Audio.MaxListeners", "5")
@@ -227,7 +234,7 @@ class TestParamApiSet:
         community = "rd-9fQ2zX7kLm"  # pragma: allowlist secret
         client = MagicMock()
         client.host = "h"
-        client.get = AsyncMock(
+        client.post = AsyncMock(
             return_value=MagicMock(
                 text=f"# Error: Error setting 'SNMP.ReadCommunity' to '{community}'!\n"
             )
@@ -241,7 +248,7 @@ class TestParamApiSet:
     async def test_an_ordinary_value_is_still_quoted(self):
         client = MagicMock()
         client.host = "h"
-        client.get = AsyncMock(
+        client.post = AsyncMock(
             return_value=MagicMock(text="# Error: Error setting 'Image.I0.Name' to 'Hall'!\n")
         )
 
@@ -252,7 +259,7 @@ class TestParamApiSet:
     def _replying(text: str) -> MagicMock:
         client = MagicMock()
         client.host = "h"
-        client.get = AsyncMock(return_value=MagicMock(text=text))
+        client.post = AsyncMock(return_value=MagicMock(text=text))
         return client
 
     @pytest.mark.parametrize("value", ["OK", "K", "O"])
@@ -260,6 +267,14 @@ class TestParamApiSet:
         # Replacing before checking for "OK" turned these successes into errors.
         await ParamAPI(self._replying("OK\n")).set("root.SNMP.ReadCommunity", value)
 
+    #: The refusal as AXIS OS 11 and 12 send it: the FULL name, though set() sends the
+    #: short one (live, 2026-10-22, all four devices with param.cgi). The short spelling
+    #: is kept too: the VAPIX page writes only '<group.name>'.
+    SPELLINGS = pytest.mark.parametrize(
+        "quoted", ["root.{name}", "{name}"], ids=["live-full-name", "short-name"]
+    )
+
+    @SPELLINGS
     @pytest.mark.parametrize(
         ("name", "value"),
         [
@@ -268,13 +283,27 @@ class TestParamApiSet:
             ("SNMP.ReadCommunity", "#"),
             ("SNMP.ReadCommunity", "SNMP"),
             ("Network.Interface.I0.dot1x.EAPOL.KeyPassword", "1"),
+            ("Network.Interface.I0.dot1x.EAPOL.KeyPassword", "abc"),
         ],
     )
-    async def test_a_short_secret_value_leaves_the_refusal_readable(self, name: str, value: str):
-        refusal = f"# Error: Error setting '{name}' to '{value}'!\n"
+    async def test_a_short_secret_value_leaves_the_refusal_readable(
+        self, name: str, value: str, quoted: str
+    ):
+        shown = quoted.format(name=name)
+        refusal = f"# Error: Error setting '{shown}' to '{value}'!\n"
         with pytest.raises(AxisDeviceError) as caught:
             await ParamAPI(self._replying(refusal)).set(f"root.{name}", value)
-        assert str(caught.value) == f"param.cgi: Error: Error setting '{name}' to '[redacted]'!"
+        assert str(caught.value) == f"param.cgi: Error: Error setting '{shown}' to '[redacted]'!"
+
+    @SPELLINGS
+    async def test_a_value_inside_the_name_does_not_garble_it(self, quoted: str):
+        # Live: 'Probe' sent to Axiscam.Probe.Password came back as
+        # 'root.Axiscam.[redacted].Password' before the full-name phrase was matched.
+        shown = quoted.format(name="Axiscam.Probe.Password")
+        refusal = f"# Error: Error setting '{shown}' to 'Probe'!"
+        with pytest.raises(AxisDeviceError) as caught:
+            await ParamAPI(self._replying(refusal)).set("Axiscam.Probe.Password", "Probe")
+        assert str(caught.value) == f"param.cgi: Error: Error setting '{shown}' to '[redacted]'!"
 
     async def test_a_secret_quoted_outside_the_refusal_context_is_redacted(self):
         community = "rd-9fQ2zX7kLm"  # pragma: allowlist secret
@@ -283,6 +312,16 @@ class TestParamApiSet:
             await ParamAPI(self._replying(reply)).set("root.SNMP.ReadCommunity", community)
         assert community not in str(caught.value)
 
+    async def test_a_secret_re_spelled_in_an_unexpected_reply_is_withheld(self):
+        # A peer that quotes the form body back: the value arrives form-encoded,
+        # which a literal replace cannot see. The excerpt is withheld whole.
+        community = "Rd 9f/Q2+zX7kLm"  # pragma: allowlist secret
+        reply = f"<html>bad value {urllib.parse.quote_plus(community)} for SNMP</html>"
+        with pytest.raises(AxisDeviceError, match="unexpected reply") as caught:
+            await ParamAPI(self._replying(reply)).set("root.SNMP.ReadCommunity", community)
+        assert urllib.parse.quote_plus(community) not in str(caught.value)
+        assert "withheld" in str(caught.value)
+
     @respx.mock
     async def test_an_echoed_credential_in_a_success_reply_is_refused(self):
         # A peer that echoes the request headers in its 200 reply. The client
@@ -290,7 +329,7 @@ class TestParamApiSet:
         password = "Param-Echo-T3st!"  # pragma: allowlist secret
         token = base64.b64encode(f"root:{password}".encode()).decode()
         pad = "." * (120 - len("Basic ") - len(token) // 2)
-        respx.get("https://192.0.2.10:443/axis-cgi/param.cgi").mock(
+        respx.post("https://192.0.2.10:443/axis-cgi/param.cgi").mock(
             side_effect=lambda request: httpx.Response(
                 200, text=pad + request.headers["Authorization"]
             )

@@ -260,6 +260,22 @@ class TestErrorExcerpt:
         assert error_excerpt("<h1>Not Found</h1>") == "<h1>Not Found</h1>"
         assert error_excerpt(MagicMock()) == ""  # type: ignore[arg-type]
 
+    def test_an_excerpt_quoting_a_secret_the_request_sent_is_withheld(self):
+        # F6: a credential the request carried in its body (a parameter update's
+        # value, a pwdgrp ``pwd``) is withheld like the configured password, in the
+        # form-encoded spelling an echo of the body carries.
+        sent = "Rd 9f/Q2+zX7kLm"  # pragma: allowlist secret
+        body = "." * 190 + "SNMP.ReadCommunity=" + urllib.parse.quote_plus(sent)
+        out = error_excerpt(body, password=PASSWORD, secrets=(sent,))
+        assert out == (
+            f"[{len(body)} characters withheld: the reply quotes a credential this request sent]"
+        )
+
+    def test_a_short_or_empty_sent_secret_is_not_hunted(self):
+        # Under 4 characters a value matches ordinary text, as for the password.
+        text = "<h1>Bad Request</h1> value 1"
+        assert error_excerpt(text, secrets=("1", "")) == text
+
 
 class TestEverythingTheClientSent:
     """``sent``: every Authorization value the client sent is a needle (milestone-3 council)."""

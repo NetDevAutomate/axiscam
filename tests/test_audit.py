@@ -23,6 +23,7 @@ from axis_cam.audit import (
     run_audit,
 )
 from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError, AxisPermissionError
+from axis_cam.mcp_server.redact import Scrubber
 from axis_cam.models import (
     BasicDeviceInfo,
     CertConfig,
@@ -328,6 +329,35 @@ class TestRunAudit:
     async def test_authentication_error_aborts(self):
         with pytest.raises(AxisAuthenticationError):
             await run_audit(_device(params=AxisAuthenticationError("401")))
+
+    # F7: the audit cuts library messages to 120 characters for the table.
+
+    PASSWORD = "Audit-Cut~S3cret?"  # pragma: allowlist secret
+
+    async def _evidence_for(self, message: str) -> list[str]:
+        device = _device(params=AxisDeviceError(message))
+        device.client.password = self.PASSWORD
+        report = await run_audit(device)
+        return [f.evidence for f in report.findings if f.evidence.startswith("could not read")]
+
+    async def test_a_message_holding_the_password_is_withheld_before_the_cut(self):
+        # A cut through the password leaves a fragment that no downstream scrubber
+        # (the MCP Scrubber matches whole strings) recognises. The library's rule
+        # holds here too: withhold first, then cut.
+        message = "param.cgi: Error: " + "x" * 94 + self.PASSWORD + " in group"
+        assert message.index(self.PASSWORD) < 120 < message.index(self.PASSWORD) + 17
+
+        evidence = await self._evidence_for(message)
+
+        fragments = [self.PASSWORD[i : i + 8] for i in range(len(self.PASSWORD) - 7)]
+        scrubbed = [Scrubber("root", self.PASSWORD).text(e) for e in evidence]
+        assert evidence and all("withheld" in e for e in evidence)
+        assert [f for e in scrubbed for f in fragments if f in e] == []
+
+    async def test_a_long_message_without_a_secret_is_still_cut(self):
+        message = "param.cgi: Error: " + "y" * 300
+        evidence = await self._evidence_for(message)
+        assert evidence and all(f"({message[:120]})" in e for e in evidence)
 
 
 class TestCli:

@@ -272,17 +272,28 @@ def contains_password(text: str, password: object) -> bool:
     return any(s in text for s in spellings) or password in _decoded(text)
 
 
-def error_excerpt(text: str, *, password: object = None, limit: int = EXCERPT_LIMIT) -> str:
+def error_excerpt(
+    text: str,
+    *,
+    password: object = None,
+    secrets: Iterable[str] = (),
+    limit: int = EXCERPT_LIMIT,
+) -> str:
     """Device error text to quote in a message: verbatim and cut, or withheld.
 
     Call it only on a reply :func:`quotes_sent_auth` has cleared (the client
-    refuses the others). An excerpt that contains the configured password is
-    withheld whole, before any cut, so no part of it survives.
+    refuses the others). An excerpt that contains the configured password, or a
+    credential the request itself carried (``secrets``: a parameter update's
+    value, a ``pwdgrp`` ``pwd``, in a form body an echo can quote back), is
+    withheld whole, before any cut, so no part of it survives. Both are matched
+    in the spellings :func:`contains_password` knows.
     """
     if not isinstance(text, str):
         return ""
     if contains_password(text, password):
         return f"[{len(text)} characters withheld: the reply contains the configured password]"
+    if any(contains_password(text, secret) for secret in secrets):
+        return f"[{len(text)} characters withheld: the reply quotes a credential this request sent]"
     return text[:limit]
 
 

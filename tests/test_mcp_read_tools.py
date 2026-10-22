@@ -341,11 +341,12 @@ class TestUnexpectedErrors:
 
 
 class TestRequestLoggingIsQuiet:
-    """In MCP mode httpx must not log request URLs (they carry query-string values)."""
+    """In MCP mode httpx must not log request URLs (device address, parameter names)."""
 
     def test_building_the_server_pins_httpx_logging_to_warning(self) -> None:
         # The SDK leaves the root logger at INFO; httpx then logs every request
-        # URL. A GET carries param values in its query string, so pin it back.
+        # URL: the device address, parameter names, a redirect target a peer
+        # chose. Writes left the URL with F6; pin the logger back all the same.
         httpx_logger = logging.getLogger("httpx")
         root = logging.getLogger()
         original_root = root.level

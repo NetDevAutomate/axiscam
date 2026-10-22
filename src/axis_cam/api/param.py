@@ -9,10 +9,12 @@ sends ``responseformat=rfc`` as the documentation asks.
 
 Parameters are read with ``action=list`` and written one at a time with
 ``action=update`` (:meth:`ParamAPI.set`), which is the only write the module
-offers; the restore path in :mod:`axis_cam.restore` drives it through the
-plan → confirm → apply → verify pattern.
+offers. An update travels in a POST form body, never in the URL. The restore
+path in :mod:`axis_cam.restore` drives it through the plan → confirm → apply →
+verify pattern.
 """
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,7 +24,7 @@ from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
-from axis_cam.secrets import MIN_PASSWORD, REDACTED, is_secret_name
+from axis_cam.secrets import MIN_PASSWORD, REDACTED, error_excerpt, is_secret_name
 
 ROOT_PREFIX = "root."
 
@@ -30,19 +32,28 @@ ROOT_PREFIX = "root."
 def _withhold_value(body: str, name: str, value: str) -> str:
     """``body`` with a credential parameter's sent value withheld.
 
-    The documented refusal quotes the name and the value exactly
-    (``Error setting '<name>' to '<value>'!``). That phrase is rebuilt with the
+    The refusal quotes the name and the value exactly (``Error setting '<name>'
+    to '<value>'!``). AXIS OS 11 and 12 quote the *full* name although
+    :meth:`ParamAPI.set` sends the short one (live, 2026-10-22); the VAPIX page
+    writes the short form. Either spelling of that phrase is rebuilt with the
     value replaced, so the parameter name stays readable whatever the value is
     (a community string ``SNMP`` must not turn ``SNMP.ReadCommunity`` into
     ``[redacted].ReadCommunity``). Elsewhere the value is replaced only when it
     is 4 characters or more: shorter values match ordinary text (``e``, ``1``),
     and no substring rule can protect them anyway.
     """
-    refusal = f"'{name}' to '{value}'"
-    parts = body.split(refusal)
-    if len(value) >= MIN_PASSWORD:
-        parts = [part.replace(value, REDACTED) for part in parts]
-    return f"'{name}' to '{REDACTED}'".join(parts)
+    phrase = re.compile(
+        rf"'((?:{re.escape(ROOT_PREFIX)})?{re.escape(short_name(name))})' to '{re.escape(value)}'"
+    )
+    pieces = []
+    for index, piece in enumerate(phrase.split(body)):
+        if index % 2:  # a captured name: the refusal phrase itself
+            pieces.append(f"'{piece}' to '{REDACTED}'")
+        elif len(value) >= MIN_PASSWORD:
+            pieces.append(piece.replace(value, REDACTED))
+        else:
+            pieces.append(piece)
+    return "".join(pieces)
 
 
 def parse_param_list(text: str) -> dict[str, str]:
@@ -299,34 +310,49 @@ class ParamAPI(BaseAPI):
         return parse_param_definitions(await self._get_text(self.CGI_PATH, params))
 
     async def set(self, param_name: str, value: str) -> None:
-        """Update one existing parameter (``action=update``).
+        """Update one existing parameter (``action=update``), in a POST form body.
+
+        The arguments never go in the URL: a credential parameter's value would
+        reach the device access log, httpx's request log, any proxy's log and a
+        peer that echoes URLs. param.cgi reads a form body exactly as it reads
+        the query string (VAPIX: GET/POST; live on AXIS OS 11 and 12, 2026-10-22).
 
         The device answers HTTP 200 with ``OK`` on success and HTTP 200 with
-        ``# Error: Error setting '<group.name>' to '<value>'!`` when it refuses
-        (read-only parameter, invalid value, insufficient rights). Only the
-        device knows which parameters are writable; callers should treat the
-        error as a per-parameter fact, not a transport failure.
+        ``# Error: Error setting '<group.name>' to '<value>'!`` for a parameter
+        it does not have (and, per VAPIX, an invalid value). A parameter nobody
+        may write (``listdefinitions`` write level 7, e.g. ``Brand.Brand``) gets
+        **HTTP 401** instead, on AXIS OS 11 and 12 alike (live, 2026-10-22),
+        which raises :class:`AxisAuthenticationError`; check
+        ``ParamDefinition.writable`` first (filed as F14). Only the device knows
+        which parameters are writable; callers should treat a refusal as a
+        per-parameter fact, not a transport failure.
 
         Args:
             param_name: Full or short name.
             value: New value, as a string.
 
         Raises:
-            AxisDeviceError: The device refused the update (``# Error`` body).
-                For a credential-named parameter the value is withheld from the
-                message: the device's refusal quotes it.
-            AxisAuthenticationError / AxisConnectionError: Propagate.
+            AxisDeviceError: The device refused the update (``# Error`` body), or
+                answered something else (a redirect turns the POST into a
+                bodyless GET, which never reads ``OK``). For a credential-named
+                parameter the value is withheld from the message: the device's
+                refusal quotes it, and an echoing peer may re-spell it.
+            AxisAuthenticationError: Wrong credentials, or a parameter nobody
+                may write (the device answers 401; see above).
+            AxisConnectionError: Propagate.
         """
-        params: dict[str, Any] = {"action": "update", short_name(param_name): value}
-        raw = (await self._get_text(self.CGI_PATH, params)).strip()
+        name = short_name(param_name)
+        secrets = (value,) if value and is_secret_name(param_name) else ()
+        raw = (
+            await self._post_form(self.CGI_PATH, {"action": "update", name: value}, secrets=secrets)
+        ).strip()
         if raw == "OK":  # decided before any redaction: a value can spell "OK"
             return
-        body = raw
-        if value and is_secret_name(param_name):
-            body = _withhold_value(body, short_name(param_name), value)
         if raw.startswith("# Error"):
+            body = _withhold_value(raw, name, value) if secrets else raw
             raise AxisDeviceError(f"param.cgi: {body.removeprefix('#').strip()}")
-        raise AxisDeviceError(f"param.cgi: unexpected reply to update: {body[:120]!r}")
+        excerpt = error_excerpt(raw, password=self._client.password, secrets=secrets, limit=120)
+        raise AxisDeviceError(f"param.cgi: unexpected reply to update: {excerpt!r}")
 
     # Convenience methods for common parameters
 

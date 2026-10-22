@@ -123,6 +123,19 @@ def _digest_fields(header: str) -> dict[str, str]:
     )
 
 
+def _cgi_args(request: httpx.Request) -> dict[str, str]:
+    """What param.cgi reads: the query string and a form body, alike.
+
+    Live, 2026-10-22: two M3216-LVE (AXIS OS 12), an I8016-LVE and a C1410 (11.x,
+    Digest) answer a POST form body exactly as they answer the same arguments in
+    the query string.
+    """
+    args = dict(request.url.params)
+    if request.headers.get("content-type", "").startswith("application/x-www-form-urlencoded"):
+        args.update(urllib.parse.parse_qsl(request.content.decode()))
+    return args
+
+
 class Camera:
     """A legacy-CGI Axis camera behind respx that checks credentials for real.
 
@@ -161,6 +174,8 @@ class Camera:
         self.received: list[str] = []
         #: Requests answered as authenticated.
         self.served = 0
+        #: Every authenticated param.cgi ``action=update`` request.
+        self.updates: list[httpx.Request] = []
 
     def needles(self) -> list[str]:
         """Every credential this device saw on the wire or holds as a parameter."""
@@ -218,7 +233,10 @@ class Camera:
         if path == "/axis-cgi/pwdgrp.cgi" and query.get("action") == "get":
             return httpx.Response(200, text=PWDGRP)
         if path == "/axis-cgi/param.cgi":
-            return self._param_cgi(query, request.headers.get("Authorization", ""))
+            args = _cgi_args(request)
+            if args.get("action") == "update":
+                self.updates.append(request)
+            return self._param_cgi(args, request.headers.get("Authorization", ""))
         return self._not_found(request)
 
     def _param_cgi(self, query: dict[str, str], header: str = "") -> httpx.Response:
@@ -527,9 +545,13 @@ async def test_every_tool_and_resource_over_the_wire_leaks_no_credential(
     ]
     assert applied["status"] == "applied"
     assert camera.params["root.Image.I0.Name"] == "View Area 1"
+    # F6: the write travelled in a form body; its URL carried no argument at all.
+    assert camera.updates
+    assert all(r.method == "POST" and r.url.query == b"" for r in camera.updates)
     assert len(human.seen) == 1 and SERIAL in human.seen[0]
-    # httpx request logging is pinned to WARNING in MCP mode (it would otherwise log
-    # request URLs, which carry param values in the query string): nothing below it.
+    # httpx request logging is pinned to WARNING in MCP mode: request URLs carry the
+    # device address and parameter names (writes go in the body since F6), and stderr
+    # is the host's log. Nothing below WARNING.
     assert not any(r.name == "httpx" and r.levelno < logging.WARNING for r in caplog.records)
 
     captured = capfd.readouterr()

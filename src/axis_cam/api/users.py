@@ -28,6 +28,7 @@ from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisLockoutError, AxisUserError
 from axis_cam.models import UserAccount, UserAccounts, UserRole, role_to_sgrp
+from axis_cam.secrets import contains_password
 
 #: Account names are 1-14 characters from ``A-Z``, ``a-z``, ``0-9``.
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9]{1,14}$")
@@ -192,7 +193,12 @@ class UsersAPI(BaseAPI):
         }
         if strict_password:
             data["strict_pwd"] = "1"
-        self._check_reply(await self._post_form(self.CGI_PATH, data), "create", username)
+        self._check_reply(
+            await self._post_form(self.CGI_PATH, data, secrets=(password,)),
+            "create",
+            username,
+            secret=password,
+        )
         return await self._verify_account(username, role, ptz, verb="created")
 
     async def set_password(
@@ -217,7 +223,10 @@ class UsersAPI(BaseAPI):
         if strict_password:
             data["strict_pwd"] = "1"
         self._check_reply(
-            await self._post_form(self.CGI_PATH, data), "change the password of", username
+            await self._post_form(self.CGI_PATH, data, secrets=(password,)),
+            "change the password of",
+            username,
+            secret=password,
         )
 
     async def set_role(
@@ -321,11 +330,17 @@ class UsersAPI(BaseAPI):
             )
 
     @staticmethod
-    def _check_reply(text: str, verb: str, username: str) -> None:
-        """Raise if a 200 reply body is one of the CGI's error messages."""
+    def _check_reply(text: str, verb: str, username: str, *, secret: str | None = None) -> None:
+        """Raise if a 200 reply body is one of the CGI's error messages.
+
+        ``secret`` is the password the request sent: an error that quotes it
+        back (an echoing peer; the CGI's own messages never do) is withheld.
+        """
         stripped = text.strip()
         if stripped.startswith("Error"):
             reason = _FRIENDLY_ERRORS.get(stripped, stripped)
+            if contains_password(reason, secret):
+                reason = "[withheld: the reply quotes the password this request sent]"
             raise AxisUserError(f"could not {verb} account {username!r}: {reason}")
 
     async def _verify_account(

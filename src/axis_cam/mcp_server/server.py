@@ -106,10 +106,11 @@ def build_server(
         cache_hints={"tools/list": CacheHint(ttl_ms=TOOLS_LIST_TTL_MS, scope="private")},
     )
     # Constructing the server raises the root logger to INFO, at which httpx logs
-    # every request URL. A GET carries parameter values in its query string
-    # (`param.set`), and a followed redirect's URL is a peer's; neither belongs in
-    # a log. The client refuses an echoing redirect before it is followed, but pin
-    # httpx to WARNING so an ordinary request URL is never logged either.
+    # every request URL. A URL carries the device address and parameter names
+    # (writes travel in a form body since F6), and a followed redirect's URL is a
+    # peer's; neither belongs in the host's log. The client refuses an echoing
+    # redirect before it is followed, but pin httpx to WARNING so an ordinary
+    # request URL is never logged either.
     logging.getLogger("httpx").setLevel(logging.WARNING)
     for module in (read, audit, backup, write):
         module.register(deps)

@@ -6,6 +6,8 @@ with ``# Error: <description>``. Until 2026-10-13 this module parsed JSON and
 every real device therefore produced empty results.
 """
 
+import logging
+import urllib.parse
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -274,3 +276,111 @@ class TestWire:
         ) as client:
             with pytest.raises(AxisDeviceError, match="Invalid JSON"):
                 await client.get_json("/axis-cgi/param.cgi", {"action": "list"})
+
+
+#: A credential parameter's value with characters every encoding re-spells.
+COMMUNITY = "Rd 9f/Q2+zX7kLm"  # pragma: allowlist secret
+WIRE = "https://192.0.2.10:443"
+PARAM_CGI = {"host": "192.0.2.10", "path": "/axis-cgi/param.cgi"}  # any method, any query
+
+
+def _wire_client() -> VapixClient:
+    return VapixClient("192.0.2.10", "root", "pw", port=443, use_https=True, auth_mode="basic")
+
+
+def _args(request: httpx.Request) -> dict[str, str]:
+    """What param.cgi reads: the query string and a form body, alike (live, 2026-10-22)."""
+    return {
+        **dict(request.url.params),
+        **dict(urllib.parse.parse_qsl(request.content.decode())),
+    }
+
+
+def _spellings(value: str) -> list[str]:
+    return [value, urllib.parse.quote_plus(value), urllib.parse.quote(value, safe="")]
+
+
+class TestUpdateOnTheWire:
+    """F6: an update travels in a POST form body, never in the URL.
+
+    Live, 2026-10-22, through this library's client: two M3216-LVE on AXIS OS 12, an
+    I8016-LVE and a C1410 (11.x, Digest) parse a POST form body exactly like the query
+    string. ``action=update`` of an unknown parameter answers the same ``# Error`` line
+    by GET and by POST, and a body without ``action`` answers ``action must be
+    specified``. The S3008 recorder has no param.cgi at all (404 to GET as well).
+    """
+
+    @respx.mock
+    async def test_the_update_is_a_form_post_with_nothing_in_the_url(self):
+        route = respx.route(**PARAM_CGI).mock(return_value=httpx.Response(200, text="OK\n"))
+
+        async with _wire_client() as client:
+            await ParamAPI(client).set("root.SNMP.ReadCommunity", COMMUNITY)
+
+        request = route.calls.last.request
+        assert request.method == "POST"
+        assert request.url.query == b""
+        assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+        assert urllib.parse.parse_qs(request.content.decode()) == {
+            "action": ["update"],
+            "SNMP.ReadCommunity": [COMMUNITY],
+        }
+
+    @respx.mock
+    async def test_the_httpx_request_log_carries_neither_name_nor_value(self, caplog):
+        caplog.set_level(logging.INFO, logger="httpx")
+        respx.route(**PARAM_CGI).mock(return_value=httpx.Response(200, text="OK\n"))
+
+        async with _wire_client() as client:
+            await ParamAPI(client).set("root.SNMP.ReadCommunity", COMMUNITY)
+
+        logged = [r.getMessage() for r in caplog.records if r.name == "httpx"]
+        assert any("param.cgi" in line for line in logged)  # httpx did log the request
+        for line in logged:
+            assert "ReadCommunity" not in line
+            assert not [s for s in _spellings(COMMUNITY) if s in line]
+
+    @pytest.mark.parametrize("spelling", [0, 1, 2], ids=["literal", "form", "percent"])
+    @respx.mock
+    async def test_an_error_page_that_quotes_a_secret_value_is_withheld(self, spelling: int):
+        # A peer (proxy, WAF) that quotes the request's arguments on a 4xx.
+        def echo(request: httpx.Request) -> httpx.Response:
+            value = _args(request).get("SNMP.ReadCommunity", "")
+            return httpx.Response(400, text=f"<p>rejected {_spellings(value)[spelling]}</p>")
+
+        respx.route(**PARAM_CGI).mock(side_effect=echo)
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisDeviceError, match="withheld") as caught:
+                await ParamAPI(client).set("root.SNMP.ReadCommunity", COMMUNITY)
+        assert not [s for s in _spellings(COMMUNITY) if s in str(caught.value)]
+
+    @respx.mock
+    async def test_an_error_page_that_quotes_an_ordinary_value_is_still_quoted(self):
+        respx.route(**PARAM_CGI).mock(
+            side_effect=lambda request: httpx.Response(
+                400, text=f"<p>rejected {_args(request).get('Image.I0.Name')}</p>"
+            )
+        )
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisDeviceError, match="rejected Hall Way"):
+                await ParamAPI(client).set("root.Image.I0.Name", "Hall Way")
+
+    @respx.mock
+    async def test_a_redirected_update_is_a_failure_not_a_silent_success(self):
+        # httpx turns a POST answered with 302 into a bodyless GET, and the device then
+        # answers "action must be specified" (live, every device with param.cgi).
+        post = respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(
+            return_value=httpx.Response(302, headers={"Location": f"{WIRE}/axis-cgi/param.cgi"})
+        )
+        get = respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(
+            return_value=httpx.Response(200, text="action must be specified")
+        )
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisDeviceError, match="unexpected reply"):
+                await ParamAPI(client).set("root.Image.I0.Name", "Hall")
+
+        assert post.call_count == 1
+        assert get.calls.last.request.url.query == b""  # the redirect dropped the update
