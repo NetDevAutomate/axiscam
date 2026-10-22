@@ -161,7 +161,7 @@ classDiagram
         +connect() None
         +disconnect() None
         +get(path, params) httpx.Response
-        +post(path, data, json) httpx.Response
+        +post(path, data, json, secrets) httpx.Response
         +get_json(path, params) dict
         +post_json(path, data, json_data) dict
         +get_raw(path, params) bytes

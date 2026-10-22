@@ -84,7 +84,8 @@ credential-named parameters.
 
 ## Filed, not fixed
 
-- **F6 (opus): `ParamAPI.set` sends values in the GET query string**, contrary to
+- **F6 (opus): `ParamAPI.set` sends values in the GET query string** (fixed 2026-10-22,
+  D12/D13 below), contrary to
   `BaseAPI._post_form`'s own rule. A secret value reaches the device access log and
   httpx's INFO request log, and a peer that echoes the URL on a 4xx can show it
   URL-encoded. Reachable only from the CLI with `restore --include-secrets`; MCP never
@@ -92,7 +93,8 @@ credential-named parameters.
   updates, after confirming on a device that `param.cgi` accepts it. Related: a peer that
   echoes the `pwd` form field into a pwdgrp error. `pwd` does not match `is_secret_name`
   (CLI-only, the user's own new password).
-- **F7 (opus): `audit.py:727` truncates library messages again** (`str(exc)[:120]`). After
+- **F7 (opus): `audit.py:727` truncates library messages again** (`str(exc)[:120]`; fixed
+  2026-10-22, D14 below). After
   D1/D2 the library's own messages carry no credential spellings, so the remaining
   exposure is a secret request value (F6). It gets fixed together with F6.
 
@@ -260,3 +262,70 @@ Non-blocking confirmations the seat recorded: D9 refuses an earlier same-connect
 hash in every spelling tried, the `sent` record stays bounded at 64 and adds no false
 positive against 3.6 MB of genuine hex, and F10–F12 are agreed non-blocking (F11 needs a
 deliberate re-encoding peer and the MCP `Scrubber` removes the whole token from tool output).
+
+## F6 and F7: fixed (2026-10-22, branch `param-update-post`)
+
+The device contract was checked live before any code changed, through this library's own
+client (AUTO authentication, echo checks on), with no state change: a list, a request with
+no `action`, and an `action=update` of a parameter that does not exist, each sent by GET and
+by POST.
+
+| Device | POST `action=list` | POST without `action` | update of an unknown parameter |
+|---|---|---|---|
+| front_of_house, back_of_house (M3216-LVE, AXIS OS 12, Basic) | listing | `action must be specified` | same `# Error` line by GET and POST |
+| intercom (I8016-LVE, Basic) | listing | `action must be specified` | same `# Error` line by GET and POST |
+| mini_speaker (C1410, 11.x, Basic then Digest) | listing | `action must be specified` | same `# Error` line by GET and POST |
+| nvr (S3008) | 404 | — | 404 (no `param.cgi` at all, GET included; known) |
+
+The body-without-`action` control shows the device takes `action` from the body: a device
+that ignored bodies would answer every POST that way. After the change, the new
+`ParamAPI.set` wrote `Image.I0.Name` back with its current value on both cameras (`OK`,
+read-back unchanged), and the speaker's refusal arrived over Digest, so the body is re-sent
+correctly after the challenge.
+
+**D12. `ParamAPI.set` sends `action=update` in a POST form body, for every parameter.** Not
+only for credential-named ones: the name rule is a heuristic (a false negative leaks), one
+path is simpler to test, and POST costs nothing. The URL now carries no parameter name or
+value, so neither reaches the device access log, httpx's INFO request log, a proxy's log or
+a peer that echoes URLs. Tested through the real client: the request is a POST with an empty
+query, and httpx's log line names neither the parameter nor the value. The MCP wire test's
+fake camera now reads a form body exactly as the query string (the live contract above) and
+asserts the restore's update carried nothing in its URL.
+
+**D13. An excerpt that quotes a credential the request carried is withheld, like the
+configured password.** `error_excerpt(..., secrets=...)`. The caller names the credentials in
+the form (`_post_form(..., secrets=...)` → `VapixClient.post(..., secrets=...)`): a
+credential-named parameter's value in `ParamAPI.set`, and the `pwd` in `UsersAPI.add` and
+`set_password` (the "related" note under F6). It covers three sinks: the client's 4xx
+excerpt, `ParamAPI.set`'s unexpected-reply excerpt (it used a literal replace that missed a
+form-encoded echo), and `UsersAPI._check_reply`'s 200 `Error` text. The device's own
+`# Error: Error setting '<name>' to '<value>'!` keeps the scoped D4 replace, so the parameter
+name stays readable.
+
+**D14 (F7). The audit withholds before it cuts.** `_unreadable` cuts a library message to
+120 characters for the table. It now goes through `error_excerpt(..., password=<the
+device's configured password>, limit=120)`, so a message that holds the password in any
+spelling is withheld whole. Before, the cut could leave a password fragment that the MCP
+`Scrubber` (whole strings only) does not recognise. The audit's catalogue stand-in device
+gained `client.password = ""`. The F12 sinks (2xx error text quoted uncut) stay filed; this
+keeps them out of audit output in any case.
+
+**Redirects.** httpx turns a POST answered with 301/302/303 into a bodyless GET. The device
+then answers `action must be specified`, and `set()` reports the change as failed, never
+as a silent success (tested). A 307/308 re-sends the body to the target the first hop chose;
+that hop already received it, so this is a stated limit, not an escalation.
+
+Each defence was proven load-bearing by removing it (13 mutations, each turns at least one
+named test red; `$KIROCREW_SCRATCH/mutate_f6f7.py` during the change). One mutation first
+survived because two same-size edits of one file within a second reused a stale `.pyc`.
+With a fresh bytecode cache per run it is caught.
+
+**Filed (F14), found during the live check:** the I8016-LVE answers **HTTP 401** to an
+update of a read-only parameter (`Image.I0.Name`, `securityLevel` 7707, `readonly="true"`),
+by GET and by POST alike, where the cameras answer the documented `# Error`. `ParamAPI.set`
+therefore raises `AxisAuthenticationError` ("check username/password"), which
+`apply_param_restore` treats as fatal. Plans skip read-only parameters when `listdefinitions`
+is readable, so a restore only meets this when definitions are missing. Recommended fix: on a
+401 to an update, re-read the parameter with the same client, and if that read succeeds,
+report a per-parameter refusal rather than an authentication failure. This does not affect
+fresh clones, CI or other devices.

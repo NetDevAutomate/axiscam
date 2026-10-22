@@ -9,8 +9,9 @@ sends ``responseformat=rfc`` as the documentation asks.
 
 Parameters are read with ``action=list`` and written one at a time with
 ``action=update`` (:meth:`ParamAPI.set`), which is the only write the module
-offers; the restore path in :mod:`axis_cam.restore` drives it through the
-plan → confirm → apply → verify pattern.
+offers. An update travels in a POST form body, never in the URL. The restore
+path in :mod:`axis_cam.restore` drives it through the plan → confirm → apply →
+verify pattern.
 """
 
 from dataclasses import dataclass
@@ -22,7 +23,7 @@ from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
 from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
 from axis_cam.models import DeviceParameter, ParameterGroup
-from axis_cam.secrets import MIN_PASSWORD, REDACTED, is_secret_name
+from axis_cam.secrets import MIN_PASSWORD, REDACTED, error_excerpt, is_secret_name
 
 ROOT_PREFIX = "root."
 
@@ -299,7 +300,12 @@ class ParamAPI(BaseAPI):
         return parse_param_definitions(await self._get_text(self.CGI_PATH, params))
 
     async def set(self, param_name: str, value: str) -> None:
-        """Update one existing parameter (``action=update``).
+        """Update one existing parameter (``action=update``), in a POST form body.
+
+        The arguments never go in the URL: a credential parameter's value would
+        reach the device access log, httpx's request log, any proxy's log and a
+        peer that echoes URLs. param.cgi reads a form body exactly as it reads
+        the query string (VAPIX: GET/POST; live on AXIS OS 11 and 12, 2026-10-22).
 
         The device answers HTTP 200 with ``OK`` on success and HTTP 200 with
         ``# Error: Error setting '<group.name>' to '<value>'!`` when it refuses
@@ -312,21 +318,25 @@ class ParamAPI(BaseAPI):
             value: New value, as a string.
 
         Raises:
-            AxisDeviceError: The device refused the update (``# Error`` body).
-                For a credential-named parameter the value is withheld from the
-                message: the device's refusal quotes it.
+            AxisDeviceError: The device refused the update (``# Error`` body), or
+                answered something else (a redirect turns the POST into a
+                bodyless GET, which never reads ``OK``). For a credential-named
+                parameter the value is withheld from the message: the device's
+                refusal quotes it, and an echoing peer may re-spell it.
             AxisAuthenticationError / AxisConnectionError: Propagate.
         """
-        params: dict[str, Any] = {"action": "update", short_name(param_name): value}
-        raw = (await self._get_text(self.CGI_PATH, params)).strip()
+        name = short_name(param_name)
+        secrets = (value,) if value and is_secret_name(param_name) else ()
+        raw = (
+            await self._post_form(self.CGI_PATH, {"action": "update", name: value}, secrets=secrets)
+        ).strip()
         if raw == "OK":  # decided before any redaction: a value can spell "OK"
             return
-        body = raw
-        if value and is_secret_name(param_name):
-            body = _withhold_value(body, short_name(param_name), value)
         if raw.startswith("# Error"):
+            body = _withhold_value(raw, name, value) if secrets else raw
             raise AxisDeviceError(f"param.cgi: {body.removeprefix('#').strip()}")
-        raise AxisDeviceError(f"param.cgi: unexpected reply to update: {body[:120]!r}")
+        excerpt = error_excerpt(raw, password=self._client.password, secrets=secrets, limit=120)
+        raise AxisDeviceError(f"param.cgi: unexpected reply to update: {excerpt!r}")
 
     # Convenience methods for common parameters
 

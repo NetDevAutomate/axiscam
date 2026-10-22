@@ -12,6 +12,7 @@ contract generic code relies on is the structural
 :class:`~axis_cam.api.registry.ResourceModule` protocol.
 """
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from axis_cam.exceptions import AxisApiNotSupportedError
@@ -151,13 +152,17 @@ class BaseAPI:
         response = await self._client.get(path, params)
         return response.text
 
-    async def _post_form(self, path: str, data: dict[str, Any]) -> str:
+    async def _post_form(
+        self, path: str, data: dict[str, Any], *, secrets: Iterable[str] = ()
+    ) -> str:
         """POST form-encoded data and return the body as text.
 
         Use this for CGIs that take credentials or other secrets: form data
         travels in the request body, never in the URL (device access logs,
-        proxies, shell history). The text is what the device sent, as for
+        proxies, httpx's request log, shell history). Name the credentials the
+        form carries in ``secrets``, so an error page that quotes the body back
+        is withheld rather than quoted. The text is what the device sent, as for
         :meth:`_get_text`.
         """
-        response = await self._client.post(path, data=data)
+        response = await self._client.post(path, data=data, secrets=secrets)
         return response.text

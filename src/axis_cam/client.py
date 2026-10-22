@@ -9,6 +9,7 @@ endpoints introduced in AXIS OS 11.x.
 """
 
 import re
+from collections.abc import Iterable
 from typing import Any
 
 import httpx
@@ -226,6 +227,8 @@ class VapixClient:
         path: str,
         data: dict[str, Any] | None = None,
         json: dict[str, Any] | None = None,
+        *,
+        secrets: Iterable[str] = (),
     ) -> httpx.Response:
         """Perform a POST request.
 
@@ -233,6 +236,10 @@ class VapixClient:
             path: URL path.
             data: Form data to send.
             json: JSON data to send.
+            secrets: Credentials ``data`` carries (a parameter update's value, a
+                new account password). An error excerpt that quotes one of them,
+                in any common spelling, is withheld: a peer that echoes the form
+                body on a 4xx must not put it into a message.
 
         Returns:
             HTTP response object.
@@ -247,7 +254,7 @@ class VapixClient:
 
         try:
             response = await client.post(url, data=data, json=json)
-            self._check_response(response, path=path)
+            self._check_response(response, path=path, secrets=tuple(secrets))
             return response
         except httpx.ConnectError as e:
             raise self._connection_error(e) from e
@@ -431,6 +438,7 @@ class VapixClient:
         path: str | None = None,
         raise_on_error_status: bool = True,
         scan_reply: bool = True,
+        secrets: tuple[str, ...] = (),
     ) -> None:
         """Check HTTP response for errors.
 
@@ -453,6 +461,8 @@ class VapixClient:
                 for binary downloads (snapshots, server reports), which are
                 still scanned when the reply says it is text: an echo page
                 always is.
+            secrets: Credentials the request carried in its body; an error
+                excerpt that quotes one is withheld (:func:`error_excerpt`).
 
         Raises:
             AxisEchoError: The reply quotes credentials this client sent.
@@ -491,7 +501,7 @@ class VapixClient:
                 f"Access denied to {self.host}: this account may not use {where} (403)."
             )
         if response.status_code >= 400 and raise_on_error_status:
-            excerpt = error_excerpt(response.text, password=self.password)
+            excerpt = error_excerpt(response.text, password=self.password, secrets=secrets)
             raise AxisDeviceError(
                 f"Device error {response.status_code} from {self.host}: {excerpt}"
             )

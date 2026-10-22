@@ -45,6 +45,15 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   `OK` into an error when the value spells part of it. `backup restore` no longer
   prints a credential parameter's value, neither the one written nor the one
   read back.
+- `ParamAPI.set` sends the update in a POST form body instead of the GET query
+  string, so a parameter's value (a credential with `restore --include-secrets`)
+  no longer reaches the device access log, httpx's request log, a proxy's log or
+  a peer that echoes URLs. Confirmed live first: param.cgi reads a form body
+  exactly as the query string on AXIS OS 11 (C1410, Digest) and 12 (M3216-LVE,
+  I8016-LVE). An error excerpt that quotes a credential the request carried (the
+  update's value, a `pwdgrp` `pwd`) is withheld like the configured password, and
+  the security audit withholds before it cuts a message, so the cut cannot leave
+  a password fragment that the MCP scrubber does not recognise.
 - `backup restore` re-reads the device before writing and refuses, writing
   nothing, if the serial number differs or a planned parameter changed since the
   plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.

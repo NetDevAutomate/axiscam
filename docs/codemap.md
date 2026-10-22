@@ -282,7 +282,7 @@ so the device layer never passes `use_https` directly.
 | Method | Returns | Notes |
 |---|---|---|
 | `get(path, params)` | `httpx.Response` | Raw GET |
-| `post(path, data, json)` | `httpx.Response` | Raw POST |
+| `post(path, data, json, *, secrets)` | `httpx.Response` | Raw POST; an error excerpt quoting a named secret is withheld |
 | `get_json(path, params)` | `dict` | GET + JSON parse |
 | `post_json(path, data, json_data)` | `dict` | POST + JSON parse |
 | `get_raw(path, params)` | `bytes` | GET binary content |

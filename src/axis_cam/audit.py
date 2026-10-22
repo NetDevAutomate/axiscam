@@ -23,6 +23,7 @@ the recommendation is satisfied by the setting's absence.
 from __future__ import annotations
 
 import asyncio
+import functools
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -37,6 +38,7 @@ from axis_cam.exceptions import (
     AxisPermissionError,
 )
 from axis_cam.models import OnvifUserLevel, UserRole
+from axis_cam.secrets import error_excerpt
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -714,17 +716,26 @@ def check_firmware(info: Any) -> Finding:
 
 
 def _unreadable(
-    check_id: str, title: str, severity: Severity, reference: str, exc: Exception
+    check_id: str,
+    title: str,
+    severity: Severity,
+    reference: str,
+    exc: Exception,
+    *,
+    password: object = None,
 ) -> Finding:
     reason = f"{type(exc).__name__}: {exc}"
     if isinstance(exc, AxisPermissionError):
         reason = f"this account may not read it ({exc})"
     elif isinstance(exc, AxisApiNotSupportedError | AxisDeviceError):
         status = re.search(r"Device error (\d{3})", str(exc))
+        # Cut for the table, but withhold first: a cut through the configured
+        # password leaves a fragment no downstream scrubber recognises (F7).
         reason = (
             f"the device answered HTTP {status.group(1)} for this API"
             if status
-            else f"the device did not answer this API ({str(exc)[:120]})"
+            else f"the device did not answer this API "
+            f"({error_excerpt(str(exc), password=password, limit=120)})"
         )
     return Finding(
         check_id,
@@ -759,6 +770,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
         device_name=device_name or device.client.host,
         generated_at=datetime.now(UTC).isoformat(timespec="seconds"),
     )
+    unreadable = functools.partial(_unreadable, password=device.client.password)
 
     # Parameter tree: one read, many checks.
     params, exc = await _read(device.params.export)
@@ -772,7 +784,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
     else:
         for check in PARAM_CHECKS:
             report.findings.append(
-                _unreadable(check.check_id, check.title, check.severity, check.reference, exc)
+                unreadable(check.check_id, check.title, check.severity, check.reference, exc)
             )
         for cid, title, sev, ref in (
             (
@@ -800,7 +812,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
                 "Extended hardening → Remote syslog",
             ),
         ):
-            report.findings.append(_unreadable(cid, title, sev, ref, exc))
+            report.findings.append(unreadable(cid, title, sev, ref, exc))
 
     # Readers, in parallel: each failure is its own UNKNOWN.
     readers: dict[str, Callable[[], Awaitable[Any]]] = {
@@ -823,7 +835,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
         report.findings.append(check_firmware(info))
     else:
         report.findings.append(
-            _unreadable(
+            unreadable(
                 "firmware.version",
                 "AXIS OS version",
                 Severity.INFO,
@@ -837,7 +849,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
         report.findings.extend(check_accounts(accounts, device.client.username))
     else:
         report.findings.append(
-            _unreadable(
+            unreadable(
                 "accounts.dedicated_client_account",
                 "A non-administrator account exists for daily operation",
                 Severity.MEDIUM,
@@ -850,7 +862,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
     report.findings.append(
         check_onvif_users(users)
         if exc is None
-        else _unreadable("onvif.users", "ONVIF user database", Severity.INFO, "ONVIF", exc)
+        else unreadable("onvif.users", "ONVIF user database", Severity.INFO, "ONVIF", exc)
     )
 
     snmp, exc = results["snmp"]
@@ -858,7 +870,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
         report.findings.extend(check_snmp(snmp))
     else:
         report.findings.append(
-            _unreadable(
+            unreadable(
                 "snmp.legacy_versions",
                 "SNMP v1/v2c disabled (SNMPv3 only)",
                 Severity.MEDIUM,
@@ -871,7 +883,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
     report.findings.append(
         check_firewall(firewall)
         if exc is None
-        else _unreadable(
+        else unreadable(
             "network.firewall",
             "Firewall activated with a DROP default policy",
             Severity.MEDIUM,
@@ -884,7 +896,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
     report.findings.append(
         check_crypto_policy(policy)
         if exc is None
-        else _unreadable(
+        else unreadable(
             "tls.crypto_policy",
             "System cryptographic policy is MODERN or FIPS",
             Severity.LOW,
@@ -897,7 +909,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
     report.findings.append(
         check_ntp(ntp)
         if exc is None
-        else _unreadable(
+        else unreadable(
             "time.ntp_synced",
             "NTP enabled and synchronised",
             Severity.MEDIUM,
@@ -911,7 +923,7 @@ async def run_audit(device: AxisDevice, *, device_name: str = "") -> AuditReport
         report.findings.extend(check_certificates(store))
     else:
         report.findings.append(
-            _unreadable(
+            unreadable(
                 "cert.expiry",
                 f"No device certificate expires within {CERT_EXPIRY_WARNING_DAYS} days",
                 Severity.MEDIUM,
@@ -951,6 +963,7 @@ class _CatalogueDevice:
     class client:
         host = "catalogue"
         username = ""
+        password = ""
 
     def __getattr__(self, name: str) -> _Unread:
         return _Unread()
