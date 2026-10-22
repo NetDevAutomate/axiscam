@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 import mcp.types as t
 from mcp import Client
 
+from axis_cam.exceptions import AxisParamNotWritableError
 from axis_cam.mcp_server.plans import PlanStore
 from axis_cam.mcp_server.server import build_server
 from axis_cam.models import UserAccount, UserAccounts, UserRole
@@ -120,6 +121,47 @@ class TestRestore:
         assert CANARY not in human.seen[0]
         # and the handle cannot be replayed
         assert second.is_error is True
+
+    async def test_an_unwritable_parameter_makes_the_apply_partial(self, tmp_path: Path) -> None:
+        # F14: one parameter the account may not write is that parameter's row; the
+        # other change still lands and the tool does not fail.
+        resolver = two_cameras()
+        dev, state = _writable(resolver)
+        written = dev.params.set.side_effect
+
+        async def refusing_set(param: str, value: str) -> None:
+            if param == "root.SNMP.Enabled":
+                raise AxisParamNotWritableError(f"param.cgi: {param} is not writable here")
+            await written(param, value)
+
+        dev.params.set = AsyncMock(side_effect=refusing_set)
+        async with Client(
+            build_server(resolver, backup_root=tmp_path), elicitation_callback=Human()
+        ) as client:
+            backup_id = (
+                await client.call_tool("backup_create", {"device": "back_of_house"})
+            ).structured_content["backup_id"]
+            state["root.SNMP.Enabled"] = "yes"  # two parameters drift after the backup
+            state["root.Image.I0.Name"] = "Changed"
+            plan = (
+                await client.call_tool(
+                    "plan_restore", {"device": "back_of_house", "backup_id": backup_id}
+                )
+            ).structured_content
+            result = await client.call_tool("apply_plan", {"plan_id": plan["plan_id"]})
+
+        assert result.is_error is False, _text(result)
+        body = result.structured_content
+        assert body["status"] == "partial"
+        assert sorted(body["results"], key=lambda r: r["name"]) == [
+            {"name": "root.Image.I0.Name", "ok": True, "detail": "verified"},
+            {
+                "name": "root.SNMP.Enabled",
+                "ok": False,
+                "detail": "param.cgi: root.SNMP.Enabled is not writable here",
+            },
+        ]
+        assert state["root.Image.I0.Name"] == "View Area 1"
 
     async def test_declined_writes_nothing_and_keeps_the_plan(self, tmp_path: Path) -> None:
         for human in (Human(action="decline"), Human(action="cancel"), Human(approve=False)):

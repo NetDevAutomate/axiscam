@@ -7,9 +7,16 @@ exception handling when needed.
 Exception Hierarchy:
     AxisError (base)
     ├── AxisConnectionError - Network/connectivity issues
-    ├── AxisAuthenticationError - Authentication failures
+    │   └── AxisEchoError - A reply quoted the request's credentials
+    ├── AxisAuthenticationError - Credentials refused (401)
+    │   └── AxisPermissionError - This account may not use an API (403)
     ├── AxisDeviceError - Device-specific errors
-    └── AxisConfigError - Configuration issues
+    │   ├── AxisParamNotWritableError - This account may not write a parameter
+    │   ├── AxisSoapFault - A SOAP service answered with a Fault
+    │   └── AxisUserError - The device rejected an account operation
+    ├── AxisConfigError - Configuration issues
+    │   └── AxisLockoutError - A change would lock the caller out
+    └── AxisApiNotSupportedError - The device does not offer an API
 """
 
 
@@ -151,6 +158,23 @@ class AxisSoapFault(AxisDeviceError):
         self.code = code
         self.subcodes = subcodes
         self.reason = reason
+
+
+class AxisParamNotWritableError(AxisDeviceError):
+    """param.cgi refused an update although a read proves the credentials work.
+
+    AXIS OS 11 and 12 answer HTTP **401** to an update of a parameter this
+    account may not write (live, 2026-10-22: ``Brand.Brand``, which nobody may
+    write, on every device, and the I8016-LVE's read-only ``Image.I0.Name``).
+    RFC 9110 reserves 401 for refused credentials and calls for 403 here, so
+    the status alone looks like a wrong password.
+    :meth:`~axis_cam.api.param.ParamAPI.set` reads once with the same
+    credentials; when that read succeeds, the refusal is about this one
+    parameter. It is a device error so a restore records it per parameter and
+    carries on.
+    """
+
+    pass
 
 
 class AxisUserError(AxisDeviceError):

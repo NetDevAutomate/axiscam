@@ -359,3 +359,35 @@ class TestRestore:
         assert result.exit_code == 1
         text = _text(result)
         assert "Restored 1/2" in text and "Error setting" in text
+
+    def test_an_unwritable_parameter_is_one_row_not_a_login_failure(self, no_config, tmp_path):
+        # F14: the device answers 401 to an update the account may not write. That is
+        # reported in the table like any refusal; the run neither stops nor blames
+        # the password.
+        from axis_cam.exceptions import AxisParamNotWritableError
+
+        root = self._backup(
+            tmp_path,
+            dict(self.CURRENT, **{"root.Audio.MaxListeners": "20", "root.Image.Compression": "40"}),
+        )
+        device = self._device()
+        params = device.params  # type: ignore[attr-defined]
+        params.export = AsyncMock(
+            return_value=dict(self.CURRENT, **{"root.Image.Compression": "30"})
+        )
+        original_set = params.set.side_effect
+
+        async def refusing_set(name, value):
+            if name == "root.Audio.MaxListeners":
+                raise AxisParamNotWritableError(f"param.cgi: {name} is not writable here")
+            await original_set(name, value)
+
+        params.set = AsyncMock(side_effect=refusing_set)
+
+        result = self._run(device, [str(root), "--yes"])
+
+        assert result.exit_code == 1
+        text = _text(result)
+        assert "Restored 1/2" in text and "not writable" in text
+        assert "username/password" not in text
+        assert params.set.await_count == 2  # the second change was still written

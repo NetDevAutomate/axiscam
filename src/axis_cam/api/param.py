@@ -22,11 +22,20 @@ from defusedxml import ElementTree as DefusedElementTree
 
 from axis_cam.api.base import BaseAPI
 from axis_cam.api.registry import register
-from axis_cam.exceptions import AxisApiNotSupportedError, AxisDeviceError
+from axis_cam.exceptions import (
+    AxisApiNotSupportedError,
+    AxisAuthenticationError,
+    AxisDeviceError,
+    AxisParamNotWritableError,
+    AxisPermissionError,
+)
 from axis_cam.models import DeviceParameter, ParameterGroup
 from axis_cam.secrets import MIN_PASSWORD, REDACTED, error_excerpt, is_secret_name
 
 ROOT_PREFIX = "root."
+#: Read to prove the credentials after an update was answered 401
+#: (:meth:`ParamAPI.set`): every Axis device has it, and anyone may read it.
+CREDENTIAL_CHECK_PARAM = "root.Brand.Brand"
 
 
 def _withhold_value(body: str, name: str, value: str) -> str:
@@ -319,33 +328,49 @@ class ParamAPI(BaseAPI):
 
         The device answers HTTP 200 with ``OK`` on success and HTTP 200 with
         ``# Error: Error setting '<group.name>' to '<value>'!`` for a parameter
-        it does not have (and, per VAPIX, an invalid value). A parameter nobody
-        may write (``listdefinitions`` write level 7, e.g. ``Brand.Brand``) gets
-        **HTTP 401** instead, on AXIS OS 11 and 12 alike (live, 2026-10-22),
-        which raises :class:`AxisAuthenticationError`; check
-        ``ParamDefinition.writable`` first (filed as F14). Only the device knows
-        which parameters are writable; callers should treat a refusal as a
-        per-parameter fact, not a transport failure.
+        it does not have (and, per VAPIX, an invalid value). A parameter this
+        account may not write (``listdefinitions`` write level 7, e.g.
+        ``Brand.Brand``) gets **HTTP 401** instead, on AXIS OS 11 and 12 alike
+        (live, 2026-10-22). RFC 9110 keeps 401 for refused credentials, so a 401
+        here is checked with one read using the same credentials: if that read
+        succeeds, the refusal is this parameter's
+        (:class:`AxisParamNotWritableError`); if not, it is the login's. The
+        device logs the update's 401 as a param.cgi refusal, not as a failed
+        login. Only the device knows which parameters are writable; callers
+        should treat a refusal as a per-parameter fact, not a transport failure.
 
         Args:
             param_name: Full or short name.
             value: New value, as a string.
 
         Raises:
+            AxisParamNotWritableError: This account may not write the parameter
+                (an ``AxisDeviceError``: a per-parameter fact).
             AxisDeviceError: The device refused the update (``# Error`` body), or
                 answered something else (a redirect turns the POST into a
                 bodyless GET, which never reads ``OK``). For a credential-named
                 parameter the value is withheld from the message: the device's
                 refusal quotes it, and an echoing peer may re-spell it.
-            AxisAuthenticationError: Wrong credentials, or a parameter nobody
-                may write (the device answers 401; see above).
+            AxisAuthenticationError: The credentials were refused (the 401 to
+                the update, when a read with them fails as well).
             AxisConnectionError: Propagate.
         """
         name = short_name(param_name)
         secrets = (value,) if value and is_secret_name(param_name) else ()
-        raw = (
-            await self._post_form(self.CGI_PATH, {"action": "update", name: value}, secrets=secrets)
-        ).strip()
+        try:
+            reply = await self._post_form(
+                self.CGI_PATH, {"action": "update", name: value}, secrets=secrets
+            )
+        except AxisPermissionError:
+            raise  # 403: never seen from param.cgi; the caller decides (F14 is about 401)
+        except AxisAuthenticationError:
+            if not await self._credentials_accepted():
+                raise  # the same credentials cannot read either: the 401 means what it says
+            raise AxisParamNotWritableError(
+                f"param.cgi: {full_name(param_name)} is not writable by this account "
+                "(the update was answered HTTP 401; a read with the same credentials succeeded)"
+            ) from None
+        raw = reply.strip()
         if raw == "OK":  # decided before any redaction: a value can spell "OK"
             return
         if raw.startswith("# Error"):
@@ -353,6 +378,28 @@ class ParamAPI(BaseAPI):
             raise AxisDeviceError(f"param.cgi: {body.removeprefix('#').strip()}")
         excerpt = error_excerpt(raw, password=self._client.password, secrets=secrets, limit=120)
         raise AxisDeviceError(f"param.cgi: unexpected reply to update: {excerpt!r}")
+
+    async def _credentials_accepted(self) -> bool:
+        """Whether param.cgi answers a read made with this client's credentials.
+
+        Asked after an update was answered 401 (:meth:`set`). ``usergroup=viewer``
+        makes the device demand credentials even where anonymous viewing is on
+        (VAPIX), so only a listing of :data:`CREDENTIAL_CHECK_PARAM` counts as
+        proof; any other answer is not, and the 401 stands. A connection error
+        (an echo included) propagates.
+        """
+        check = {
+            "action": "list",
+            "group": short_name(CREDENTIAL_CHECK_PARAM),
+            "usergroup": "viewer",
+            "responseformat": "rfc",
+        }
+        try:
+            return CREDENTIAL_CHECK_PARAM in parse_param_list(
+                await self._get_text(self.CGI_PATH, check)
+            )
+        except (AxisAuthenticationError, AxisDeviceError, AxisApiNotSupportedError):
+            return False
 
     # Convenience methods for common parameters
 
