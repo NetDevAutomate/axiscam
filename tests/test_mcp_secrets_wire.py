@@ -43,7 +43,10 @@ import pytest
 import respx
 from mcp import Client
 
+from axis_cam.api.param import ParamAPI
+from axis_cam.client import VapixClient
 from axis_cam.config import load_config
+from axis_cam.exceptions import AxisParamNotWritableError
 from axis_cam.mcp_server.devices import ConfigResolver
 from axis_cam.mcp_server.redact import REDACTED
 from axis_cam.mcp_server.server import TOOL_NAMES, build_server, resource_module_names
@@ -68,6 +71,7 @@ KEY_PASSWORD = "kp-2m6Td0HsWq"  # pragma: allowlist secret
 PARAM_SECRETS = (CANARY, READ_COMMUNITY, WRITE_COMMUNITY, KEY_PASSWORD)
 
 PARAMS: dict[str, str] = {
+    "root.Brand.Brand": "AXIS",
     "root.Brand.ProdNbr": "M3216-LVE",
     "root.Properties.System.SerialNumber": SERIAL,
     "root.Image.I0.Name": "View Area 1",
@@ -80,7 +84,9 @@ PARAMS: dict[str, str] = {
     "root.SNMP.WriteCommunity": WRITE_COMMUNITY,
 }
 #: listdefinitions securityLevel digits are add/remove/read/write: 7 nobody, 6 admin.
-READ_ONLY = frozenset({"root.Brand.ProdNbr", "root.Properties.System.SerialNumber"})
+READ_ONLY = frozenset(
+    {"root.Brand.Brand", "root.Brand.ProdNbr", "root.Properties.System.SerialNumber"}
+)
 
 Reflect = Literal["httpbin", "straddle", "urlencoded", "json-slash", "replay", "ok-echo"]
 
@@ -216,12 +222,12 @@ class Camera:
         expected = _md5(f"{ha1}:{NONCE}:{f['nc']}:{f['cnonce']}:{f['qop']}:{ha2}")
         return f.get("response") == expected
 
-    def _challenge(self) -> httpx.Response:
+    def _challenge(self, body: str = "Unauthorized\n") -> httpx.Response:
         if self.scheme == "basic":
             value = f'Basic realm="{REALM}"'
         else:
             value = f'Digest realm="{REALM}", nonce="{NONCE}", algorithm=MD5, qop="auth"'
-        return httpx.Response(401, headers={"WWW-Authenticate": value}, text="Unauthorized\n")
+        return httpx.Response(401, headers={"WWW-Authenticate": value}, text=body)
 
     # -- endpoints ---------------------------------------------------------------
 
@@ -250,9 +256,13 @@ class Camera:
         if action == "update":
             for short, value in query.items():
                 full = f"root.{short}"
-                if full not in self.params or full in READ_ONLY:
+                if full in READ_ONLY:
+                    # AXIS OS 11 and 12 (live, 2026-10-22): param.cgi's own 401, a
+                    # challenge with no body, for a parameter nobody may write.
+                    return self._challenge(body="")
+                if full not in self.params:
                     return httpx.Response(
-                        200, text=f"# Error: Error setting '{short}' to '{value}'!"
+                        200, text=f"# Error: Error setting '{full}' to '{value}'!"
                     )
                 self.params[full] = value
             return httpx.Response(200, text="OK")
@@ -656,3 +666,32 @@ async def test_a_peer_echoing_every_reply_never_reads_as_ok(
     status = (result.structured_content or {}).get("status")
     assert result.is_error or status != "ok", result.structured_content
     assert leaked(_text(result), [BASIC_TOKEN, CANARY]) == []
+
+
+# --- the library on the same wire ----------------------------------------------------
+
+
+@pytest.mark.parametrize("scheme", ["basic", "digest"])
+async def test_an_unwritable_parameter_is_its_own_refusal_over_either_scheme(
+    scheme: Literal["basic", "digest"],
+) -> None:
+    # F14 through the real client and AUTO authentication: the camera answers an
+    # update of a parameter nobody may write with param.cgi's own 401. A restore reads
+    # the device before it writes; with Digest settled, httpx's DigestAuth retries the
+    # 401 once (it spends its one retry on the unauthenticated first leg of a cold
+    # client's first request), which is the two log lines per update on the C1410.
+    camera = Camera(scheme)
+    with on_the_wire(camera):
+        async with VapixClient(HOST, USER, CANARY, port=443, use_https=True) as client:
+            api = ParamAPI(client)
+            assert await api.get("root.Image.I0.Name") == "View Area 1"  # as restore does
+            with pytest.raises(AxisParamNotWritableError) as caught:
+                await api.set("root.Brand.Brand", "Other")
+            await api.set("root.Image.I0.Name", "Hall")  # the client still works
+
+    assert camera.params["root.Brand.Brand"] == "AXIS"
+    assert camera.params["root.Image.I0.Name"] == "Hall"
+    assert "root.Brand.Brand" in str(caught.value) and "Other" not in str(caught.value)
+    assert leaked(str(caught.value), camera.needles()) == []
+    assert all(r.method == "POST" and r.url.query == b"" for r in camera.updates)
+    assert len(camera.updates) == (3 if scheme == "digest" else 2)

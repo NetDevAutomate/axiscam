@@ -22,7 +22,14 @@ from axis_cam.api.param import (
     short_name,
 )
 from axis_cam.client import VapixClient
-from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError
+from axis_cam.exceptions import (
+    AxisAuthenticationError,
+    AxisConnectionError,
+    AxisDeviceError,
+    AxisEchoError,
+    AxisParamNotWritableError,
+    AxisPermissionError,
+)
 from axis_cam.models import DeviceParameter, ParameterGroup
 
 # From the VAPIX page, example 3 ("only a small part of the response is shown").
@@ -384,3 +391,145 @@ class TestUpdateOnTheWire:
 
         assert post.call_count == 1
         assert get.calls.last.request.url.query == b""  # the redirect dropped the update
+
+
+REALM = 'Basic realm="AXIS_ACCC8E000001"'
+
+
+def _unwritable_401(request: httpx.Request) -> httpx.Response:
+    """param.cgi's own 401 to an update the account may not write (live, AXIS OS 11/12).
+
+    A challenge, no body, no content type. The device logs it as ``param.cgi-transfer:
+    unauthorized in an iteration``, never as a failed login.
+    """
+    return httpx.Response(401, headers={"WWW-Authenticate": REALM})
+
+
+def _login_401(request: httpx.Request) -> httpx.Response:
+    """The web server's 401 to credentials it rejects: a challenge and an HTML page."""
+    return httpx.Response(
+        401,
+        headers={"WWW-Authenticate": REALM, "Content-Type": "text/html; charset=iso-8859-1"},
+        text="<html><head><title>401 Unauthorized</title></head><body>Unauthorized</body></html>",
+    )
+
+
+def _brand_listing(request: httpx.Request) -> httpx.Response:
+    return httpx.Response(200, text="Brand.Brand=AXIS\n")  # a single parameter echoes unprefixed
+
+
+def _refused(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("[Errno 61] Connection refused", request=request)
+
+
+class TestUnwritableParameter:
+    """F14: an update the account may not write is a per-parameter refusal, not a login failure.
+
+    Live, 2026-10-22: every device with param.cgi (AXIS OS 11 and 12, Basic and Digest)
+    answers HTTP 401 to an update of ``Brand.Brand``, which nobody may write, and the
+    I8016-LVE also to its read-only ``Image.I0.Name``. RFC 9110 reserves 401 for refused
+    credentials and calls for 403 when valid credentials are not enough, so the status
+    alone cannot tell this from a wrong password. ``set()`` reads once with the same
+    credentials: only a listing proves them; anything else leaves the 401 as it was.
+    """
+
+    VALUE = "Zq9-unwritable-value"
+
+    @respx.mock
+    async def test_a_401_with_working_credentials_is_a_per_parameter_refusal(self):
+        update = respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_unwritable_401)
+        check = respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_brand_listing)
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisParamNotWritableError) as caught:
+                await ParamAPI(client).set("Brand.Brand", self.VALUE)
+
+        assert isinstance(caught.value, AxisDeviceError)  # restore records it per parameter
+        assert not isinstance(caught.value, AxisAuthenticationError)
+        message = str(caught.value)
+        assert "root.Brand.Brand" in message and "not writable" in message
+        assert self.VALUE not in message  # a value is never quoted: it may be a credential
+        assert update.call_count == 1 and check.call_count == 1
+        args = check.calls.last.request.url.params
+        assert (args["action"], args["group"], args["usergroup"]) == (
+            "list",
+            "Brand.Brand",
+            "viewer",
+        )
+
+    @respx.mock
+    async def test_a_rejected_login_is_still_an_authentication_error(self):
+        respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_login_401)
+        check = respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_login_401)
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisAuthenticationError, match="Check username/password") as caught:
+                await ParamAPI(client).set("Image.I0.Name", "Hall")
+
+        assert not isinstance(caught.value, AxisParamNotWritableError)
+        # One read: a wrong password costs one more failed login, never one per parameter.
+        assert check.call_count == 1
+
+    @pytest.mark.parametrize(
+        "answer",
+        [
+            lambda request: httpx.Response(
+                200, text="<html>portal</html>", headers={"Content-Type": "text/html"}
+            ),
+            lambda request: httpx.Response(200, text="# Error: Error -1 getting param\n"),
+            lambda request: httpx.Response(500, text="Internal Server Error"),
+            lambda request: httpx.Response(403, text="Forbidden"),
+        ],
+        ids=["html-200", "error-line", "http-500", "http-403"],
+    )
+    @respx.mock
+    async def test_anything_but_a_listing_is_not_proof(self, answer):
+        # Fail closed: without proof the 401 stays an authentication error and the
+        # run stops, as before F14.
+        respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_unwritable_401)
+        respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=answer)
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisAuthenticationError) as caught:
+                await ParamAPI(client).set("Image.I0.Name", "Hall")
+
+        assert not isinstance(caught.value, AxisParamNotWritableError | AxisPermissionError)
+        assert "Check username/password" in str(caught.value)  # the update's own 401
+
+    @respx.mock
+    async def test_a_connection_failure_during_the_check_propagates(self):
+        respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_unwritable_401)
+        respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_refused)
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisConnectionError):
+                await ParamAPI(client).set("Image.I0.Name", "Hall")
+
+    @respx.mock
+    async def test_an_echo_during_the_check_is_refused(self):
+        respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_unwritable_401)
+        respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(
+            side_effect=lambda request: httpx.Response(
+                200, text=f"Brand.Brand=AXIS\nroot.Debug.Seen={request.headers['Authorization']}\n"
+            )
+        )
+
+        async with VapixClient(
+            "192.0.2.10", "root", "Check-Echo~T3st", port=443, use_https=True, auth_mode="basic"
+        ) as client:
+            with pytest.raises(AxisEchoError):
+                await ParamAPI(client).set("Image.I0.Name", "Hall")
+
+    @respx.mock
+    async def test_a_403_to_the_update_is_left_alone(self):
+        # RFC 9110's own "credentials not enough", never seen from param.cgi: no check,
+        # and the caller decides.
+        respx.post(f"{WIRE}/axis-cgi/param.cgi").mock(
+            side_effect=lambda request: httpx.Response(403, text="Forbidden")
+        )
+        check = respx.get(f"{WIRE}/axis-cgi/param.cgi").mock(side_effect=_brand_listing)
+
+        async with _wire_client() as client:
+            with pytest.raises(AxisPermissionError):
+                await ParamAPI(client).set("Image.I0.Name", "Hall")
+        assert check.call_count == 0

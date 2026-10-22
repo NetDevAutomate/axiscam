@@ -60,6 +60,17 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   actually sends: AXIS OS 12 quotes the parameter's *full* name (`root.…`), not
   the short one the VAPIX page shows. A value that was part of the name garbled it,
   and a value under 4 characters was quoted unredacted.
+- F14: an update of a parameter the account may not write (`Brand.Brand` on every
+  device; the I8016-LVE's read-only `Image.I0.Name`) is one parameter's refusal
+  (`AxisParamNotWritableError`), no longer "Authentication failed ... check
+  username/password". AXIS OS answers such an update with HTTP 401, the status RFC
+  9110 keeps for refused credentials, so `ParamAPI.set` reads once with the same
+  credentials (`usergroup=viewer`): a listing proves them; anything else leaves the
+  401 an authentication error. `backup restore` and the MCP `apply_plan` now report
+  the parameter on its own row and carry on, where the run used to stop and lose the
+  rows of the changes it had already written. Verified live on all four devices with
+  `param.cgi`; the device logs these 401s as param.cgi refusals, never as failed
+  logins.
 - `backup restore` re-reads the device before writing and refuses, writing
   nothing, if the serial number differs or a planned parameter changed since the
   plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.

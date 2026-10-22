@@ -15,7 +15,12 @@ from axis_cam.api.param import ParamAPI, ParamDefinition, parse_param_definition
 from axis_cam.backup import MANIFEST_FILE, BackupFile, BackupManifest
 from axis_cam.client import VapixClient
 from axis_cam.devices.base import AxisDevice
-from axis_cam.exceptions import AxisAuthenticationError, AxisDeviceError, AxisEchoError
+from axis_cam.exceptions import (
+    AxisAuthenticationError,
+    AxisDeviceError,
+    AxisEchoError,
+    AxisParamNotWritableError,
+)
 from axis_cam.restore import (
     SERIAL_PARAM,
     ChangeResult,
@@ -618,3 +623,23 @@ class TestApply:
 
         with pytest.raises(AxisAuthenticationError):
             await apply_param_restore(device, plan)
+
+    async def test_an_unwritable_parameter_is_recorded_and_the_run_continues(self):
+        # F14: the device answered 401 to an update the account may not write, and
+        # set() proved the credentials work; that is one parameter's fact.
+        target = dict(
+            CURRENT,
+            **{"root.Audio.MaxListeners": "20", "root.Image.I0.Appearance.Compression": "40"},
+        )
+        plan = diff_params(CURRENT, target)
+        refusal = AxisParamNotWritableError(
+            "param.cgi: root.Audio.MaxListeners is not writable by this account"
+        )
+        device = _device(CURRENT, set_results={"root.Audio.MaxListeners": refusal})
+
+        results = await apply_param_restore(device, plan)
+
+        assert [(r.change.name, r.ok, r.detail) for r in results] == [
+            ("root.Audio.MaxListeners", False, str(refusal)),
+            ("root.Image.I0.Appearance.Compression", True, "verified"),
+        ]

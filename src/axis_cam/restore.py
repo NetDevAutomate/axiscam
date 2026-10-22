@@ -152,7 +152,10 @@ def diff_params(
     With ``definitions`` (from :meth:`ParamAPI.definitions`), parameters the
     device declares read-only are skipped up front instead of being tried
     and refused; without them every differing parameter is a change and the
-    device's ``# Error`` reply decides at apply time. Credential parameters
+    device's refusal decides at apply time (a ``# Error`` reply, or HTTP 401
+    for a parameter the account may not write, which :meth:`ParamAPI.set`
+    reports as :class:`~axis_cam.exceptions.AxisParamNotWritableError`).
+    Credential parameters
     (:func:`axis_cam.secrets.is_secret_name`) are skipped unless
     ``include_secrets``: restoring an old community string or password over
     a rotated one is rarely what a restore means.
@@ -240,13 +243,16 @@ async def apply_param_restore(device: AxisDevice, plan: RestorePlan) -> list[Cha
     are named, never their values (some are credentials).
 
     A refusal by the device (``# Error`` body — a value it will not accept, or
-    a parameter its definitions did not flag) is recorded for that change and
-    the run continues with the next. A mismatch on re-read is recorded as a
-    failure too: the device said OK but did not keep the value.
+    a parameter its definitions did not flag — or
+    :class:`~axis_cam.exceptions.AxisParamNotWritableError`, the 401 AXIS OS
+    sends for a parameter this account may not write) is recorded for that
+    change and the run continues with the next. A mismatch on re-read is
+    recorded as a failure too: the device said OK but did not keep the value.
 
     Raises:
         RestoreDriftError: The device changed since the plan, or is another device.
-        AxisAuthenticationError / AxisConnectionError: Propagate immediately.
+        AxisAuthenticationError / AxisConnectionError: Propagate immediately
+            (the results of changes already written are lost: F15).
     """
     if not plan.changes:
         return []

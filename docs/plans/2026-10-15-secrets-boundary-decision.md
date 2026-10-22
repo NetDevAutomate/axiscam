@@ -338,7 +338,7 @@ spellings, and two mutations (short-only, full-only) each turn them red. This is
 lesson as the `param.cgi` single-parameter echo: a fixture copied from the documentation
 encodes a belief about the device, and only the device's own reply settles it.
 
-**Filed (F14), found during the live check:** every device answers **HTTP 401** to an update
+**Filed (F14), found during the live check** (fixed the same day, D17 below)**:** every device answers **HTTP 401** to an update
 of a parameter nobody may write (`securityLevel` write digit 7), by GET and by POST alike, so
 it predates this change. Seen on `Brand.Brand` (7707) on all four devices with `param.cgi`,
 and on the I8016-LVE's `Image.I0.Name` (7707, `readonly="true"`; writable on the cameras).
@@ -349,3 +349,84 @@ restore only meets this when definitions are missing. Recommended fix: on a 401 
 re-read the parameter with the same client, and if that read succeeds, report a
 per-parameter refusal rather than an authentication failure. This does not affect fresh
 clones or CI.
+
+## F14: fixed (2026-10-22, branch `param-unwritable-401`)
+
+**D17. A 401 to an update is checked with one read using the same credentials.** RFC 9110
+§15.5.2 keeps 401 for refused credentials, and §11.4 says that "a server that receives
+valid credentials that are not adequate to gain access ought to respond with 403". AXIS OS
+answers 401 for both, so the status cannot tell a wrong password from an unwritable
+parameter. `ParamAPI.set` therefore reads `Brand.Brand` once with the same credentials. Every
+Axis device has that parameter, and anyone may read it (level 7707). The read carries
+`usergroup=viewer`, the VAPIX way to make the device demand credentials even when anonymous
+viewing is on.
+
+- **A listing proves the credentials.** The refusal then belongs to that parameter:
+  `AxisParamNotWritableError(AxisDeviceError)`. Its message names the parameter and never
+  the value. `apply_param_restore` already records any `AxisDeviceError` per change, so
+  restore needed no logic change. `backup restore` prints the refusal as one row, and the MCP
+  `apply_plan` returns `partial`.
+- **Anything else leaves the 401 an authentication error, as before.** That covers a 401,
+  403 or 500, an HTML page, and a `# Error` line. This fail-closed direction matters. If a
+  wrong password were misread as a per-parameter refusal, the restore would carry on, and
+  every remaining parameter would cost one more failed login. With the check, a wrong
+  password costs exactly one extra read before the run stops.
+- **A connection error during the check propagates,** an `AxisEchoError` included. It is
+  never mistaken for missing proof.
+- **A 403 to an update is left alone.** It has never been observed from `param.cgi`, and
+  the caller decides.
+
+Evidence gathered before the design, all read-only or same-value:
+
+- The 401 for an unwritable update is `param.cgi`'s own. It has a challenge, no body and no
+  content type. The web server's 401 for missing or wrong credentials is a 421-byte HTML
+  page. That difference is undocumented, so it is not used.
+- The devices log these 401s as `param.cgi-transfer: unauthorized in an iteration` in the
+  system log, never as `Authentication failed` in the audit log. Today's runs across all
+  four devices produced no audit-log failed login, including on `back_of_house`, where
+  `System.PreventDoSAttack.ActivatePasswordThrottling=On`. Requests made right after each
+  401 were answered normally.
+- `System.BoaProtViewer=password` on all four devices, so anonymous viewing is off
+  everywhere. The `usergroup=viewer` safeguard for devices that do allow anonymous viewing
+  was checked to be accepted, but its effect on such a device could not be observed here.
+
+Live verification of the shipped code, all on the same day:
+
+- `set(Brand.Brand)` with its current value raised `AxisParamNotWritableError` on all four
+  devices, over Basic and over the C1410's Basic-then-Digest negotiation.
+- `set(Image.I0.Name)` with its current value raised the same on the I8016-LVE. On both
+  cameras it succeeded, and the read-back was unchanged.
+- An unknown parameter still raised the documented `# Error` as a plain `AxisDeviceError`.
+- `apply_param_restore` on `front_of_house` with a same-value plan for `Brand.Brand` and
+  `Image.I0.Name` returned one refused row and one verified row, without raising.
+- The audit logs since the start of the run showed 0 failed logins.
+
+Tests:
+
+- Through the real client (respx): the per-parameter case, a rejected login that stays an
+  authentication error, four kinds of non-proof, a connection error and an echo during the
+  check, and a 403.
+- Through the hermetic camera in the MCP wire test, over Basic and Digest in AUTO mode. Its
+  fake now answers an update of a read-only parameter with the device's 401 and quotes an
+  unknown one by its full name, as the live devices do.
+- At the restore, CLI and MCP `apply_plan` level: one row, the run continues, and the status
+  is `partial`.
+- Eight mutations, each turning at least one named test red: no check; the check always
+  failing; no `usergroup`; any 2xx counted as proof; a 403 also checked; connection errors
+  swallowed; the value quoted; the error class outside `AxisDeviceError`.
+
+**Filed (F15):** `apply_param_restore` loses the results of changes it has already written
+when an error that ends the run interrupts it: a connection drop, an echo, or credentials
+changed mid-run. The CLI and `apply_plan` then report only the error. The user is not told
+which parameters were already changed. F14 was the common way to reach this and is fixed.
+The rest is rare, but the device is left part-restored with no record. Recommended fix:
+raise a `RestoreInterruptedError` that carries the results so far and the cause. The CLI
+prints the partial table, and `apply_plan` returns status `interrupted` with the results.
+
+**Observed, not caused by this work (fleet, for Andy):** both cameras logged **61 failed
+logins as `root`**, once a minute from 00:00:45 to 01:00:45 BST on 2026-10-22. All were on
+`/axis-cgi/pwdgrp.cgi` ("Password mismatch"). The intercom logged one at 00:00:22 UTC, which
+is 01:00 BST. The devices show the source as 127.0.0.1 (their local proxy), so it cannot be
+traced from the device. One attempt a minute for exactly an hour, against `pwdgrp.cgi` (what
+`accounts list` reads), looks like a bounded scheduled job using an old root password. Look
+for a job that was running at midnight. None of today's F6, F7 or F14 work ran then.
