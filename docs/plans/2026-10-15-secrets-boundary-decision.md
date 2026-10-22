@@ -315,17 +315,25 @@ then answers `action must be specified`, and `set()` reports the change as faile
 as a silent success (tested). A 307/308 re-sends the body to the target the first hop chose;
 that hop already received it, so this is a stated limit, not an escalation.
 
-Each defence was proven load-bearing by removing it (13 mutations, each turns at least one
-named test red; `$KIROCREW_SCRATCH/mutate_f6f7.py` during the change). One mutation first
-survived because two same-size edits of one file within a second reused a stale `.pyc`.
-With a fresh bytecode cache per run it is caught.
+Each defence was proven load-bearing by removing it. 13 mutations, each turning at least one
+named test red: `set()` back to GET; the secret not passed on at each of its three hops
+(`set()`, `_post_form`, the client's 4xx excerpt); `error_excerpt` ignoring `secrets`;
+`set()`'s unexpected reply cut plainly; `_check_reply` quoting an echoed `pwd`; `add` and
+`set_password` not naming `pwd`, to the transport or to `_check_reply` (four); the audit
+cutting before withholding, or withholding without the configured password. One mutation
+first survived: the mutation runner rewrote the same file to the same size within one
+second, and Python reused the previous mutant's `.pyc` (a timestamp `.pyc` is valid when
+the source's whole-second mtime and size match). With a fresh bytecode cache per run
+(`PYTHONDONTWRITEBYTECODE=1`, a new `PYTHONPYCACHEPREFIX`) it is caught.
 
-**Filed (F14), found during the live check:** the I8016-LVE answers **HTTP 401** to an
-update of a read-only parameter (`Image.I0.Name`, `securityLevel` 7707, `readonly="true"`),
-by GET and by POST alike, where the cameras answer the documented `# Error`. `ParamAPI.set`
-therefore raises `AxisAuthenticationError` ("check username/password"), which
-`apply_param_restore` treats as fatal. Plans skip read-only parameters when `listdefinitions`
-is readable, so a restore only meets this when definitions are missing. Recommended fix: on a
-401 to an update, re-read the parameter with the same client, and if that read succeeds,
-report a per-parameter refusal rather than an authentication failure. This does not affect
-fresh clones, CI or other devices.
+**Filed (F14), found during the live check:** every device answers **HTTP 401** to an update
+of a parameter nobody may write (`securityLevel` write digit 7), by GET and by POST alike, so
+it predates this change. Seen on `Brand.Brand` (7707) on all four devices with `param.cgi`,
+and on the I8016-LVE's `Image.I0.Name` (7707, `readonly="true"`; writable on the cameras).
+The documented `# Error` line is what an *unknown* parameter gets. `ParamAPI.set` therefore
+raises `AxisAuthenticationError` ("check username/password"), which `apply_param_restore`
+treats as fatal. Plans skip read-only parameters when `listdefinitions` is readable, so a
+restore only meets this when definitions are missing. Recommended fix: on a 401 to an update,
+re-read the parameter with the same client, and if that read succeeds, report a
+per-parameter refusal rather than an authentication failure. This does not affect fresh
+clones or CI.

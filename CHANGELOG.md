@@ -53,7 +53,9 @@ decisions taken, is `docs/plans/2026-10-12-admin-and-modularity-review.md`.
   I8016-LVE). An error excerpt that quotes a credential the request carried (the
   update's value, a `pwdgrp` `pwd`) is withheld like the configured password, and
   the security audit withholds before it cuts a message, so the cut cannot leave
-  a password fragment that the MCP scrubber does not recognise.
+  a password fragment that the MCP scrubber does not recognise. Found on the way and
+  filed as F14: every device answers 401 to an update of a parameter nobody may write
+  (`Brand.Brand`), so `set()` reports it as an authentication failure.
 - `backup restore` re-reads the device before writing and refuses, writing
   nothing, if the serial number differs or a planned parameter changed since the
   plan (`RestoreDriftError`). The MCP `apply_plan` now uses the same library check.

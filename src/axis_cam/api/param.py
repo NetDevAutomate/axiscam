@@ -308,10 +308,14 @@ class ParamAPI(BaseAPI):
         the query string (VAPIX: GET/POST; live on AXIS OS 11 and 12, 2026-10-22).
 
         The device answers HTTP 200 with ``OK`` on success and HTTP 200 with
-        ``# Error: Error setting '<group.name>' to '<value>'!`` when it refuses
-        (read-only parameter, invalid value, insufficient rights). Only the
-        device knows which parameters are writable; callers should treat the
-        error as a per-parameter fact, not a transport failure.
+        ``# Error: Error setting '<group.name>' to '<value>'!`` for a parameter
+        it does not have (and, per VAPIX, an invalid value). A parameter nobody
+        may write (``listdefinitions`` write level 7, e.g. ``Brand.Brand``) gets
+        **HTTP 401** instead, on AXIS OS 11 and 12 alike (live, 2026-10-22),
+        which raises :class:`AxisAuthenticationError`; check
+        ``ParamDefinition.writable`` first (filed as F14). Only the device knows
+        which parameters are writable; callers should treat a refusal as a
+        per-parameter fact, not a transport failure.
 
         Args:
             param_name: Full or short name.
@@ -323,7 +327,9 @@ class ParamAPI(BaseAPI):
                 bodyless GET, which never reads ``OK``). For a credential-named
                 parameter the value is withheld from the message: the device's
                 refusal quotes it, and an echoing peer may re-spell it.
-            AxisAuthenticationError / AxisConnectionError: Propagate.
+            AxisAuthenticationError: Wrong credentials, or a parameter nobody
+                may write (the device answers 401; see above).
+            AxisConnectionError: Propagate.
         """
         name = short_name(param_name)
         secrets = (value,) if value and is_secret_name(param_name) else ()
